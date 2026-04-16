@@ -1,0 +1,427 @@
+"""Trajectory alignment: greedy forward-match, P/R/F1, harmful divergence."""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from .canonical import (
+    CanonicalAction, compute_action_cost, semantic_equivalent,
+    canonicalize_steps, assign_effect_labels, DEFAULT_TOKEN_RATE,
+)
+
+
+_FORMAT_LABELS = {
+    "ccsession": "Claude Code",
+    "codearts": "CodeArts",
+    "opencode": "OpenCode",
+    "codex": "Codex",
+}
+
+
+def _describe_format(raw: dict) -> str:
+    """Human-readable format name for a loaded trajectory (best-effort)."""
+    from trajectory_visualizer.insight.loaders import detect_format
+    fmt = detect_format(raw) if isinstance(raw, dict) else "unknown"
+    return _FORMAT_LABELS.get(fmt, fmt or "unknown")
+
+
+def _session_duration_s(raw: dict) -> float | None:
+    """Session wall-clock duration in seconds from timing.started_at / finished_at."""
+    if not isinstance(raw, dict):
+        return None
+    timing = raw.get("timing") if isinstance(raw.get("timing"), dict) else {}
+    started, finished = timing.get("started_at"), timing.get("finished_at")
+    if not (isinstance(started, str) and isinstance(finished, str) and started and finished):
+        return None
+    try:
+        from datetime import datetime
+        s = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        f = datetime.fromisoformat(finished.replace("Z", "+00:00"))
+        delta = (f - s).total_seconds()
+        return delta if delta >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Greedy forward-match alignment
+# ---------------------------------------------------------------------------
+
+def align_trajectories(
+    reference: list[CanonicalAction],
+    compared: list[CanonicalAction],
+    fuzzy_commands: bool = False,
+) -> dict:
+    """Longest common subsequence alignment with effect_label compatibility.
+
+    Uses dynamic programming to find the maximum-weight monotonic matching:
+    matched pairs (i1,j1), (i2,j2), ... satisfy i1<i2 and j1<j2, preserving
+    trajectory order in both sequences. This measures trajectory convergence
+    (ordered behavioral similarity), not unordered behavioral overlap.
+
+    Returns {matched_pairs, unrecovered, extra} where:
+    - matched_pairs: list of (ref_idx, cmp_idx) tuples (monotonically ordered)
+    - unrecovered: list of ref indices with no match
+    - extra: list of cmp indices not matched
+    """
+    # Filter out REASON actions for alignment
+    ref_non_reason = [(i, a) for i, a in enumerate(reference) if a.action_type != "REASON"]
+    cmp_non_reason = [(j, a) for j, a in enumerate(compared) if a.action_type != "REASON"]
+
+    n = len(ref_non_reason)
+    m = len(cmp_non_reason)
+
+    if n == 0 or m == 0:
+        return {
+            "matched_pairs": [],
+            "unrecovered": [i for i, _ in ref_non_reason],
+            "extra": [j for j, _ in cmp_non_reason],
+        }
+
+    # Precompute match matrix to avoid redundant semantic_equivalent calls
+    match = [[False] * m for _ in range(n)]
+    for i in range(n):
+        ref_action = ref_non_reason[i][1]
+        for j in range(m):
+            cmp_action = cmp_non_reason[j][1]
+            match[i][j] = semantic_equivalent(ref_action, cmp_action, fuzzy_commands)
+
+    # DP table: dp[i][j] = max matches using ref_non_reason[:i] and cmp_non_reason[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            if match[i - 1][j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+    # Backtrack to recover matched pairs (reuses precomputed match matrix)
+    matched_pairs: list[tuple[int, int]] = []
+    i, j = n, m
+    while i > 0 and j > 0:
+        if match[i - 1][j - 1] and dp[i][j] == dp[i - 1][j - 1] + 1:
+            ref_idx = ref_non_reason[i - 1][0]
+            cmp_idx = cmp_non_reason[j - 1][0]
+            matched_pairs.append((ref_idx, cmp_idx))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+
+    matched_pairs.reverse()  # backtrack produces reverse order
+
+    matched_ref = {p[0] for p in matched_pairs}
+    matched_cmp = {p[1] for p in matched_pairs}
+    unrecovered = [i for i, _ in ref_non_reason if i not in matched_ref]
+    extra = [j for j, _ in cmp_non_reason if j not in matched_cmp]
+
+    return {
+        "matched_pairs": matched_pairs,
+        "unrecovered": unrecovered,
+        "extra": extra,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Alignment metrics
+# ---------------------------------------------------------------------------
+
+def compute_alignment_metrics(
+    alignment: dict,
+    reference: list[CanonicalAction],
+    compared: list[CanonicalAction],
+    token_rate: float = DEFAULT_TOKEN_RATE,
+) -> dict:
+    """Compute reference_recall, behavioral_precision, F1, overhead_ratio."""
+    ref_non_reason = [a for a in reference if a.action_type != "REASON"]
+    cmp_non_reason = [a for a in compared if a.action_type != "REASON"]
+
+    reference_weight = sum(compute_action_cost(a, token_rate) for a in ref_non_reason)
+    compared_weight = sum(compute_action_cost(a, token_rate) for a in cmp_non_reason)
+
+    matched_ref_weight = sum(
+        compute_action_cost(reference[i], token_rate)
+        for i, _ in alignment["matched_pairs"]
+    )
+    matched_cmp_weight = sum(
+        compute_action_cost(compared[j], token_rate)
+        for _, j in alignment["matched_pairs"]
+    )
+
+    # Fall back to count-based metrics when token weights are 0
+    # (e.g., Codex trajectories which lack per-action token data)
+    if reference_weight == 0 and ref_non_reason:
+        reference_weight = len(ref_non_reason)
+        matched_ref_weight = sum(1 for i, _ in alignment["matched_pairs"]
+                                 if reference[i].action_type != "REASON")
+    if compared_weight == 0 and cmp_non_reason:
+        compared_weight = len(cmp_non_reason)
+        matched_cmp_weight = sum(1 for _, j in alignment["matched_pairs"]
+                                  if compared[j].action_type != "REASON")
+
+    recall = matched_ref_weight / reference_weight if reference_weight > 0 else 0.0
+    precision = matched_cmp_weight / compared_weight if compared_weight > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    overhead = compared_weight / reference_weight if reference_weight > 0 else 0.0
+
+    return {
+        "reference_recall": round(recall, 4),
+        "behavioral_precision": round(precision, 4),
+        "alignment_f1": round(f1, 4),
+        "overhead_ratio": round(overhead, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Harmful divergence
+# ---------------------------------------------------------------------------
+
+def compute_harmful_divergence(
+    extra_indices: list[int],
+    compared: list[CanonicalAction],
+    token_rate: float = DEFAULT_TOKEN_RATE,
+    dead_end_steps: set[int] | None = None,
+) -> dict:
+    """Compute harmful_cost and harmful_ratio from extra actions.
+
+    Includes failed, reverted, and dead_end_branch actions per the spec.
+    """
+    cmp_non_reason = [a for a in compared if a.action_type != "REASON"]
+    compared_weight = sum(compute_action_cost(a, token_rate) for a in cmp_non_reason)
+    dead_end_steps = dead_end_steps or set()
+
+    harmful_cost_tokens = 0
+    harmful_cost_latency = 0
+    for idx in extra_indices:
+        if idx < len(compared):
+            a = compared[idx]
+            if (a.effect_label in ("failed", "reverted")
+                    or a.step_index in dead_end_steps):
+                harmful_cost_tokens += a.cost.token_share
+                harmful_cost_latency += a.cost.latency_ms
+
+    harmful_scalar = harmful_cost_tokens + (harmful_cost_latency / 1000.0 * token_rate)
+    harmful_ratio = harmful_scalar / compared_weight if compared_weight > 0 else 0.0
+
+    return {
+        "harmful_ratio": round(min(harmful_ratio, 1.0), 4),
+        "harmful_cost": {
+            "tokens": harmful_cost_tokens,
+            "latency_ms": harmful_cost_latency,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Top-level orchestrator
+# ---------------------------------------------------------------------------
+
+def build_comparison_report(
+    ref_file: str,
+    cmp_file: str,
+    token_rate: float = DEFAULT_TOKEN_RATE,
+    fuzzy_commands: bool = False,
+    anchor_patch: str | None = None,
+    task_id: str = "",
+    ref_labels: dict[int, dict[str, str]] | None = None,
+    cmp_labels: dict[int, dict[str, str]] | None = None,
+) -> dict:
+    """Load, canonicalize, align, and produce the full comparison report.
+
+    Args:
+        ref_labels, cmp_labels: Optional step-label mappings from the step
+            labeler. When provided, CanonicalActions carry phase/action labels
+            and divergence confidence scoring is phase-aware.
+    """
+    from trajectory_visualizer.insight.loaders import load_trajectory
+    from trajectory_visualizer.insight.parser import parse_steps
+    from .milestones import (
+        extract_milestones, compute_milestone_deltas,
+        segment_by_milestones, compare_segments,
+    )
+    from .divergence import classify_divergences, compute_pattern_costs
+
+    # Load and parse
+    ref_raw = load_trajectory(ref_file)
+    cmp_raw = load_trajectory(cmp_file)
+    ref_steps = parse_steps(ref_raw)
+    cmp_steps = parse_steps(cmp_raw)
+
+    # Determine anchor files
+    anchor_files = None
+    if anchor_patch:
+        # Read anchor patch file to extract file list
+        try:
+            with open(anchor_patch) as f:
+                content = f.read()
+            # Extract file paths from diff headers
+            import re
+            anchor_files = set(re.findall(r'^[+-]{3}\s+[ab]/(.+)$', content, re.MULTILINE))
+        except Exception:
+            anchor_files = None
+
+    # Canonicalize (attach phase/action labels when available)
+    ref_actions = canonicalize_steps(ref_steps, step_labels=ref_labels)
+    cmp_actions = canonicalize_steps(cmp_steps, step_labels=cmp_labels)
+
+    # Effect labeling
+    assign_effect_labels(ref_actions, ref_steps, anchor_files)
+    assign_effect_labels(cmp_actions, cmp_steps, anchor_files)
+
+    # Layer 1: Outcome
+    ref_success = _detect_success(ref_steps)
+    cmp_success = _detect_success(cmp_steps)
+    ref_tokens = sum(s["tokens"]["total"] for s in ref_steps)
+    cmp_tokens = sum(s["tokens"]["total"] for s in cmp_steps)
+
+    outcome = {
+        "reference_success": ref_success,
+        "compared_success": cmp_success,
+        "reference_steps": len(ref_steps),
+        "compared_steps": len(cmp_steps),
+        "reference_tokens": ref_tokens,
+        "compared_tokens": cmp_tokens,
+        "reference_filename": os.path.basename(ref_file) if ref_file else "",
+        "compared_filename": os.path.basename(cmp_file) if cmp_file else "",
+        "reference_format": _describe_format(ref_raw),
+        "compared_format": _describe_format(cmp_raw),
+        "reference_duration_s": _session_duration_s(ref_raw),
+        "compared_duration_s": _session_duration_s(cmp_raw),
+        "reference_tool_calls": sum(len(s.get("tool_calls", [])) for s in ref_steps),
+        "compared_tool_calls": sum(len(s.get("tool_calls", [])) for s in cmp_steps),
+        "success_detection": "heuristic (finish marker, not task correctness)",
+    }
+
+    # Layer 2: Alignment
+    alignment = align_trajectories(ref_actions, cmp_actions, fuzzy_commands)
+    metrics = compute_alignment_metrics(alignment, ref_actions, cmp_actions, token_rate)
+
+    # Determine target files for milestone grounding
+    from trajectory_visualizer.insight.diagnostics import identify_target_files
+    _norm = lambda p: os.path.normpath(p) if p else p
+    if anchor_files:
+        milestone_targets = {_norm(f) for f in anchor_files}
+    else:
+        ref_targets = {_norm(f) for f in identify_target_files(ref_steps)}
+        cmp_targets = {_norm(f) for f in identify_target_files(cmp_steps)}
+        milestone_targets = ref_targets | cmp_targets if (ref_targets or cmp_targets) else None
+
+    # Milestones
+    ref_milestones = extract_milestones(ref_actions, target_files=milestone_targets)
+    cmp_milestones = extract_milestones(cmp_actions, target_files=milestone_targets)
+    milestone_deltas = compute_milestone_deltas(ref_milestones, cmp_milestones)
+
+    ref_segments = segment_by_milestones(ref_actions, ref_milestones)
+    cmp_segments = segment_by_milestones(cmp_actions, cmp_milestones)
+    segment_result = compare_segments(
+        ref_segments, cmp_segments, ref_milestones, cmp_milestones,
+        ref_actions, cmp_actions, token_rate,
+    )
+
+    # Layer 3: Divergence
+    extra_actions = [cmp_actions[j] for j in alignment["extra"] if j < len(cmp_actions)]
+    matched_actions = [cmp_actions[j] for _, j in alignment["matched_pairs"] if j < len(cmp_actions)]
+    patterns = classify_divergences(extra_actions, matched_actions, cmp_actions,
+                                     matched_pairs=alignment["matched_pairs"],
+                                     anchor_files=anchor_files)
+    compute_pattern_costs(patterns, token_rate)
+
+    # Collect dead_end_branch steps for harmful divergence
+    dead_end_steps: set[int] = set()
+    for p in patterns:
+        if p.get("type") == "dead_end_branch":
+            dead_end_steps.update(p.get("steps", []))
+    harmful = compute_harmful_divergence(
+        alignment["extra"], cmp_actions, token_rate, dead_end_steps)
+
+    # Anchor mode and notes
+    anchor_mode = "external" if anchor_files else "self"
+    notes = []
+
+    # Check outcome divergence
+    if anchor_mode == "self" and (ref_success != cmp_success):
+        notes.append(
+            "Warning: runs produced different outcomes. Unanchored Layer 2 metrics are "
+            "informational (behavioral similarity), not evaluative (quality). Consider "
+            "using --anchor-patch for grounded comparison."
+        )
+    # Check patch-content divergence (same outcome but different files modified)
+    if anchor_mode == "self" and ref_success == cmp_success:
+        ref_write_targets = {a.target for a in ref_actions
+                            if a.action_type == "FILE_WRITE" and a.effect_label == "survived"}
+        cmp_write_targets = {a.target for a in cmp_actions
+                            if a.action_type == "FILE_WRITE" and a.effect_label == "survived"}
+        if ref_write_targets != cmp_write_targets and (ref_write_targets or cmp_write_targets):
+            notes.append(
+                "Warning: runs produced different patches (different files modified). "
+                "Unanchored Layer 2 metrics are informational. Consider using --anchor-patch."
+            )
+    notes.append("This comparison is observational for one task pair.")
+    notes.append("Patterns are not promoted to general knowledge until confirmed across tasks.")
+
+    # Determine agent names from metadata
+    ref_agent = ref_raw.get("metadata", {}).get("generator_name", "reference") if isinstance(ref_raw.get("metadata"), dict) else "reference"
+    cmp_agent = cmp_raw.get("metadata", {}).get("generator_name", "compared") if isinstance(cmp_raw.get("metadata"), dict) else "compared"
+
+    # Anchor analysis (only when externally anchored)
+    anchor_analysis = None
+    if anchor_mode == "external" and anchor_files:
+        from .anchor import compute_anchor_analysis
+        anchor_analysis = compute_anchor_analysis(
+            ref_actions, cmp_actions, anchor_files)
+
+    # Evaluation layers
+    from .eval_layers import compute_eval_layers
+    eval_layers = compute_eval_layers(
+        {"alignment": {**metrics, **harmful}},
+        patterns,
+        anchor_analysis,
+    )
+
+    # Confidence badges
+    confidence = {
+        "alignment": "informational" if (anchor_mode == "self" and ref_success != cmp_success) else "heuristic",
+        "milestones": "anchored" if anchor_files else "heuristic",
+        "segments": "heuristic",
+        "divergence": "heuristic",
+        "outcome": "heuristic",
+    }
+
+    return {
+        "task_id": task_id,
+        "reference_agent": ref_agent,
+        "compared_agent": cmp_agent,
+        "outcome": outcome,
+        "alignment": {**metrics, **harmful},
+        "milestones": milestone_deltas,
+        "ref_milestones": ref_milestones,
+        "cmp_milestones": cmp_milestones,
+        "segments": segment_result,
+        "patterns": patterns,
+        "anchor_mode": anchor_mode,
+        "anchor_analysis": anchor_analysis,
+        "eval_layers": eval_layers,
+        "confidence": confidence,
+        "evidence_level": "single_pair_hypothesis",
+        "notes": notes,
+    }
+
+
+def _detect_success(steps: list[dict]) -> bool:
+    """Heuristic: run succeeded if the last assistant step has finish=stop/end_turn.
+
+    This is a parser-level heuristic, not grounded in tests, patch correctness,
+    or task completion. It detects whether the agent reached a normal stopping
+    point (as opposed to crashing, timing out, or being interrupted). A run
+    can return True here and still have produced an incorrect patch. The outcome
+    field in the report should be interpreted as "agent completed normally," not
+    "agent solved the task correctly."
+    """
+    for s in reversed(steps):
+        if s.get("role") == "assistant":
+            return s.get("finish") in ("stop", "end_turn")
+    return False
