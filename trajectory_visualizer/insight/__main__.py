@@ -15,7 +15,9 @@ def main():
     except ImportError:
         print(
             "Error: Insight dependencies are not installed.\n"
-            'Install them with: pip install -r requirements.txt',
+            "Install them with:\n"
+            "  pip install -e .            (package-managed)\n"
+            "  pip install -r requirements.txt   (requirements file)",
             file=sys.stderr,
         )
         sys.exit(1)

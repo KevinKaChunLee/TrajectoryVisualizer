@@ -5,10 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "trajectory-visualizer"
 version = "0.1.0"
-description = "Offline analytics & visualization for LLM agent trajectories (Claude Code, OpenCode, Codex, CodeArts)"
+description = "Offline analytics & visualization for LLM agent trajectories (Claude Code, OpenCode, CodeArts)"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [{ name = "Rui Shu" }]
 keywords = ["llm", "agent", "trajectory", "visualization", "analytics", "gradio", "plotly"]
 classifiers = [
@@ -17,7 +17,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
@@ -26,13 +25,8 @@ dependencies = [
     "plotly>=5.0",
     "pygments>=2.0",
     "pandas>=2.0",
-]
-
-[project.optional-dependencies]
-judge = ["openai>=1.0"]
-dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21",
+    "requests>=2.0",
+    "openai>=1.0",
 ]
 
 [project.scripts]
@@ -45,7 +39,3 @@ Issues = "https://github.com/rshu/TrajectoryVisualizer/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["trajectory_visualizer"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
