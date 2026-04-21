@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Offline analytics & visualization for LLM agent trajectories (Claude Code, OpenCode, CodeArts)"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [{ name = "Rui Shu" }]
 keywords = ["llm", "agent", "trajectory", "visualization", "analytics", "gradio", "plotly"]
 classifiers = [
@@ -17,6 +17,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Visualization",
 ]

@@ -18,7 +18,7 @@ pip install -e .                     # package-managed (recommended)
 pip install -r requirements.txt      # plain requirements file
 ```
 
-Requires Python 3.12+.
+Requires Python 3.11+.
 
 ---
 
