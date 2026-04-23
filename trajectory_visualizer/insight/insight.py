@@ -350,6 +350,7 @@ def _build_overview_kpi_html(metrics: dict, wall_fmt: str,
 def _build_overview_outputs(
     steps: list[dict], raw: dict, metrics: dict, message_rows: list[dict],
     verdicts: list[dict], wfmt: str, file_path: str,
+    trajectory_format: str | None = None,
 ) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
     _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
@@ -359,7 +360,8 @@ def _build_overview_outputs(
 
     generator = md.get("generator_name", "")
     banner = format_banner_html(os.path.basename(file_path), metrics, wfmt,
-                                generator=generator)
+                                generator=generator,
+                                trajectory_format=trajectory_format)
     kpi_html = _build_overview_kpi_html(metrics, wfmt, verdicts=verdicts,
                                         message_rows=message_rows)
     metrics_text = format_performance_md(metrics, wfmt)
@@ -389,6 +391,7 @@ def _build_chart_outputs(
     step_analytics: list[dict], agent_summaries: list[dict],
     dark: bool = False,
     trajectory: list[dict] | None = None,
+    trajectory_format: str | None = None,
 ) -> dict:
     """Build all chart figures and analytics markdown."""
     traj = trajectory or []
@@ -408,7 +411,7 @@ def _build_chart_outputs(
             compression_steps.append(steps[i].get("index", i) if i < len(steps) else i)
 
     # Core charts
-    tok_fig = build_token_chart(steps, dark=dark)
+    tok_fig = build_token_chart(steps, dark=dark, format=trajectory_format)
     dur_fig = build_duration_chart(steps, dark=dark,
                                     compression_steps=compression_steps or None)
     tl_fig = build_tool_chart(steps, dark=dark)
@@ -690,39 +693,39 @@ def build_ui() -> gr.Blocks:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>")
                     metrics_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
-                        token_chart = gr.Plot(label="Token Usage")
-                        duration_chart = gr.Plot(label="Step Duration")
+                        token_chart = gr.Plot(show_label=False, label="Token Usage")
+                        duration_chart = gr.Plot(show_label=False, label="Step Duration")
 
                 with gr.Accordion("Efficiency", open=False, elem_classes=["per-message-acc"]):
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>")
-                    context_growth_chart = gr.Plot(label="Context Growth")
+                    context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
 
                 with gr.Accordion("Tools", open=False, elem_classes=["per-message-acc"]):
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_tools'])}</div>")
                     behavior_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
-                        tool_chart = gr.Plot(label="Tool Call Frequency")
+                        tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
                         gr.Column(scale=1)  # reserved for future chart
                     with gr.Row(equal_height=True):
-                        tool_outcome_chart = gr.Plot(label="Tool Outcome Timeline")
+                        tool_outcome_chart = gr.Plot(show_label=False, label="Tool Outcome Timeline")
 
                 with gr.Accordion("Agents", open=False, elem_classes=["per-message-acc"]):
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
                     agent_summary_html = gr.HTML("")
                     with gr.Row(equal_height=True):
-                        agent_token_chart = gr.Plot(label="Token Breakdown by Agent")
+                        agent_token_chart = gr.Plot(show_label=False, label="Token Breakdown by Agent")
                         gr.Column(scale=1)  # reserved for future chart
                     with gr.Row(equal_height=True):
-                        agent_swimlane_chart = gr.Plot(label="Agent Swimlane")
+                        agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
 
                 with gr.Accordion("Diagnostics", open=False, elem_classes=["per-message-acc"]) as diag_accordion:
                     diag_summary_html = gr.HTML("")
-                    diag_file_chart = gr.Plot(label="File Interaction Timeline",
+                    diag_file_chart = gr.Plot(show_label=False, label="File Interaction Timeline",
                                               elem_classes=["resizable-chart"])
                     diag_rootcause_html = gr.HTML("")
                     with gr.Row(equal_height=True):
-                        error_class_chart = gr.Plot(label="Tool Error Classification")
-                        plan_timeline_chart = gr.Plot(label="Plan Progress Timeline")
+                        error_class_chart = gr.Plot(show_label=False, label="Tool Error Classification")
+                        plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
 
                 with gr.Accordion("Per-Step Deep Dive", open=False, elem_classes=["per-message-acc"]):
                     hotspots_md = gr.Markdown("")
@@ -735,13 +738,13 @@ def build_ui() -> gr.Blocks:
                         "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
                     )
                     with gr.Row(equal_height=True, visible=False) as label_charts_row1:
-                        label_phase_count_chart = gr.Plot(label="Phase Count Distribution")
-                        label_action_count_chart = gr.Plot(label="Action Count Distribution")
+                        label_phase_count_chart = gr.Plot(show_label=False, label="Phase Count Distribution")
+                        label_action_count_chart = gr.Plot(show_label=False, label="Action Count Distribution")
                     with gr.Row(equal_height=True, visible=False) as label_charts_row2:
-                        label_phase_dur_chart = gr.Plot(label="Phase Duration Distribution")
-                        label_action_dur_chart = gr.Plot(label="Action Duration Distribution")
+                        label_phase_dur_chart = gr.Plot(show_label=False, label="Phase Duration Distribution")
+                        label_action_dur_chart = gr.Plot(show_label=False, label="Action Duration Distribution")
                     with gr.Row(equal_height=True, visible=False) as label_timeline_row:
-                        label_timeline_chart = gr.Plot(label="Step Timeline")
+                        label_timeline_chart = gr.Plot(show_label=False, label="Step Timeline")
 
             # ===== Patterns Tab =====
             with gr.TabItem("Patterns"):
@@ -809,8 +812,8 @@ def build_ui() -> gr.Blocks:
                         )
                 cmp_report_html = gr.HTML("")
                 with gr.Row(equal_height=True):
-                    cmp_phase_count_chart = gr.Plot(label="Step Count by Phase — Reference vs Compared")
-                    cmp_phase_duration_chart = gr.Plot(label="Duration by Phase — Reference vs Compared")
+                    cmp_phase_count_chart = gr.Plot(show_label=False, label="Step Count by Phase — Reference vs Compared")
+                    cmp_phase_duration_chart = gr.Plot(show_label=False, label="Duration by Phase — Reference vs Compared")
 
             # ===== Workflow Tab =====
             with gr.TabItem("Workflow"):
@@ -1126,7 +1129,8 @@ def build_ui() -> gr.Blocks:
             # Delegate to focused builders
             dg = _build_diagnostics_outputs(steps, step_analytics, agent_summaries, dark=dark)
             ov = _build_overview_outputs(steps, raw, metrics, message_rows,
-                                         verdicts, wfmt, file_path)
+                                         verdicts, wfmt, file_path,
+                                         trajectory_format=detected)
 
             _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
             _md, _timing = _d("metadata"), _d("timing")
@@ -1138,7 +1142,8 @@ def build_ui() -> gr.Blocks:
 
             ch = _build_chart_outputs(steps, message_rows, phases,
                                       step_analytics, agent_summaries, dark=dark,
-                                      trajectory=raw.get("trajectory", []))
+                                      trajectory=raw.get("trajectory", []),
+                                      trajectory_format=detected)
             wf = _build_workflow_outputs(steps, agent_summaries)
 
             # Pattern detection

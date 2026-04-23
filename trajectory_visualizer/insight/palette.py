@@ -4,6 +4,7 @@
 TOKEN_COLORS = {
     "fresh_input": "#3b82f6",   # blue
     "cache_read": "#34d399",    # emerald (stronger than previous mint)
+    "cache_write": "#14b8a6",   # teal — cache-family, distinct from cache_read
     "output": "#f59e0b",        # amber
     "reasoning": "#8b5cf6",     # violet
 }

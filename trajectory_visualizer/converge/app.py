@@ -38,16 +38,16 @@ def build_ui() -> gr.Blocks:
         report_html = gr.HTML(label="Comparison Report")
 
         with gr.Row():
-            milestone_plot = gr.Plot(label="Milestone Timeline")
+            milestone_plot = gr.Plot(show_label=False, label="Milestone Timeline")
 
         with gr.Row():
-            segment_plot = gr.Plot(label="Segment Costs")
+            segment_plot = gr.Plot(show_label=False, label="Segment Costs")
 
         with gr.Row():
-            waterfall_plot = gr.Plot(label="Divergence Waterfall")
+            waterfall_plot = gr.Plot(show_label=False, label="Divergence Waterfall")
 
         with gr.Row():
-            anchor_class_plot = gr.Plot(label="Anchor Write Recall by Class", visible=False)
+            anchor_class_plot = gr.Plot(show_label=False, label="Anchor Write Recall by Class", visible=False)
 
         def do_compare(ref_upload, cmp_upload, anchor_upload, rate, fuzzy):
             """Callback: load files, run comparison, build charts and HTML."""

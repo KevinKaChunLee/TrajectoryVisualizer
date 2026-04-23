@@ -526,7 +526,8 @@ def wall_clock_fmt(metrics: dict) -> tuple[float, str]:
 
 
 def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
-                       *, generator: str = "") -> str:
+                       *, generator: str = "",
+                       trajectory_format: str | None = None) -> str:
     """Build the one-line HTML summary banner for the loaded trajectory."""
     import html as _html
     parts = [
@@ -544,13 +545,26 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
         parts.append(f" &middot; {metrics['reasoning_parts']} reasoning")
     banner = "".join(parts)
 
-    # Format-specific note for limited data
-    if generator == "codearts":
+    # Format-specific advisory notes
+    note_style = (
+        "margin-top:6px;padding:4px 10px;background:#fef3c7;"
+        "border-left:3px solid #d97706;border-radius:4px;"
+        "font-size:12px;color:#92400e;"
+    )
+    if generator == "codearts" or trajectory_format == "codearts":
         banner += (
-            "<div style='margin-top:6px;padding:4px 10px;background:#fef3c7;border-left:3px solid #d97706;"
-            "border-radius:4px;font-size:12px;color:#92400e;'>"
+            f"<div style='{note_style}'>"
             "CodeArts format — per-step token breakdown, cache metrics, and tool duration not available. "
             "Total tokens per step are shown."
+            "</div>"
+        )
+    elif trajectory_format == "opencode":
+        banner += (
+            f"<div style='{note_style}'>"
+            "OpenCode format — Token Usage by Step shows all five fields stacked: "
+            "Fresh Input + Cache Read + Output + Reasoning = Total, with Cache Write as the 5th segment. "
+            "Cache Read typically dominates (~97% of each bar) because OpenCode records it as a running "
+            "conversation prefix."
             "</div>"
         )
     return banner

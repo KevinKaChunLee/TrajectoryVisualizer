@@ -86,13 +86,26 @@ def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
 def _apply_chart_layout(fig: go.Figure, title: str,
                          xaxis: str | None = None, yaxis: str | None = None,
                          height: int = 380, **kwargs) -> None:
-    """Apply standard chart layout (template + margins + responsive sizing)."""
+    """Apply standard chart layout (template + margins + responsive sizing).
+
+    The title is centered horizontally (``x=0.5``, ``xanchor="center"``) and
+    pinned to the top of the container (``y=0.99``, ``yanchor="top"``). The
+    top margin is 90px so a horizontal legend above the plot area
+    (``y=1.06``) can wrap to a second row without overlapping the title.
+
+    Centering — rather than left-aligning — avoids collisions with the
+    Gradio ``gr.Plot`` chrome: Gradio draws a small tab label in the
+    top-left corner of every chart widget, which would sit on top of a
+    left-aligned title.
+    """
     layout = dict(
-        title=title,
+        title=dict(text=title, y=0.99, x=0.5,
+                   xanchor="center", yanchor="top",
+                   font=dict(size=16)),
         template=_TPL,
         height=height,
         autosize=True,
-        margin=dict(t=50, b=40, l=60, r=20),
+        margin=dict(t=90, b=40, l=60, r=20),
     )
     if xaxis:
         layout["xaxis_title"] = xaxis
@@ -117,11 +130,20 @@ def _add_legend_hint(fig: go.Figure) -> None:
 
 def _add_token_bar_traces(fig: go.Figure, x_values: list,
                           fresh_input: list, cache_read: list,
-                          output: list, reasoning: list) -> None:
+                          output: list, reasoning: list,
+                          *, cache_write: list | None = None,
+                          include_empty: bool = False) -> None:
     """Add token category bar traces to a figure.
 
-    Only adds traces that have non-zero data to avoid misleading legends
+    By default only adds traces that have non-zero data to avoid misleading legends
     (e.g., CodeArts trajectories only have total tokens, no breakdown).
+
+    Pass ``include_empty=True`` to force every trace into the legend (useful when
+    the viewer wants to see which fields are tracked even if they happen to be
+    zero across the entire trajectory).
+
+    Pass ``cache_write`` to add a 5th stacked trace. For OpenCode this sample
+    always reports zero, but the field is present and worth showing.
     """
     traces = [
         ("Fresh Input", fresh_input, TOKEN_COLORS["fresh_input"]),
@@ -129,8 +151,10 @@ def _add_token_bar_traces(fig: go.Figure, x_values: list,
         ("Output", output, TOKEN_COLORS["output"]),
         ("Reasoning", reasoning, TOKEN_COLORS["reasoning"]),
     ]
+    if cache_write is not None:
+        traces.append(("Cache Write", cache_write, TOKEN_COLORS["cache_write"]))
     for name, values, color in traces:
-        if any(v > 0 for v in values):
+        if include_empty or any(v > 0 for v in values):
             fig.add_trace(go.Bar(
                 x=x_values, y=values, name=name, marker_color=color,
                 hovertemplate=f"Step %{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
@@ -238,11 +262,22 @@ def _add_agent_regions(fig: go.Figure, steps: list[dict],
 
 def build_token_chart(steps: list[dict], cumulative: bool = False,
                       phases: list[dict] | None = None,
-                      dark: bool = False) -> go.Figure:
+                      dark: bool = False,
+                      *, format: str | None = None) -> go.Figure:
     """Stacked bar of token breakdown over steps (non-overlapping segments).
 
-    Segments: fresh_input + cache_read
-              + net_output (output - reasoning) + reasoning = total
+    Default segments: fresh_input + cache_read
+                      + net_output (output - reasoning) + reasoning = total
+
+    Per-format overrides:
+    - ``format == "opencode"``: render all five token fields stacked — Fresh Input,
+      Cache Read, Output, Reasoning, Cache Write — with every trace forced into
+      the legend even when a field is zero across the trajectory. OpenCode's
+      ``tokens.cache.write`` is typically 0 except on cache-creation turns; the
+      5th stacked segment sums cleanly with the others because the sample
+      satisfies ``input + cache.read + output + reasoning == total``.
+    - No breakdown available (e.g., CodeArts): fall back to a single ``Total``
+      bar.
     """
     if not steps:
         fig = _empty_figure(380)
@@ -263,6 +298,7 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
     ]
     reasoning_t = [s["tokens"]["reasoning"] for s in steps]
     net_output = [max(0, s["tokens"]["output"] - s["tokens"]["reasoning"]) for s in steps]
+    cache_w = [s["tokens"].get("cache_write", 0) or 0 for s in steps]
 
     # Detect if token breakdown is available (any non-zero input/output/cache)
     has_breakdown = any(
@@ -271,10 +307,15 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
     )
 
     fig = go.Figure()
-    if has_breakdown:
+    if format == "opencode" and has_breakdown:
+        # OpenCode view: show all five fields explicitly, forcing zero traces
+        # into the legend so the reader can see which fields are tracked.
+        _add_token_bar_traces(fig, indices, fresh_input, cache_r, net_output, reasoning_t,
+                              cache_write=cache_w, include_empty=True)
+    elif has_breakdown:
         _add_token_bar_traces(fig, indices, fresh_input, cache_r, net_output, reasoning_t)
     else:
-        # No breakdown available — show single "Total" trace
+        # No breakdown available (e.g., CodeArts) — single "Total" trace.
         totals = [s["tokens"]["total"] for s in steps]
         fig.add_trace(go.Bar(
             x=indices, y=totals, name="Total",
@@ -289,9 +330,6 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
     )
     _add_legend_hint(fig)
-    totals = [s["tokens"]["total"] for s in steps]
-    outliers = _detect_outliers(totals)
-    _add_outlier_annotations(fig, outliers, fmt=",.0f", suffix=" tok")
     _apply_dark(fig, dark)
     return fig
 
@@ -358,6 +396,7 @@ def build_duration_chart(steps: list[dict],
                 textfont=dict(size=9, color="#dc2626"),
                 legendgroup=group, showlegend=False,
                 hoverinfo="skip",
+                cliponaxis=False,  # allow text to extend past the right edge
             ))
     # Avg line — dashed, lighter
     fig.add_hline(y=avg_d, line_dash="dash", line_color="#94a3b8", line_width=1,
