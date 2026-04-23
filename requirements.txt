@@ -7,4 +7,3 @@ plotly>=5.0
 pygments>=2.0
 pandas>=2.0
 requests>=2.0    # used by scripts/step_labeler.py
-openai>=1.0      # used by the LLM-as-judge feature

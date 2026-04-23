@@ -1055,7 +1055,7 @@ def _convert_codearts_metadata(raw: dict) -> dict:
 
 
 def _convert_codex_to_internal(events: list[dict]) -> dict:
-    """Convert Codex CLI JSONL events into TraceLens internal format.
+    """Convert Codex CLI JSONL events into the TrajectoryVisualizer internal format.
 
     Codex emits newline-delimited JSON with event types:
     - session_meta: session ID, cwd, model, version
@@ -1223,7 +1223,7 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
 
 
 def _classify_codex_command(func_name: str, cmd: str) -> str:
-    """Map a Codex exec_command to a TraceLens tool name.
+    """Map a Codex exec_command to a TrajectoryVisualizer tool name.
 
     Codex uses exec_command for everything; we infer the intent from the command.
     """

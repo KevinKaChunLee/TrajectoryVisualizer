@@ -382,13 +382,15 @@ def _call_anthropic(
 
 def load_assistant_steps(trajectory_path: str) -> list[dict]:
     """Load trajectory and return only assistant steps."""
-    # Add project root to path so we can import argus.insight
+    # Add repo root to path so an uninstalled clone (no `pip install -e .`) can
+    # still import the trajectory_visualizer package when this script is run
+    # as `python scripts/step_labeler.py` from the repo root.
     project_root = str(Path(__file__).resolve().parent.parent)
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-    from argus.insight.loaders import load_trajectory
-    from argus.insight.parser import parse_steps
+    from trajectory_visualizer.insight.loaders import load_trajectory
+    from trajectory_visualizer.insight.parser import parse_steps
 
     raw = load_trajectory(trajectory_path)
     if "_error" in raw:
