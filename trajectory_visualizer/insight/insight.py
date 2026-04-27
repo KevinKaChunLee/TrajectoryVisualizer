@@ -47,6 +47,7 @@ from .charts import (
 
     build_plan_timeline_chart,
     build_error_classification_chart,
+    build_context_growth_chart,
     build_context_growth_ca_chart,
 )
 
@@ -425,15 +426,23 @@ def _build_chart_outputs(
     plan_timeline_fig = build_plan_timeline_chart(plan_history, plan_metrics, dark=dark)
     error_class_fig = build_error_classification_chart(steps, dark=dark)
 
-    # Context growth chart (CodeArts cumulative tokens)
-    # Detect CodeArts format and set context limit (192K default for CodeArts)
+    # Context growth chart. CodeArts re-emits cumulative context size per step,
+    # so it gets the format-specific builder with compression-event markers.
+    # Other formats (OpenCode, Claude Code) only expose per-step deltas, so we
+    # fall back to the format-agnostic cumulative-input view.
     context_limit = None
     is_codearts = any(
         isinstance(e.get("_codearts_raw"), dict) for e in traj
     )
     if is_codearts:
         context_limit = 192_000
-    context_growth_fig = build_context_growth_ca_chart(steps, traj, context_limit=context_limit, dark=dark)
+        context_growth_fig = build_context_growth_ca_chart(
+            steps, traj, context_limit=context_limit, dark=dark)
+    else:
+        # Skip Boot/Steady/Closeout phase overlays here — the heuristic
+        # bands clutter the cumulative-token view without adding signal.
+        context_growth_fig = build_context_growth_chart(
+            message_rows, phases=None, dark=dark)
 
     # New panels
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
@@ -459,6 +468,7 @@ def _build_chart_outputs(
 def _build_diagnostics_outputs(
     steps: list[dict], step_analytics: list[dict],
     agent_summaries: list[dict], dark: bool = False,
+    trajectory_format: str | None = None,
 ) -> dict:
     """Build all diagnostics outputs: file interactions, failure chains, root causes, bottlenecks."""
     _empty_fig = go.Figure()
@@ -477,10 +487,16 @@ def _build_diagnostics_outputs(
     chain_metrics = compute_failure_chain_metrics(
         chains, sum(1 for s in steps if s.get("role") == "assistant"))
 
-    # Root-cause attribution
+    # Root-cause attribution. The findings panel is suppressed for OpenCode
+    # because its tool-error reporting is noisy (every non-zero bash exit code
+    # surfaces as a "failure") and the cluster summaries become misleading.
+    # Counts are still computed so the summary line stays accurate.
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
-    rootcause_html = build_root_cause_html(clusters)
+    if trajectory_format == "opencode":
+        rootcause_html = ""
+    else:
+        rootcause_html = build_root_cause_html(clusters)
 
     # Bottleneck explanation (explanations feed the summary line; UI cards removed)
     bottleneck_explanations = compute_bottleneck_explanations(steps, step_analytics)
@@ -1127,7 +1143,8 @@ def build_ui() -> gr.Blocks:
             agent_summaries = compute_agent_summary(steps, raw)
 
             # Delegate to focused builders
-            dg = _build_diagnostics_outputs(steps, step_analytics, agent_summaries, dark=dark)
+            dg = _build_diagnostics_outputs(steps, step_analytics, agent_summaries, dark=dark,
+                                            trajectory_format=detected)
             ov = _build_overview_outputs(steps, raw, metrics, message_rows,
                                          verdicts, wfmt, file_path,
                                          trajectory_format=detected)

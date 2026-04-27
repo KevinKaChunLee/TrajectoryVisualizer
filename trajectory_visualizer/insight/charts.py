@@ -2083,12 +2083,41 @@ def build_plan_timeline_chart(
                 hoverinfo="text",
                 text="stalled", textposition="inside",
             ))
+        elif end is not None:
+            # Item went straight to "completed" without ever being marked
+            # in_progress (common for OpenCode todo lists). Show a thin marker
+            # at the completion step so the row isn't blank.
+            fig.add_trace(go.Bar(
+                y=[short], x=[1], orientation="h",
+                base=max(0, end - 1), marker_color="#3b82f6", showlegend=False,
+                hovertext=f"{content}<br>Completed at step {end} (no in_progress recorded)",
+                hoverinfo="text",
+                text="completed", textposition="inside",
+            ))
+        else:
+            # Never started or completed — show a grey placeholder at x=0 so
+            # the row appears in the y-axis instead of being silently dropped.
+            fig.add_trace(go.Bar(
+                y=[short], x=[0.5], orientation="h",
+                base=0, marker_color="#9ca3af", showlegend=False,
+                hovertext=f"{content}<br>Never started",
+                hoverinfo="text",
+                text="not started", textposition="outside",
+                cliponaxis=False,
+            ))
+
+    # Compact bar height (22px each + 90px padding) keeps the chart from
+    # ballooning vertically when only a few items have explicit timing.
+    chart_height = max(220, 22 * len(items) + 90)
 
     _apply_chart_layout(
         fig, "Plan Progress Timeline",
-        xaxis="Step", height=max(250, 32 * len(items)),
+        xaxis="Step", height=chart_height,
         margin=dict(l=max(200, max((len(l) for l in y_labels), default=10) * 6 + 20), r=40, t=50, b=40),
     )
+    # Tighter bar gap so individual items don't visually balloon when the
+    # surrounding container is wide (e.g., right column of a 2-col layout).
+    fig.update_layout(bargap=0.25)
     _apply_dark(fig, dark)
     return fig
 
@@ -2101,12 +2130,20 @@ def build_error_classification_chart(
 ) -> go.Figure:
     """Horizontal bar chart of error types classified from tool output."""
     from collections import Counter
+    from .loaders import _classify_tool_error
     error_types: Counter = Counter()
     error_steps: dict[str, list[int]] = {}
 
     for i, s in enumerate(steps):
         for tc in s.get("tool_calls", []):
             etype = tc.get("error_type")
+            # Fallback for formats that don't pre-classify (OpenCode, Claude Code):
+            # run the same pattern matcher used by the CodeArts loader against the
+            # raw error message so we still get a non-empty chart.
+            if not etype:
+                err_text = tc.get("error") or ""
+                if err_text:
+                    etype = _classify_tool_error(err_text) or "tool_error"
             if etype:
                 error_types[etype] += 1
                 error_steps.setdefault(etype, []).append(s.get("index", i))
@@ -2117,14 +2154,18 @@ def build_error_classification_chart(
         return fig
 
     _LABELS = {
-        "platform_error": "Platform Error",
-        "permission_error": "Permission Denied",
-        "missing_file": "Missing File",
+        "platform_error":   "Platform Error",
+        "permission_error": "Permission / Policy",
+        "missing_file":     "Missing File",
+        "bad_input":        "Bad Input",
+        "tool_error":       "Other Tool Error",
     }
     _COLORS = {
-        "platform_error": "#dc2626",
+        "platform_error":   "#dc2626",
         "permission_error": "#d97706",
-        "missing_file": "#6366f1",
+        "missing_file":     "#6366f1",
+        "bad_input":        "#0891b2",
+        "tool_error":       "#6b7280",
     }
 
     sorted_types = sorted(error_types.keys(), key=lambda t: error_types[t])

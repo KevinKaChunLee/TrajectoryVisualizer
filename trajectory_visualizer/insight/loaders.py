@@ -769,13 +769,23 @@ _CA_SENDER_TO_ROLE = {
 
 
 _TOOL_ERROR_PATTERNS = [
+    # Platform / shell-level
     ("command not found", "platform_error"),
     ("not recognized as", "platform_error"),  # Windows "not recognized as internal or external command"
+    ("command timed out", "platform_error"),
+    # Permission / policy
     ("Permission denied", "permission_error"),
     ("permission denied", "permission_error"),
+    ("rule which prevents", "permission_error"),  # OpenCode: "user has specified a rule which prevents..."
+    ("must read file", "permission_error"),       # OpenCode: edit/write before read enforcement
+    # Missing file / path
     ("No such file or directory", "missing_file"),
     ("cannot find the path", "missing_file"),
     ("ENOENT", "missing_file"),
+    # Bad input / invalid args
+    ("out of range", "bad_input"),
+    # Generic tool failure (catch-all for tools that errored without a recognized cause)
+    ("ripgrep failed", "tool_error"),
 ]
 
 

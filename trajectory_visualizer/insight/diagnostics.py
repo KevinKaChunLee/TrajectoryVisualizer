@@ -12,15 +12,18 @@ from collections import Counter
 # ---------------------------------------------------------------------------
 
 # Tools whose input dict has a structured file path field
-_TOOL_FILE_FIELDS: dict[str, tuple[str, str]] = {
-    # tool_name -> (input_key, interaction_type)
-    "Read": ("file_path", "read"),
-    "read": ("file_path", "read"),
-    "Write": ("file_path", "write"),
-    "write": ("file_path", "write"),
-    "Edit": ("file_path", "write"),
-    "edit": ("file_path", "write"),
-    "NotebookEdit": ("notebook_path", "write"),
+_TOOL_FILE_FIELDS: dict[str, tuple[tuple[str, ...], str]] = {
+    # tool_name -> (candidate_input_keys, interaction_type)
+    # Multiple keys per tool let us handle scaffolds that use different field
+    # spellings — e.g. Claude Code emits ``file_path`` (snake) while OpenCode
+    # emits ``filePath`` (camel). The lookup picks whichever the call carries.
+    "Read":         (("file_path", "filePath"), "read"),
+    "read":         (("file_path", "filePath"), "read"),
+    "Write":        (("file_path", "filePath"), "write"),
+    "write":        (("file_path", "filePath"), "write"),
+    "Edit":         (("file_path", "filePath"), "write"),
+    "edit":         (("file_path", "filePath"), "write"),
+    "NotebookEdit": (("notebook_path", "notebookPath"), "write"),
 }
 
 # Tools that search (return multiple file references in pattern/path fields)
@@ -82,12 +85,15 @@ def extract_file_interactions(steps: list[dict]) -> list[dict]:
 
             found_paths: list[tuple[str, str]] = []  # (path, interaction_type)
 
-            # Structured file tools
+            # Structured file tools — try every candidate field name so the
+            # extractor works across schema spellings (snake_case / camelCase).
             if tool_name in _TOOL_FILE_FIELDS:
-                field, itype = _TOOL_FILE_FIELDS[tool_name]
-                path = inp.get(field, "")
-                if path:
-                    found_paths.append((str(path), itype))
+                fields, itype = _TOOL_FILE_FIELDS[tool_name]
+                for field in fields:
+                    path = inp.get(field, "")
+                    if path:
+                        found_paths.append((str(path), itype))
+                        break
 
             # Search tools — extract path (directory) and pattern (for Glob only)
             elif tool_name in _TOOL_SEARCH_FIELDS:
@@ -143,7 +149,8 @@ def identify_target_files(steps: list[dict]) -> set[str]:
             if tool_name in ("Edit", "edit", "Write", "write") and status not in ("error", "failed", "failure"):
                 inp = tc.get("input", {})
                 if isinstance(inp, dict):
-                    path = inp.get("file_path", "")
+                    # OpenCode uses ``filePath``; Claude Code uses ``file_path``.
+                    path = inp.get("file_path") or inp.get("filePath") or ""
                     if path:
                         targets.add(str(path))
 
