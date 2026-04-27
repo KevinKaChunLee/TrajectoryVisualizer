@@ -836,61 +836,13 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
 def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> go.Figure:
     """Grouped bar chart showing token breakdown per agent.
 
-    For single-agent sessions, render a horizontal stacked bar that shows the
-    one agent's token composition (Fresh Input / Cache Read / Output / Reasoning)
-    instead of returning an empty placeholder.
+    Uses the same vertical grouped-bar layout for single- and multi-agent
+    sessions so the single-agent case still surfaces the four token
+    categories (Fresh / Cache Read / Output / Reasoning) — just with one
+    cluster instead of many.
     """
     if not agent_summaries:
         fig = _empty_figure(240, "No agent activity recorded.")
-        _apply_dark(fig, dark)
-        return fig
-
-    if len(agent_summaries) == 1:
-        from .parser import infer_non_cache_input
-        a = agent_summaries[0]
-        label = a["label"]
-        # Use the schema-tolerant inference so Fresh Input doesn't collapse to
-        # zero on OpenCode (where ``input_tokens`` is already cache-excluded).
-        fresh_input = infer_non_cache_input(
-            a["total_tokens"], a["input_tokens"], a["output_tokens"],
-            a["reasoning_tokens"], a["cache_read_tokens"],
-        )
-        cache_read = a["cache_read_tokens"]
-        output = max(0, a["output_tokens"] - a["reasoning_tokens"])
-        reasoning = a["reasoning_tokens"]
-        total = fresh_input + cache_read + output + reasoning
-
-        if total == 0:
-            fig = _empty_figure(180, f"No token breakdown available for {label}.")
-            _apply_dark(fig, dark)
-            return fig
-
-        # Single horizontal stacked bar — segments sized by token category.
-        fig = go.Figure()
-        for name, value, color in [
-            ("Fresh Input", fresh_input, TOKEN_COLORS["fresh_input"]),
-            ("Cache Read", cache_read, TOKEN_COLORS["cache_read"]),
-            ("Output", output, TOKEN_COLORS["output"]),
-            ("Reasoning", reasoning, TOKEN_COLORS["reasoning"]),
-        ]:
-            if value <= 0:
-                continue
-            pct = 100 * value / total
-            fig.add_trace(go.Bar(
-                y=[label], x=[value], orientation="h",
-                name=name, marker_color=color,
-                text=[f"{name}: {value:,} ({pct:.1f}%)"] if pct >= 4 else [""],
-                textposition="inside", insidetextanchor="middle",
-                hovertemplate=f"{name}: %{{x:,}} ({pct:.1f}%)<extra></extra>",
-            ))
-        _apply_chart_layout(
-            fig, f"Token Composition — {label}",
-            xaxis="Tokens (count)", height=180, barmode="stack",
-            legend=dict(orientation="h", yanchor="bottom", y=1.06,
-                        xanchor="center", x=0.5),
-        )
-        fig.update_layout(margin=dict(t=70, l=80, r=20, b=40))
-        fig.update_yaxes(showticklabels=False)
         _apply_dark(fig, dark)
         return fig
 
@@ -945,9 +897,9 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
 def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figure:
     """Horizontal swimlane chart showing each agent's active step ranges and token contribution.
 
-    For single-agent sessions we render one lane for that agent — user-prompt
-    steps then appear naturally as gaps in the lane. We skip the user/main
-    sentinel lane in that case since it would just duplicate the gaps.
+    Always renders the user/main lane alongside any sub-agent lanes — user
+    prompts (or main-orchestrator steps) are meaningful information regardless
+    of whether one or many sub-agents are present.
     """
     color_map = build_agent_color_map(steps)
     real_agents = [a for a in color_map if a]
@@ -955,11 +907,6 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
         fig = _empty_figure(180, "No agent activity recorded.")
         _apply_dark(fig, dark)
         return fig
-
-    # Hide the user "main" sentinel lane when there's only one real agent —
-    # user prompts already appear as gaps in the agent's lane, so an extra
-    # lane just duplicates that signal.
-    show_main = len(real_agents) > 1
 
     fig = go.Figure()
     # Group steps by agent and find contiguous runs
@@ -986,16 +933,10 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     lane_count = 0
     for i, agent_id in enumerate(sorted(color_map.keys(), key=lambda a: color_map[a])):
         if not agent_id:
-            if not show_main:
-                continue  # single-agent: skip user lane
             label = "main"
-        elif show_main:
+        else:
             short = agent_id[:12] if len(agent_id) > 12 else agent_id
             label = f"sub {short}"
-        else:
-            # Single-agent: use the agent name directly (no "sub " prefix
-            # since there's no main agent to be sub-ordinate to).
-            label = agent_id[:20] if len(agent_id) > 20 else agent_id
         lane_count += 1
         hex_c = _SESSION_COLORS[i % len(_SESSION_COLORS)]
         for start, end, tok, tools in agent_runs.get(agent_id, []):
