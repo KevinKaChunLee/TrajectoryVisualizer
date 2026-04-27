@@ -834,9 +834,63 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
 
 
 def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> go.Figure:
-    """Grouped bar chart showing token breakdown per agent."""
-    if len(agent_summaries) <= 1:
-        fig = _empty_figure(240, "Single-agent session — no per-agent comparison.")
+    """Grouped bar chart showing token breakdown per agent.
+
+    For single-agent sessions, render a horizontal stacked bar that shows the
+    one agent's token composition (Fresh Input / Cache Read / Output / Reasoning)
+    instead of returning an empty placeholder.
+    """
+    if not agent_summaries:
+        fig = _empty_figure(240, "No agent activity recorded.")
+        _apply_dark(fig, dark)
+        return fig
+
+    if len(agent_summaries) == 1:
+        from .parser import infer_non_cache_input
+        a = agent_summaries[0]
+        label = a["label"]
+        # Use the schema-tolerant inference so Fresh Input doesn't collapse to
+        # zero on OpenCode (where ``input_tokens`` is already cache-excluded).
+        fresh_input = infer_non_cache_input(
+            a["total_tokens"], a["input_tokens"], a["output_tokens"],
+            a["reasoning_tokens"], a["cache_read_tokens"],
+        )
+        cache_read = a["cache_read_tokens"]
+        output = max(0, a["output_tokens"] - a["reasoning_tokens"])
+        reasoning = a["reasoning_tokens"]
+        total = fresh_input + cache_read + output + reasoning
+
+        if total == 0:
+            fig = _empty_figure(180, f"No token breakdown available for {label}.")
+            _apply_dark(fig, dark)
+            return fig
+
+        # Single horizontal stacked bar — segments sized by token category.
+        fig = go.Figure()
+        for name, value, color in [
+            ("Fresh Input", fresh_input, TOKEN_COLORS["fresh_input"]),
+            ("Cache Read", cache_read, TOKEN_COLORS["cache_read"]),
+            ("Output", output, TOKEN_COLORS["output"]),
+            ("Reasoning", reasoning, TOKEN_COLORS["reasoning"]),
+        ]:
+            if value <= 0:
+                continue
+            pct = 100 * value / total
+            fig.add_trace(go.Bar(
+                y=[label], x=[value], orientation="h",
+                name=name, marker_color=color,
+                text=[f"{name}: {value:,} ({pct:.1f}%)"] if pct >= 4 else [""],
+                textposition="inside", insidetextanchor="middle",
+                hovertemplate=f"{name}: %{{x:,}} ({pct:.1f}%)<extra></extra>",
+            ))
+        _apply_chart_layout(
+            fig, f"Token Composition — {label}",
+            xaxis="Tokens (count)", height=180, barmode="stack",
+            legend=dict(orientation="h", yanchor="bottom", y=1.06,
+                        xanchor="center", x=0.5),
+        )
+        fig.update_layout(margin=dict(t=70, l=80, r=20, b=40))
+        fig.update_yaxes(showticklabels=False)
         _apply_dark(fig, dark)
         return fig
 
@@ -846,8 +900,14 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
 
     fig = go.Figure()
     if has_breakdown:
+        from .parser import infer_non_cache_input
+        # Schema-tolerant fresh-input: handles both Claude Code (input includes
+        # cache) and OpenCode (input is already cache-excluded).
         fresh_input = [
-            max(0, a["input_tokens"] - a["cache_read_tokens"])
+            infer_non_cache_input(
+                a["total_tokens"], a["input_tokens"], a["output_tokens"],
+                a["reasoning_tokens"], a["cache_read_tokens"],
+            )
             for a in agent_summaries
         ]
         cache_read = [a["cache_read_tokens"] for a in agent_summaries]
@@ -883,12 +943,23 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
 
 
 def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figure:
-    """Horizontal swimlane chart showing each agent's active step ranges and token contribution."""
+    """Horizontal swimlane chart showing each agent's active step ranges and token contribution.
+
+    For single-agent sessions we render one lane for that agent — user-prompt
+    steps then appear naturally as gaps in the lane. We skip the user/main
+    sentinel lane in that case since it would just duplicate the gaps.
+    """
     color_map = build_agent_color_map(steps)
-    if len(color_map) <= 1:
-        fig = _empty_figure(180, "Single-agent session — no swimlane to display.")
+    real_agents = [a for a in color_map if a]
+    if not real_agents:
+        fig = _empty_figure(180, "No agent activity recorded.")
         _apply_dark(fig, dark)
         return fig
+
+    # Hide the user "main" sentinel lane when there's only one real agent —
+    # user prompts already appear as gaps in the agent's lane, so an extra
+    # lane just duplicates that signal.
+    show_main = len(real_agents) > 1
 
     fig = go.Figure()
     # Group steps by agent and find contiguous runs
@@ -912,12 +983,20 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
         prev[agent] = idx
 
     _SESSION_COLORS = ["#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2"]
+    lane_count = 0
     for i, agent_id in enumerate(sorted(color_map.keys(), key=lambda a: color_map[a])):
         if not agent_id:
+            if not show_main:
+                continue  # single-agent: skip user lane
             label = "main"
-        else:
+        elif show_main:
             short = agent_id[:12] if len(agent_id) > 12 else agent_id
             label = f"sub {short}"
+        else:
+            # Single-agent: use the agent name directly (no "sub " prefix
+            # since there's no main agent to be sub-ordinate to).
+            label = agent_id[:20] if len(agent_id) > 20 else agent_id
+        lane_count += 1
         hex_c = _SESSION_COLORS[i % len(_SESSION_COLORS)]
         for start, end, tok, tools in agent_runs.get(agent_id, []):
             width = end - start + 1
@@ -938,7 +1017,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
 
     _apply_chart_layout(
         fig, "Agent Swimlane", xaxis="Step Index",
-        height=max(200, 80 * len(color_map)),
+        height=max(160, 80 * max(1, lane_count)),
         barmode="overlay",
         margin=dict(l=100, r=20, t=40, b=30),
     )
@@ -1270,9 +1349,13 @@ def _build_label_bar_chart(
     layout_kwargs: dict = dict(margin=dict(t=50, b=40, l=60, r=40))
     if orientation == "h":
         max_label = max((len(a) for a in labels), default=10)
+        # When the action chart shows a phase legend above the plot, give the
+        # margin enough room for both title and a 2-row wrapped legend without
+        # leaving a dead band between them.
+        top_margin = 75 if action_to_phase else 50
         layout_kwargs.update(
             height=max(380, 32 * len(labels)),
-            margin=dict(l=max(180, max_label * 7 + 30), r=80, t=50, b=40),
+            margin=dict(l=max(180, max_label * 7 + 30), r=80, t=top_margin, b=40),
         )
         if action_to_phase:
             layout_kwargs.update(
@@ -1537,19 +1620,30 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
                 showlegend=True,
             ))
 
+    chart_height = max(450, 28 * len(steps))
+    top_margin = 90  # title (~25 px) + small gap + legend (~25 px) + breathing room
+    # Position both title and legend in container (figure-relative) coords with
+    # constant pixel offsets so the title sits on top with the legend just below
+    # it, regardless of how tall the chart is. yref="container" keeps both in
+    # the same coordinate system so they don't collide.
+    title_offset_px = 8     # title top, ~8 px below figure top
+    legend_offset_px = 45   # legend top, ~45 px below figure top (just under title)
+    title_y = 1 - title_offset_px / chart_height
+    legend_y = 1 - legend_offset_px / chart_height
     _apply_chart_layout(
         fig, "Step Timeline (colored by phase, labeled by action)",
         xaxis="Duration (s)", yaxis="Step",
-        height=max(450, 28 * len(steps)),
-        margin=dict(l=70, r=200, t=90, b=40),
+        height=chart_height,
+        margin=dict(l=70, r=200, t=top_margin, b=40),
         showlegend=True, barmode="overlay",
-        legend=dict(orientation="h", yanchor="bottom", y=1.06,
-                    xanchor="center", x=0.5),
+        legend=dict(orientation="h", yref="container", yanchor="top",
+                    y=legend_y, xanchor="center", x=0.5),
     )
-    # Pin the title below the legend to prevent the two from overlapping.
+    # Pin the title above the legend in container coords.
     fig.update_layout(title=dict(
         text="Step Timeline (colored by phase, labeled by action)",
-        y=0.94, yanchor="top", x=0.02, xanchor="left",
+        y=title_y, yref="container", yanchor="top",
+        x=0.5, xanchor="center",
     ))
     fig.update_yaxes(
         tickvals=y_pos, ticktext=step_labels,

@@ -136,57 +136,67 @@ def _md_to_html_preview(text: str) -> str:
 _FILTER_CHIPS = ["Assistant", "User", "Tool Calls", "Errors", "Reasoning"]
 
 
+def _render_one_agent_card(a: dict, agent_hex: str) -> str:
+    """Build one agent KPI card. Shared by single- and multi-agent paths."""
+    label = html.escape(a["label"])
+    full_id = html.escape(a.get("agent_id", ""))
+
+    # Spawning link (only meaningful for sub-agents)
+    spawn_html = ""
+    if a.get("spawned_by_step") is not None:
+        sidx = a["spawned_by_step"]
+        spawn_html = (
+            f"<div class='agent-card-spawn'>"
+            f"<span class='insight-step-link' onclick=\""
+            f"(function(){{var tabs=document.querySelectorAll('.tab-nav button');"
+            f"if(tabs.length>1)tabs[1].click();"
+            f"setTimeout(function(){{var c=document.getElementById('wf-card-{sidx}');"
+            f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
+            f"}},200);}})()\">Spawned at step #{sidx}</span>"
+            f"</div>"
+        )
+
+    _cache_display = (
+        "N/A" if a["cache_read_tokens"] == 0 and a["total_tokens"] > 0
+        else f"{a['cache_efficiency_pct']:.1f}%"
+    )
+    return (
+        f"<div class='agent-card' title='{full_id}'"
+        f" style='border-left:4px solid {agent_hex};'>"
+        f"<div class='agent-card-header'>"
+        f"<span class='agent-card-label' style='color:{agent_hex};'>{label}</span>"
+        f"<span class='agent-card-steps'>{a['step_count']} steps</span>"
+        f"</div>"
+        f"{spawn_html}"
+        f"<div class='agent-card-grid'>"
+        f"<div><span class='agent-kpi-val'>{a['total_tokens']:,}</span><span class='agent-kpi-label'>Tokens</span></div>"
+        f"<div><span class='agent-kpi-val'>{a['total_duration_s']:.1f}s</span><span class='agent-kpi-label'>Duration</span></div>"
+        f"<div><span class='agent-kpi-val'>{a['tool_call_count']}</span><span class='agent-kpi-label'>Tool Calls</span></div>"
+        f"<div><span class='agent-kpi-val'>{a['error_count']}</span><span class='agent-kpi-label'>Errors</span></div>"
+        f"<div><span class='agent-kpi-val'>{_cache_display}</span><span class='agent-kpi-label'>Cache %</span></div>"
+        f"<div><span class='agent-kpi-val'>{a['tokens_per_second']:,.0f}</span><span class='agent-kpi-label'>Tok/s</span></div>"
+        f"</div>"
+        f"</div>"
+    )
+
+
 def render_agent_summary_cards(agent_summaries: list[dict]) -> str:
     """Render per-agent summary cards as styled HTML.
 
-    Returns a placeholder for single-agent sessions.
+    For single-agent sessions, render a single card so the user still sees the
+    agent's stats in this section (rather than an empty placeholder). The card
+    template is identical to the multi-agent case.
     """
-    if len(agent_summaries) <= 1:
+    if not agent_summaries:
         return (
             "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
-            "Single agent session &mdash; no multi-agent breakdown.</div>"
+            "No agent activity recorded.</div>"
         )
 
-    cards: list[str] = []
-    for aidx, a in enumerate(agent_summaries):
-        agent_hex = AGENT_COLORS[aidx % len(AGENT_COLORS)]
-        label = html.escape(a["label"])
-        full_id = html.escape(a.get("agent_id", ""))
-
-        # Spawning link
-        spawn_html = ""
-        if a.get("spawned_by_step") is not None:
-            sidx = a["spawned_by_step"]
-            spawn_html = (
-                f"<div class='agent-card-spawn'>"
-                f"<span class='insight-step-link' onclick=\""
-                f"(function(){{var tabs=document.querySelectorAll('.tab-nav button');"
-                f"if(tabs.length>1)tabs[1].click();"
-                f"setTimeout(function(){{var c=document.getElementById('wf-card-{sidx}');"
-                f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
-                f"}},200);}})()\">Spawned at step #{sidx}</span>"
-                f"</div>"
-            )
-
-        _cache_display = "N/A" if a["cache_read_tokens"] == 0 and a["total_tokens"] > 0 else f"{a['cache_efficiency_pct']:.1f}%"
-        cards.append(
-            f"<div class='agent-card' title='{full_id}'"
-            f" style='border-left:4px solid {agent_hex};'>"
-            f"<div class='agent-card-header'>"
-            f"<span class='agent-card-label' style='color:{agent_hex};'>{label}</span>"
-            f"<span class='agent-card-steps'>{a['step_count']} steps</span>"
-            f"</div>"
-            f"{spawn_html}"
-            f"<div class='agent-card-grid'>"
-            f"<div><span class='agent-kpi-val'>{a['total_tokens']:,}</span><span class='agent-kpi-label'>Tokens</span></div>"
-            f"<div><span class='agent-kpi-val'>{a['total_duration_s']:.1f}s</span><span class='agent-kpi-label'>Duration</span></div>"
-            f"<div><span class='agent-kpi-val'>{a['tool_call_count']}</span><span class='agent-kpi-label'>Tool Calls</span></div>"
-            f"<div><span class='agent-kpi-val'>{a['error_count']}</span><span class='agent-kpi-label'>Errors</span></div>"
-            f"<div><span class='agent-kpi-val'>{_cache_display}</span><span class='agent-kpi-label'>Cache %</span></div>"
-            f"<div><span class='agent-kpi-val'>{a['tokens_per_second']:,.0f}</span><span class='agent-kpi-label'>Tok/s</span></div>"
-            f"</div>"
-            f"</div>"
-        )
+    cards = [
+        _render_one_agent_card(a, AGENT_COLORS[aidx % len(AGENT_COLORS)])
+        for aidx, a in enumerate(agent_summaries)
+    ]
     return "<div class='agent-cards-grid'>" + "".join(cards) + "</div>"
 
 
