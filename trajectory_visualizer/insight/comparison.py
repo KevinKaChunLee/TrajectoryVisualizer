@@ -249,8 +249,12 @@ def run_comparison(
             "notes": notes,
         }
 
-        # Render HTML report
-        report_html = build_comparison_report_html(report)
+        # Render HTML report. The Insight UI's Comparison tab suppresses the
+        # divergence-patterns section (heading, glossary, table) — the patterns
+        # are still computed for downstream consumers but are hidden from the
+        # rendered report. The standalone Converge app (converge/app.py) goes
+        # through build_comparison_report directly and is unaffected.
+        report_html = build_comparison_report_html({**report, "patterns": []})
 
         # Build charts with dark mode
         milestone_fig = build_milestone_timeline_chart(ref_milestones, cmp_milestones)
