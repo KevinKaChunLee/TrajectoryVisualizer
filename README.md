@@ -97,10 +97,9 @@ exposes an `export` command that writes trajectory JSON to stdout.
    cd /path/to/your/project
    opencode session list --format json -n 10
    ```
-3. Export the chosen session to JSON (banner output goes to stderr, so
-   redirection produces a clean file):
+3. Export the chosen session to JSON, Subagents have a separate session id so use the helper in `scripts/`
    ```bash
-   opencode export <session_id> > op_trajectory.json
+   python scripts/opencode_consolidator.py <session-id> op_trajectory.json
    ```
 4. Upload `op_trajectory.json` in the Insight dashboard. The loader detects the
    `info` + `messages` shape automatically; sub-agent sessions are threaded in.
