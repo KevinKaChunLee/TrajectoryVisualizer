@@ -34,10 +34,45 @@ trajectory-visualizer
 
 Default: `http://localhost:7860`. Upload a trajectory JSON via the file picker at the top of the UI.
 
-Custom port or public share link:
+Custom port or host:
 
 ```bash
-python -m trajectory_visualizer.insight --port 8080 --share
+# Different port
+python -m trajectory_visualizer.insight --port 8080
+
+# Access from any IP on the network
+python -m trajectory_visualizer.insight --host 0.0.0.0
+# Then access it via your server's IP address: `http://YOUR_IP:7860`
+
+# Create a public share link
+python -m trajectory_visualizer.insight --share
+```
+
+---
+
+## Common Issues
+
+### Server cannot start
+
+If the dashboard fails to start or shows connection errors, your environment may be using a proxy configuration that interferes with localhost connections. Add `127.0.0.1,localhost` to the `no_proxy` environment variable:
+
+```bash
+# Linux/Mac
+export no_proxy="127.0.0.1,localhost,$no_proxy"
+
+# Windows (PowerShell)
+$env:no_proxy = "127.0.0.1,localhost,$env:no_proxy"
+
+# Windows (CMD)
+set no_proxy=127.0.0.1,localhost;%no_proxy%
+```
+
+### Port already in use
+
+If port 7860 is already in use, specify a different port:
+
+```bash
+python -m trajectory_visualizer.insight --port 8080
 ```
 
 ---
@@ -97,26 +132,11 @@ exposes an `export` command that writes trajectory JSON to stdout.
    cd /path/to/your/project
    opencode session list --format json -n 10
    ```
-3. Export the chosen session to JSON. Two paths depending on whether the
-   session spawned sub-agents:
-
-   **Typical case — no special sub-agents.** Use OpenCode's built-in
-   exporter (banner output goes to stderr, so redirection produces a clean
-   file):
+3. Export the chosen session to JSON (banner output goes to stderr, so
+   redirection produces a clean file):
    ```bash
-   opencode export <session-id> > op_trajectory.json
+   opencode export <session_id> > op_trajectory.json
    ```
-
-   **Customized case — session has special sub-agents.** Sub-agent invocations live
-   under their own session IDs, so `opencode export` on the parent only gives
-   you the parent's messages. Use the consolidator helper in `scripts/` to
-   recursively pull the parent and every child session into one JSON:
-   ```bash
-   python scripts/opencode_consolidator.py <session-id> op_trajectory.json
-   ```
-   The consolidator follows tool-call metadata to discover child session IDs
-   and emits a flat `{"sessions": [...]}` structure that the loader threads
-   into a single trajectory.
 4. Upload `op_trajectory.json` in the Insight dashboard. The loader detects the
    `info` + `messages` shape automatically; sub-agent sessions are threaded in.
 

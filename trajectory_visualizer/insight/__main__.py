@@ -7,6 +7,7 @@ import sys
 def main():
     parser = argparse.ArgumentParser(description="Insight")
     parser.add_argument("--port", type=int, default=7860, help="Server port (default: 7860)")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Server host (default: 127.0.0.1). Use 0.0.0.0 to accept connections from any IP.")
     parser.add_argument("--share", action="store_true", help="Create a public Gradio link")
     args = parser.parse_args()
 
@@ -23,7 +24,7 @@ def main():
         sys.exit(1)
 
     app = build_ui()
-    app.launch(server_port=args.port, share=args.share, css=APP_CSS)
+    app.launch(server_name=args.host, server_port=args.port, share=args.share, css=APP_CSS)
 
 
 if __name__ == "__main__":
