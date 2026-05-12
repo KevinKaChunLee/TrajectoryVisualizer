@@ -34,10 +34,45 @@ trajectory-visualizer
 
 Default: `http://localhost:7860`. Upload a trajectory JSON via the file picker at the top of the UI.
 
-Custom port or public share link:
+Custom port or host:
 
 ```bash
-python -m trajectory_visualizer.insight --port 8080 --share
+# Different port
+python -m trajectory_visualizer.insight --port 8080
+
+# Access from any IP on the network
+python -m trajectory_visualizer.insight --host 0.0.0.0
+# Then access it via your server's IP address: `http://YOUR_IP:7860`
+
+# Create a public share link
+python -m trajectory_visualizer.insight --share
+```
+
+---
+
+## Common Issues
+
+### Server cannot start
+
+If the dashboard fails to start or shows connection errors, your environment may be using a proxy configuration that interferes with localhost connections. Add `127.0.0.1,localhost` to the `no_proxy` environment variable:
+
+```bash
+# Linux/Mac
+export no_proxy="127.0.0.1,localhost,$no_proxy"
+
+# Windows (PowerShell)
+$env:no_proxy = "127.0.0.1,localhost,$env:no_proxy"
+
+# Windows (CMD)
+set no_proxy=127.0.0.1,localhost;%no_proxy%
+```
+
+### Port already in use
+
+If port 7860 is already in use, specify a different port:
+
+```bash
+python -m trajectory_visualizer.insight --port 8080
 ```
 
 ---
