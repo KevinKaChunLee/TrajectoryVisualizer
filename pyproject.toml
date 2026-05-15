@@ -22,7 +22,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "gradio>=4.0",
+    "gradio>=6.14.0",
+    "gradio_client>=2.5.0",
     "plotly>=5.0",
     "pygments>=2.0",
     "pandas>=2.0",

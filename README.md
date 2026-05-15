@@ -13,12 +13,29 @@ Supports trajectories from **Claude Code**, **OpenCode**, and **CodeArts** out o
 ```bash
 git clone https://github.com/rshu/TrajectoryVisualizer.git
 cd TrajectoryVisualizer
-pip install -e .                     # package-managed (recommended)
+```
+
+Pick one of the workflows below. Requires Python 3.11+.
+
+### uv (recommended)
+
+[`uv`](https://github.com/astral-sh/uv) is the fastest path and produces a
+reproducible `uv.lock`. From the repo root:
+
+```bash
+uv sync                              # creates .venv, installs the project + deps
+```
+
+That's it — no separate `pip install -e .` step. To add or upgrade a dependency
+later, use `uv add <pkg>` / `uv lock --upgrade`.
+
+### pip
+
+```bash
+pip install -e .                     # package-managed
 # — or —
 pip install -r requirements.txt      # plain requirements file
 ```
-
-Requires Python 3.11+.
 
 ---
 
@@ -27,6 +44,12 @@ Requires Python 3.11+.
 Launch the dashboard:
 
 ```bash
+# uv
+uv run trajectory-visualizer
+# or
+uv run python -m trajectory_visualizer.insight
+
+# pip / activated venv
 python -m trajectory_visualizer.insight
 # or
 trajectory-visualizer
@@ -34,7 +57,7 @@ trajectory-visualizer
 
 Default: `http://localhost:7860`. Upload a trajectory JSON via the file picker at the top of the UI.
 
-Custom port or host:
+Custom port or host (prefix any of these with `uv run` when using uv):
 
 ```bash
 # Different port
