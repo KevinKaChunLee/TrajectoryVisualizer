@@ -225,6 +225,86 @@ class TrainingLabelSchemaTests(unittest.TestCase):
         self.assertEqual(step["decision"]["label"], "drop")
         self.assertIn("drop_rejected_turn", step["decision"]["matched_rules"])
 
+    def test_training_turn_message_includes_causal_value_context(self):
+        from scripts.training_labeler import build_training_turn_message, load_training_steps
+        from scripts.training_labeler import _build_turn_context
+
+        steps = load_training_steps(str(TRAINING_CONVERSATION_FIXTURE))
+        assistant_steps = [s for s in steps if s.get("role") == "assistant"]
+        target = assistant_steps[1]
+        context = _build_turn_context(steps, target)
+        context["behavior"] = {"phase": "implement", "action": "implement_runtime_logic"}
+        context["quality"] = {"verdict": "good", "defect_flags": [], "confidence": "high"}
+
+        message = build_training_turn_message(target, context)
+
+        self.assertIn("REFERENCE CONTEXT - previous user request", message)
+        self.assertIn("REFERENCE CONTEXT - previous assistant/tool turns", message)
+        self.assertIn("TARGET ASSISTANT TURN TO LABEL", message)
+        self.assertIn("REFERENCE CONTEXT - following assistant/tool turns", message)
+        self.assertIn("REFERENCE CONTEXT - later outcome summary", message)
+        self.assertIn("Only label the target assistant turn", message)
+        self.assertIn("Behavior label: implement/implement_runtime_logic", message)
+        self.assertIn("Quality label", message)
+
+    def test_training_label_prompts_are_targeted_for_loss_mask_judgment(self):
+        from scripts.training_labeler import build_quality_system_prompt, build_value_system_prompt
+
+        quality_prompt = build_quality_system_prompt("legacy rubric text with schema_version v2")
+        value_prompt = build_value_system_prompt("legacy rubric text with schema_version v2")
+
+        self.assertIn("label exactly one TARGET assistant turn", quality_prompt)
+        self.assertIn("Do not score the reference context", quality_prompt)
+        self.assertIn("Reject is rare", quality_prompt)
+        self.assertNotIn("schema_version", quality_prompt)
+
+        self.assertIn("loss-mask", value_prompt)
+        self.assertIn("label exactly one TARGET assistant turn", value_prompt)
+        self.assertIn("Do not score the reference context", value_prompt)
+        self.assertIn("Value `none` is rare", value_prompt)
+        self.assertIn("Routine next-step narration is low value", value_prompt)
+        self.assertIn("new_evidence_introduced requires concrete evidence", value_prompt)
+        self.assertNotIn("schema_version", value_prompt)
+
+    def test_training_labeler_retries_transient_labeler_failures(self):
+        from scripts.training_labeler import label_training_trajectory
+        from trajectory_visualizer.insight.training_labels import load_training_labeled_json
+
+        attempts = {"behavior": 0}
+
+        def flaky_behavior_labeler(step, context):
+            attempts["behavior"] += 1
+            if attempts["behavior"] == 1:
+                raise TimeoutError("transient timeout")
+            return {"phase": "implement", "action": "implement_runtime_logic"}
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            output_path = Path(f.name)
+
+        try:
+            label_training_trajectory(
+                str(TRAINING_CONVERSATION_FIXTURE),
+                str(output_path),
+                behavior_labeler=flaky_behavior_labeler,
+                quality_labeler=lambda step, context: {
+                    "verdict": "good",
+                    "defect_flags": [],
+                    "confidence": "high",
+                },
+                value_labeler=lambda step, context: {
+                    "tier": "high",
+                    "tags": ["tool_use_pattern"],
+                    "confidence": "high",
+                },
+                retry_delay=0,
+            )
+            data = load_training_labeled_json(str(output_path))
+        finally:
+            output_path.unlink(missing_ok=True)
+
+        self.assertEqual(len(data["steps"]), 2)
+        self.assertGreaterEqual(attempts["behavior"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

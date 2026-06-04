@@ -6,6 +6,7 @@ from pathlib import Path
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 TRAINING_LABEL_FIXTURE = FIXTURE_DIR / "training_label_v2_minimal.json"
+TRAINING_CONVERSATION_FIXTURE = FIXTURE_DIR / "training_conversation_minimal.json"
 
 
 class TrainingLabelUiTests(unittest.TestCase):
@@ -31,6 +32,49 @@ class TrainingLabelUiTests(unittest.TestCase):
         self.assertIn("tool_use_pattern: 1", payload["status_html"])
         self.assertGreater(len(payload["phase_count_fig"].data), 0)
         self.assertGreater(len(payload["action_count_fig"].data), 0)
+
+    def test_training_v2_timeline_uses_tokens_instead_of_missing_duration(self):
+        from trajectory_visualizer.insight.insight import build_label_ui_payload
+
+        payload = build_label_ui_payload(str(TRAINING_LABEL_FIXTURE))
+
+        self.assertEqual(list(payload["timeline_fig"].data[0].x), [1234])
+        self.assertEqual(payload["timeline_fig"].layout.xaxis.title.text, "Estimated tokens")
+        self.assertIn("Token Length", payload["timeline_fig"].layout.title.text)
+
+    def test_training_v2_label_charts_use_compact_layout(self):
+        from trajectory_visualizer.insight.insight import build_label_ui_payload
+
+        payload = build_label_ui_payload(str(TRAINING_LABEL_FIXTURE))
+        chart_keys = [
+            "phase_count_fig",
+            "action_count_fig",
+            "phase_duration_fig",
+            "action_duration_fig",
+        ]
+
+        for key in chart_keys:
+            with self.subTest(chart=key):
+                fig = payload[key]
+                self.assertLessEqual(fig.layout.height, 300)
+                self.assertLessEqual(fig.layout.margin.t, 52)
+                self.assertLessEqual(fig.layout.margin.r, 32)
+                self.assertEqual(fig.data[0].textposition, "inside")
+
+        timeline = payload["timeline_fig"]
+        self.assertLessEqual(timeline.layout.margin.r, 40)
+        self.assertEqual(timeline.data[0].textposition, "inside")
+        self.assertTrue(timeline.data[0].cliponaxis)
+
+    def test_training_v2_token_timeline_keeps_bar_text_short(self):
+        from trajectory_visualizer.insight.insight import build_label_ui_payload
+
+        payload = build_label_ui_payload(str(TRAINING_LABEL_FIXTURE))
+        timeline = payload["timeline_fig"]
+
+        self.assertEqual(list(timeline.data[0].text), ["1,234 tok"])
+        self.assertIn("implement_runtime_logic", timeline.layout.yaxis.ticktext[0])
+        self.assertIn("tool_use_pattern", timeline.data[0].hovertext[0])
 
     def test_legacy_behavior_label_file_remains_legacy(self):
         from trajectory_visualizer.insight.insight import build_label_ui_payload
@@ -67,6 +111,34 @@ class TrainingLabelUiTests(unittest.TestCase):
         self.assertIn("Labels loaded", payload["badge_html"])
         self.assertNotIn("Training labels loaded", payload["badge_html"])
         self.assertEqual(payload["phase_count_fig"].layout.title.text, "Step Count by Phase")
+        self.assertEqual(list(payload["timeline_fig"].data[0].x), [2.5])
+        self.assertEqual(payload["timeline_fig"].layout.xaxis.title.text, "Duration (s)")
+
+    def test_training_labels_can_be_attached_to_workflow_steps(self):
+        from trajectory_visualizer.insight.insight import attach_training_labels_to_steps
+        from trajectory_visualizer.insight.loaders import load_trajectory
+        from trajectory_visualizer.insight.parser import parse_steps
+        from trajectory_visualizer.insight.rendering import format_step_detail, render_workflow_html
+        from trajectory_visualizer.insight.training_labels import load_training_labeled_json
+
+        raw = load_trajectory(str(TRAINING_CONVERSATION_FIXTURE))
+        steps = parse_steps(raw)
+        first_assistant_idx = next(s["index"] for s in steps if s.get("role") == "assistant")
+        labels = load_training_labeled_json(str(TRAINING_LABEL_FIXTURE))
+        labels["steps"][0]["index"] = first_assistant_idx
+
+        enriched = attach_training_labels_to_steps(steps, labels)
+        assistant = next(s for s in enriched if s.get("index") == first_assistant_idx)
+
+        self.assertEqual(assistant["training_label"]["quality"]["verdict"], "good")
+        workflow_html = render_workflow_html(enriched)
+        detail_html = format_step_detail(assistant)
+
+        self.assertIn("Q good", workflow_html)
+        self.assertIn("V high", workflow_html)
+        self.assertIn("keep", workflow_html)
+        self.assertIn("Training Labels", detail_html)
+        self.assertIn("tool_use_pattern", detail_html)
 
 
 if __name__ == "__main__":

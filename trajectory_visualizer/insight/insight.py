@@ -772,6 +772,139 @@ def _count_bar_chart(counts: dict[str, int], title: str, dark: bool = False) -> 
     return fig
 
 
+def _training_label_compact_count_chart(
+    counts: dict[str, int],
+    title: str,
+    *,
+    orientation: str = "v",
+    color_map: dict[str, str] | None = None,
+    dark: bool = False,
+) -> go.Figure:
+    """Compact charts for training-label summaries inside the Labels panel."""
+    items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    labels = [key for key, _ in items]
+    values = [value for _, value in items]
+    colors = [
+        (color_map or {}).get(label, "#2563eb")
+        for label in labels
+    ]
+    if orientation == "h":
+        fig = go.Figure(go.Bar(
+            x=values,
+            y=labels,
+            orientation="h",
+            text=[str(v) for v in values],
+            textposition="inside",
+            marker_color=colors,
+            cliponaxis=True,
+            hovertemplate="%{y}: %{x}<extra></extra>",
+        ))
+        fig.update_yaxes(automargin=True)
+        xaxis_title = "Count"
+        yaxis_title = ""
+    else:
+        fig = go.Figure(go.Bar(
+            x=labels,
+            y=values,
+            text=[str(v) for v in values],
+            textposition="inside",
+            marker_color=colors,
+            cliponaxis=True,
+            hovertemplate="%{x}: %{y}<extra></extra>",
+        ))
+        xaxis_title = ""
+        yaxis_title = "Count"
+    max_val = max(values or [0])
+    fig.update_layout(
+        template="plotly_dark" if dark else "plotly_white",
+        height=280,
+        title=dict(text=title, x=0.5, xanchor="center", font=dict(size=14)),
+        margin=dict(l=80 if orientation == "h" else 42, r=24, t=48, b=54),
+        xaxis_title=xaxis_title,
+        yaxis_title=yaxis_title,
+        showlegend=False,
+    )
+    if max_val > 0:
+        if orientation == "h":
+            fig.update_xaxes(range=[0, max_val * 1.12])
+        else:
+            fig.update_yaxes(range=[0, max_val * 1.12])
+    return fig
+
+
+def _build_training_label_token_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    """Training-label timeline using assistant turn token length instead of duration."""
+    if not steps:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark" if dark else "plotly_white", height=380)
+        return fig
+
+    y_pos = list(range(len(steps)))
+    step_indices = [s.get("index", i) for i, s in enumerate(steps)]
+    tokens = [s.get("tokens_total") or 0 for s in steps]
+    phases = [s.get("phase", "") for s in steps]
+    actions = [s.get("action", "") for s in steps]
+    decisions = [(s.get("decision", {}) or {}).get("label", "") for s in steps]
+    values = [(s.get("value", {}) or {}).get("tier", "") for s in steps]
+    qualities = [(s.get("quality", {}) or {}).get("verdict", "") for s in steps]
+    value_tags = [
+        (s.get("value", {}) or {}).get("tags") or []
+        for s in steps
+    ]
+    row_labels = [
+        f"{step_indices[i]} · {actions[i]}"
+        for i in range(len(steps))
+    ]
+
+    from .palette import LABEL_PHASE_COLORS
+    colors = [LABEL_PHASE_COLORS.get(phase, "#6b7280") for phase in phases]
+    hover = [
+        f"<b>Assistant step {step_indices[i]}</b><br>"
+        f"Phase: {phases[i]}<br>"
+        f"Action: {actions[i]}<br>"
+        f"Quality: {qualities[i]}<br>"
+        f"Value: {values[i]}<br>"
+        f"Value tags: {', '.join(value_tags[i]) or 'none'}<br>"
+        f"Decision: {decisions[i]}<br>"
+        f"Estimated tokens: {tokens[i]:,}"
+        for i in range(len(steps))
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=tokens,
+        y=y_pos,
+        orientation="h",
+        marker_color=colors,
+        text=[f"{tokens[i]:,} tok" for i in range(len(steps))],
+        textposition="inside",
+        insidetextanchor="start",
+        textfont=dict(size=10, color="white"),
+        cliponaxis=True,
+        hovertext=hover,
+        hoverinfo="text",
+        showlegend=False,
+    ))
+    fig.update_yaxes(
+        tickmode="array",
+        tickvals=y_pos,
+        ticktext=row_labels,
+        autorange="reversed",
+        automargin=True,
+    )
+    fig.update_layout(
+        template="plotly_dark" if dark else "plotly_white",
+        title="Assistant Token Length Timeline (colored by phase)",
+        xaxis_title="Estimated tokens",
+        yaxis_title="Assistant step",
+        height=max(320, 24 * len(steps)),
+        margin=dict(l=140, r=28, t=56, b=42),
+    )
+    max_tokens = max(tokens or [0])
+    if max_tokens > 0:
+        fig.update_xaxes(range=[0, max_tokens * 1.08])
+    return fig
+
+
 def _counts_inline(counts: dict[str, int], *, limit: int | None = None) -> str:
     items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     if limit is not None:
@@ -795,6 +928,29 @@ def _build_training_label_summary_html(agg: dict) -> str:
     )
 
 
+def attach_training_labels_to_steps(steps: list[dict], label_data: dict) -> list[dict]:
+    """Return steps with matching training v2 labels attached to assistant turns."""
+    labels_by_index = {
+        step.get("index"): step
+        for step in label_data.get("steps", [])
+        if isinstance(step, dict)
+    }
+    enriched = []
+    for step in steps:
+        copied = dict(step)
+        label = labels_by_index.get(step.get("index"))
+        if label and step.get("role") == "assistant":
+            copied["training_label"] = {
+                "phase": label.get("phase", ""),
+                "action": label.get("action", ""),
+                "quality": label.get("quality", {}),
+                "value": label.get("value", {}),
+                "decision": label.get("decision", {}),
+            }
+        enriched.append(copied)
+    return enriched
+
+
 def _load_label_json_kind(file_path: str) -> str:
     try:
         with open(file_path, encoding="utf-8") as f:
@@ -812,15 +968,35 @@ def build_label_ui_payload(file_path: str) -> dict:
     if kind == "training_v2":
         data = load_training_labeled_json(file_path)
         agg = aggregate_training_labels(data)
+        from .palette import LABEL_PHASE_COLORS
         action_to_phase = {
             step.get("action", "unknown"): step.get("phase", "unknown")
             for step in agg.get("steps", [])
         }
-        phase_fig = build_label_phase_count_chart(agg["phase_counts"])
-        action_fig = build_label_action_count_chart(agg["action_counts"], action_to_phase)
-        quality_fig = _count_bar_chart(agg["quality_verdict_counts"], "Quality Verdicts")
-        value_fig = _count_bar_chart(agg["value_tier_counts"], "Value Tiers")
-        timeline_fig = build_label_timeline_chart(agg["steps"])
+        action_colors = {
+            action: LABEL_PHASE_COLORS.get(action_to_phase.get(action, ""), "#2563eb")
+            for action in agg["action_counts"]
+        }
+        phase_fig = _training_label_compact_count_chart(
+            agg["phase_counts"],
+            "Phase Counts",
+            color_map=LABEL_PHASE_COLORS,
+        )
+        action_fig = _training_label_compact_count_chart(
+            agg["action_counts"],
+            "Action Counts",
+            orientation="h",
+            color_map=action_colors,
+        )
+        quality_fig = _training_label_compact_count_chart(
+            agg["quality_verdict_counts"],
+            "Quality Verdicts",
+        )
+        value_fig = _training_label_compact_count_chart(
+            agg["value_tier_counts"],
+            "Value Tiers",
+        )
+        timeline_fig = _build_training_label_token_timeline_chart(agg["steps"])
         n_steps = len(agg.get("steps", []))
         decisions = _counts_inline(agg.get("decision_counts", {}))
         badge = (
@@ -1204,6 +1380,28 @@ def build_ui() -> gr.Blocks:
                                 });
                             }
 
+                            /* Detail tab click handler (delegated, survives detail HTML replacement) */
+                            if (!window.__dpTabHandlerAttached) {
+                                window.__dpTabHandlerAttached = true;
+                                document.addEventListener('click', function(e) {
+                                    var tab = e.target.closest('.dp-tab');
+                                    if (!tab) return;
+                                    var panel = tab.closest('.dp-panel');
+                                    if (!panel) return;
+                                    panel.querySelectorAll('.dp-tab').forEach(function(x) {
+                                        x.classList.remove('dp-tab-active');
+                                    });
+                                    panel.querySelectorAll('.dp-tab-content').forEach(function(x) {
+                                        x.classList.remove('dp-tab-visible');
+                                    });
+                                    tab.classList.add('dp-tab-active');
+                                    var content = panel.querySelector(
+                                        '[data-tab-content="' + tab.dataset.tab + '"]'
+                                    );
+                                    if (content) content.classList.add('dp-tab-visible');
+                                });
+                            }
+
                             /* Card click handler */
                             function selectCard(card) {
                                 if (!card) return;
@@ -1223,6 +1421,8 @@ def build_ui() -> gr.Blocks:
                                     var details = JSON.parse(atob(storeEl.dataset.b64));
                                     if (details[idx] != null) {
                                         target.innerHTML = details[idx];
+                                        var detailPanel = target.closest('.detail-panel');
+                                        if (detailPanel) detailPanel.scrollTop = 0;
                                     }
                                 } catch(ex) { console.error('wf-click:', ex); }
                             }
@@ -1796,7 +1996,7 @@ def build_ui() -> gr.Blocks:
         _empty_label_fig = go.Figure()
         _empty_label_fig.update_layout(template="plotly_white", height=380)
 
-        def do_load_labels(upload_obj):
+        def do_load_labels(upload_obj, steps_state):
             """Load labeled JSON and update all label UI components.
 
             Returns values matching the output list below:
@@ -1809,8 +2009,13 @@ def build_ui() -> gr.Blocks:
               6: label_charts_row2 (Row visibility)
               7: label_phase_dur_chart (Plot)
               8: label_action_dur_chart (Plot)
-              9: label_timeline_row (Row visibility)
+             9: label_timeline_row (Row visibility)
              10: label_timeline_chart (Plot)
+             11: state_steps
+             12: wf_count_html
+             13: workflow_html
+             14: detail_store
+             15: detail_html
             """
             file_path = None
             if upload_obj is not None:
@@ -1827,10 +2032,25 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty,
+                    steps_state, gr.update(), gr.update(), gr.update(), gr.update(),
                 )
 
             try:
                 payload = build_label_ui_payload(file_path)
+                updated_steps = steps_state
+                wf_count_update = gr.update()
+                workflow_update = gr.update()
+                detail_store_update = gr.update()
+                detail_html_update = gr.update()
+                if payload.get("kind") == "training_v2" and steps_state:
+                    label_data = load_training_labeled_json(file_path)
+                    updated_steps = attach_training_labels_to_steps(steps_state, label_data)
+                    wf_count_update = (
+                        f"<div class='wf-count'>Showing {len(updated_steps)} of {len(updated_steps)} steps</div>"
+                    )
+                    workflow_update = render_workflow_html(updated_steps)
+                    detail_store_update = _prerender_step_details(updated_steps)
+                    detail_html_update = _DETAIL_PLACEHOLDER
             except Exception as exc:
                 return (
                     "",  # label_badge_html
@@ -1840,6 +2060,7 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty,
+                    steps_state, gr.update(), gr.update(), gr.update(), gr.update(),
                 )
 
             return (
@@ -1849,6 +2070,7 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=True), payload["phase_count_fig"], payload["action_count_fig"],
                 gr.update(visible=True), payload["phase_duration_fig"], payload["action_duration_fig"],
                 gr.update(visible=True), payload["timeline_fig"],
+                updated_steps, wf_count_update, workflow_update, detail_store_update, detail_html_update,
             )
 
         label_outputs = [
@@ -1860,16 +2082,21 @@ def build_ui() -> gr.Blocks:
             label_charts_row2, label_phase_dur_chart,
             label_action_dur_chart,
             label_timeline_row, label_timeline_chart,
+            state_steps,
+            wf_count_html,
+            workflow_html,
+            detail_store,
+            detail_html,
         ]
         label_load_btn.click(
             fn=do_load_labels,
-            inputs=[label_file_upload],
+            inputs=[label_file_upload, state_steps],
             outputs=label_outputs,
         )
         # Auto-load labels on file upload
         label_file_upload.change(
             fn=do_load_labels,
-            inputs=[label_file_upload],
+            inputs=[label_file_upload, state_steps],
             outputs=label_outputs,
         )
 
@@ -1886,6 +2113,11 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=False), empty, empty,   # row1 + two charts
                 gr.update(visible=False), empty, empty,   # row2 + two charts
                 gr.update(visible=False), empty,          # timeline row + chart
+                gr.update(),                              # state_steps
+                gr.update(),                              # wf_count_html
+                gr.update(),                              # workflow_html
+                gr.update(),                              # detail_store
+                gr.update(),                              # detail_html
                 gr.update(value=None),                    # clear the file picker
             )
 

@@ -79,6 +79,8 @@ def label_training_trajectory(
     max_tokens: int | None = None,
     max_content_chars: int = 8000,
     delay: float = 0.0,
+    max_retries: int = 2,
+    retry_delay: float = 1.0,
     taxonomy_path: str | None = None,
     rubric_path: str | None = None,
 ) -> dict:
@@ -134,17 +136,21 @@ def label_training_trajectory(
     for position, step in enumerate(assistant_steps):
         context = _build_turn_context(all_steps, step)
         behavior = _normalize_behavior_label(
-            behavior_labeler(step, context),
+            _call_labeler_with_retry(behavior_labeler, step, context, max_retries, retry_delay),
             valid_phases,
             valid_actions,
             action_to_phase,
         )
         context["behavior"] = behavior
 
-        quality = _normalize_quality_label(quality_labeler(step, context))
+        quality = _normalize_quality_label(
+            _call_labeler_with_retry(quality_labeler, step, context, max_retries, retry_delay)
+        )
         context["quality"] = quality
 
-        value = _normalize_value_label(value_labeler(step, context))
+        value = _normalize_value_label(
+            _call_labeler_with_retry(value_labeler, step, context, max_retries, retry_delay)
+        )
         decision = derive_decision({"quality": quality, "value": value})
 
         labeled_steps.append(_build_labeled_step(step, behavior, quality, value, decision))
@@ -170,6 +176,26 @@ def label_training_trajectory(
         json.dump(output, f, indent=2, ensure_ascii=False)
 
     return output
+
+
+def _call_labeler_with_retry(
+    labeler: Labeler,
+    step: dict,
+    context: dict,
+    max_retries: int,
+    retry_delay: float,
+) -> dict:
+    attempts = max(1, max_retries)
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return labeler(step, context)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < attempts - 1 and retry_delay > 0:
+                time.sleep(retry_delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 def load_training_steps(trajectory_path: str) -> list[dict]:
@@ -285,48 +311,138 @@ def _build_value_labeler(
 
 
 def build_quality_system_prompt(rubric_text: str) -> str:
-    return f"""You are labeling assistant turns for SFT training data quality.
+    del rubric_text
+    return """You are labeling training data for turn-level SFT loss-mask decisions.
 
-Use the rubric below and respond with ONLY a JSON object:
-{{"verdict": "good|usable|flawed|reject", "defect_flags": [], "confidence": "high|medium|low"}}
+Your task is to label exactly one TARGET assistant turn. Reference context is
+provided only to understand whether the target turn was locally correct and
+trainable. Do not score the reference context, tool outputs, neighboring turns,
+or the whole trajectory.
+
+Respond with ONLY this JSON object:
+{"verdict": "good|usable|flawed|reject", "defect_flags": [], "confidence": "high|medium|low"}
 
 Do not include a keep/drop/review decision.
 
-## Rubric
+Quality labels:
+- good: clean, correct, and suitable as positive SFT signal.
+- usable: acceptable but ordinary, terse, or mildly incomplete.
+- flawed: contains a real issue but still has some useful signal.
+- reject: unusable as positive SFT because it is clearly wrong, unsafe,
+  instruction-violating, unreadable/malformed, or seriously context-misread.
 
-{rubric_text}"""
+Reject is rare. A mid-task turn is not reject merely because it is incomplete,
+transitional, or followed by more work. If the target turn sensibly selects the
+next action, reads relevant code, verifies evidence, identifies a bug, prepares
+an implementation step, or summarizes requirements, prefer good/usable/flawed
+over reject.
+
+Allowed defect_flags:
+- incorrect
+- unsupported_claim
+- instruction_violation
+- incomplete
+- oververbose_noise
+- unsafe_or_sensitive
+- format_broken
+- context_misread
+
+Use format_broken only when the TARGET turn itself is malformed or impossible
+to read in its scaffold."""
 
 
 def build_value_system_prompt(rubric_text: str) -> str:
-    return f"""You are labeling assistant turns for marginal training value.
+    del rubric_text
+    return """You are labeling marginal training value for turn-level SFT loss-mask decisions.
 
-Use the rubric below and respond with ONLY a JSON object:
-{{"tier": "high|medium|low|none", "tags": [], "confidence": "high|medium|low"}}
+Your task is to label exactly one TARGET assistant turn. Reference context is
+provided only to judge the target turn's marginal teaching contribution.
+Do not score the reference context, neighboring turns, or the whole trajectory.
 
-Value is marginal teaching contribution, not local answer quality. Do not
-include a keep/drop/review decision.
+Respond with ONLY this JSON object:
+{"tier": "high|medium|low|none", "tags": [], "confidence": "high|medium|low"}
 
-## Rubric
+Do not include a keep/drop/review decision.
 
-{rubric_text}"""
+Value is marginal teaching contribution for deciding where loss should matter,
+not local answer quality.
+
+Value tiers:
+- high: should survive trajectory compression; decisive evidence, strategy
+  pivot, recovery, implementation, high-skill operation, or final verification.
+- medium: useful enough to retain in many trajectories; advances the task with
+  relevant evidence, planning, implementation, debugging, or verification.
+- low: locally reasonable but mostly routine, transitional, repeated,
+  administrative, or weakly informative.
+- none: no positive SFT signal; pure duplicate, empty/tool-echo noise, or a
+  target turn that adds no causal signal and is not needed by later progress.
+
+Value `none` is rare. A target turn that chooses the next tool/action, reads
+relevant code, verifies a fact, reproduces a bug, narrows a root cause,
+creates/updates implementation, checks requirements, or summarizes a real
+state transition has at least low value. Prefer low over none for ordinary
+mid-task progress; prefer low over medium when the target turn is mostly
+transitional.
+
+Routine next-step narration is low value: statements like "let me read the
+README", "now I will create the next module", "let me check the file", or
+"the user is asking me to confirm" are usually low unless the TARGET turn also
+contains concrete new evidence, a real decision, an implementation change, or
+a verification result.
+
+Tag calibration:
+- new_evidence_introduced requires concrete evidence in the TARGET turn itself,
+  such as observed tool output, a discovered root cause, a code fact, or a
+  verified result. Intent to inspect something is not new evidence.
+- verification_anchor requires a concrete verification result in the TARGET
+  turn, not merely a plan to verify later.
+- reasoning_pattern is for reusable reasoning structure, not generic narration.
+
+Allowed tags:
+- new_evidence_introduced
+- strategy_pivot
+- successful_recovery
+- high_skill_operation
+- verification_anchor
+- reasoning_pattern
+- tool_use_pattern
+- negative_example"""
 
 
 def build_training_turn_message(step: dict, context: dict, max_chars: int = 8000) -> str:
     """Build a compact turn/context prompt for quality and value passes."""
     parts = []
     previous_user = context.get("previous_user")
-    next_steps = context.get("next_steps", [])
-    if previous_user:
-        parts.append("Previous user turn:\n" + _step_text(previous_user))
-    parts.append("Current assistant turn:\n" + step_labeler.build_step_message(step, max_chars=max_chars))
+    previous_neighborhood = context.get("previous_neighborhood", [])
+    following_neighborhood = context.get("following_neighborhood", [])
+    parts.append(
+        "TASK\n"
+        "Only label the target assistant turn. Use reference context only as evidence "
+        "for judging that one target turn."
+    )
+    parts.append(
+        "TARGET ASSISTANT TURN TO LABEL\n"
+        + step_labeler.build_step_message(step, max_chars=max_chars)
+    )
     if context.get("behavior"):
         behavior = context["behavior"]
-        parts.append(f"Behavior label: {behavior.get('phase')}/{behavior.get('action')}")
+        parts.append(f"TARGET auxiliary Behavior label: {behavior.get('phase')}/{behavior.get('action')}")
     if context.get("quality"):
-        parts.append("Quality label:\n" + json.dumps(context["quality"], ensure_ascii=False))
-    if next_steps:
-        next_preview = "\n\n".join(_step_text(s) for s in next_steps[:4])
-        parts.append("Following context:\n" + next_preview)
+        parts.append("TARGET auxiliary Quality label:\n" + json.dumps(context["quality"], ensure_ascii=False))
+    if previous_user:
+        parts.append("REFERENCE CONTEXT - previous user request:\n" + _step_text(previous_user))
+    parts.append(
+        "REFERENCE CONTEXT - previous assistant/tool turns:\n"
+        + _format_context_steps(previous_neighborhood)
+    )
+    parts.append(
+        "REFERENCE CONTEXT - following assistant/tool turns:\n"
+        + _format_context_steps(following_neighborhood)
+    )
+    parts.append(
+        "REFERENCE CONTEXT - later outcome summary:\n"
+        + context.get("outcome_summary", "No later outcome evidence available.")
+    )
 
     content = "\n\n".join(parts)
     if len(content) > max_chars:
@@ -363,12 +479,58 @@ def _build_turn_context(all_steps: list[dict], step: dict) -> dict:
             if candidate.get("role") == "user":
                 previous_user = candidate
                 break
-    next_steps = all_steps[position + 1:position + 5] if position >= 0 else []
+    previous_neighborhood = _neighbor_steps(all_steps[:position], reverse=True) if position >= 0 else []
+    following_neighborhood = _neighbor_steps(all_steps[position + 1:], reverse=False) if position >= 0 else []
     return {
         "all_steps": all_steps,
         "previous_user": previous_user,
-        "next_steps": next_steps,
+        "previous_neighborhood": previous_neighborhood,
+        "following_neighborhood": following_neighborhood,
+        "outcome_summary": _summarize_later_outcome(following_neighborhood),
     }
+
+
+def _neighbor_steps(candidates: list[dict], *, reverse: bool, limit: int = 4) -> list[dict]:
+    iterable = reversed(candidates) if reverse else iter(candidates)
+    picked = []
+    for candidate in iterable:
+        if candidate.get("role") in {"assistant", "tool"}:
+            picked.append(candidate)
+        if len(picked) >= limit:
+            break
+    if reverse:
+        picked.reverse()
+    return picked
+
+
+def _format_context_steps(steps: list[dict]) -> str:
+    if not steps:
+        return "No neighboring assistant/tool turns available."
+    return "\n".join(
+        f"- Step {step.get('index', '?')} {_step_text(step)}"
+        for step in steps
+    )
+
+
+def _summarize_later_outcome(steps: list[dict]) -> str:
+    if not steps:
+        return "No later outcome evidence available."
+    texts = " ".join(
+        str(step.get("text_preview") or step.get("output_text") or "")
+        for step in steps
+    ).lower()
+    success_markers = ("success", "passed", "running", "accessible", "completed", "excellent", "great", "perfect")
+    failure_markers = ("error", "failed", "traceback", "exception", "not found", "cannot")
+    if any(marker in texts for marker in success_markers) and not any(marker in texts for marker in failure_markers):
+        outcome = "later context suggests the line of work succeeded"
+    elif any(marker in texts for marker in failure_markers):
+        outcome = "later context contains failure or unresolved-error evidence"
+    else:
+        outcome = "later context is available but outcome is ambiguous"
+    return (
+        f"{outcome}; use the following assistant/tool neighborhood to judge "
+        "whether this turn was necessary, superseded, or merely transitional."
+    )
 
 
 def _normalize_behavior_label(
@@ -496,6 +658,8 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=None)
     parser.add_argument("--max-content-chars", type=int, default=8000)
     parser.add_argument("--delay", type=float, default=0.0)
+    parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument("--retry-delay", type=float, default=1.0)
     parser.add_argument("--taxonomy", default=None)
     parser.add_argument("--rubric", default=None)
     args = parser.parse_args()
@@ -519,6 +683,8 @@ def main() -> None:
         max_tokens=args.max_tokens,
         max_content_chars=args.max_content_chars,
         delay=args.delay,
+        max_retries=args.max_retries,
+        retry_delay=args.retry_delay,
         taxonomy_path=args.taxonomy,
         rubric_path=args.rubric,
     )
