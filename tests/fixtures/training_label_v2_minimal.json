@@ -1,0 +1,56 @@
+{
+  "schema_version": "trajectory_labels.v2",
+  "trajectory_file": "/tmp/training_sample.json",
+  "taxonomy_version": "v1",
+  "labeled_at": "2026-06-04T00:00:00+00:00",
+  "behavior_model": "test-behavior-model",
+  "quality_model": "test-quality-model",
+  "value_model": "test-value-model",
+  "quality_label_version": "quality.v1",
+  "value_label_version": "value.v1",
+  "decision_policy_version": "keepdrop.v1",
+  "steps": [
+    {
+      "index": 12,
+      "role": "assistant",
+      "phase": "implement",
+      "action": "implement_runtime_logic",
+      "time_created_ms": null,
+      "time_completed_ms": null,
+      "duration_s": null,
+      "tokens_total": 1234,
+      "tool_calls": [
+        "execute_bash",
+        "str_replace_editor"
+      ],
+      "finish": "",
+      "agent": "",
+      "model_id": "",
+      "text_preview": "Apply the targeted fix and verify the new path.",
+      "quality": {
+        "verdict": "good",
+        "defect_flags": [],
+        "confidence": "high"
+      },
+      "value": {
+        "tier": "high",
+        "tags": [
+          "new_evidence_introduced",
+          "tool_use_pattern"
+        ],
+        "confidence": "medium"
+      },
+      "decision": {
+        "label": "keep",
+        "reasons": [
+          "quality_good",
+          "value_high"
+        ],
+        "matched_rules": [
+          "keep_high_quality_agentic_turn"
+        ],
+        "policy_version": "keepdrop.v1"
+      }
+    }
+  ]
+}
