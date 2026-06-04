@@ -61,6 +61,7 @@ from .patterns import (
 )
 from .help import HELP_TEXT
 from .parser import load_labeled_json, aggregate_labels
+from .training_labels import aggregate_training_labels, load_training_labeled_json
 from .rendering import (
     render_workflow_html, render_toc_sidebar, render_filter_chips,
     format_step_detail, render_agent_summary_cards,
@@ -756,6 +757,148 @@ def _render_tool_sequences_html(sequences: list[dict]) -> str:
         + "".join(rows)
         + "</table>"
     )
+
+
+def _count_bar_chart(counts: dict[str, int], title: str, dark: bool = False) -> go.Figure:
+    """Build a small categorical count chart for label summaries."""
+    fig = go.Figure(go.Bar(
+        x=list(counts.keys()),
+        y=list(counts.values()),
+        text=list(counts.values()),
+        textposition="outside",
+        marker_color="#2563eb",
+    ))
+    fig.update_layout(template="plotly_dark" if dark else "plotly_white", height=380, title=title)
+    return fig
+
+
+def _counts_inline(counts: dict[str, int], *, limit: int | None = None) -> str:
+    items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    if limit is not None:
+        items = items[:limit]
+    if not items:
+        return "none"
+    return ", ".join(f"{html.escape(str(key))}: {value}" for key, value in items)
+
+
+def _build_training_label_summary_html(agg: dict) -> str:
+    return (
+        "<div style='padding:0.75em 1em;border:1px solid var(--ov-border);"
+        "border-radius:8px;background:var(--ov-card);font-size:13px;'>"
+        "<div style='font-weight:700;margin-bottom:6px;'>Training label summary</div>"
+        f"<div><b>Quality</b>: {_counts_inline(agg.get('quality_verdict_counts', {}))}</div>"
+        f"<div><b>Defects</b>: {_counts_inline(agg.get('quality_flag_counts', {}))}</div>"
+        f"<div><b>Value</b>: {_counts_inline(agg.get('value_tier_counts', {}))}</div>"
+        f"<div><b>Decision</b>: {_counts_inline(agg.get('decision_counts', {}))}</div>"
+        f"<div><b>Top value tags</b>: {_counts_inline(agg.get('value_tag_counts', {}), limit=5)}</div>"
+        "</div>"
+    )
+
+
+def _load_label_json_kind(file_path: str) -> str:
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return "unknown"
+    if isinstance(data, dict) and data.get("schema_version") == "trajectory_labels.v2":
+        return "training_v2"
+    return "legacy"
+
+
+def build_label_ui_payload(file_path: str) -> dict:
+    """Build UI-facing label payload for legacy and training v2 label files."""
+    kind = _load_label_json_kind(file_path)
+    if kind == "training_v2":
+        data = load_training_labeled_json(file_path)
+        agg = aggregate_training_labels(data)
+        action_to_phase = {
+            step.get("action", "unknown"): step.get("phase", "unknown")
+            for step in agg.get("steps", [])
+        }
+        phase_fig = build_label_phase_count_chart(agg["phase_counts"])
+        action_fig = build_label_action_count_chart(agg["action_counts"], action_to_phase)
+        quality_fig = _count_bar_chart(agg["quality_verdict_counts"], "Quality Verdicts")
+        value_fig = _count_bar_chart(agg["value_tier_counts"], "Value Tiers")
+        timeline_fig = build_label_timeline_chart(agg["steps"])
+        n_steps = len(agg.get("steps", []))
+        decisions = _counts_inline(agg.get("decision_counts", {}))
+        badge = (
+            "<div style='display:flex;flex-direction:column;gap:6px;margin:6px 0;'>"
+            "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
+            "<span style='background:#2563eb;color:white;"
+            "padding:4px 12px;border-radius:12px;font-size:13px;'>"
+            f"Training labels loaded — {n_steps} assistant turns, decisions: {decisions}</span>"
+            "<a href='#' onclick=\"document.querySelector('[class*=per-message-acc]:last-child button')?.click();"
+            "return false;\" style='font-size:12px;color:#2563eb;text-decoration:underline;cursor:pointer;'>"
+            "Jump to Labels</a>"
+            "</div></div>"
+        )
+        return {
+            "kind": "training_v2",
+            "badge_html": badge,
+            "status_html": _build_training_label_summary_html(agg),
+            "phase_count_fig": phase_fig,
+            "action_count_fig": action_fig,
+            "phase_duration_fig": quality_fig,
+            "action_duration_fig": value_fig,
+            "timeline_fig": timeline_fig,
+        }
+
+    data = load_labeled_json(file_path)
+    agg = aggregate_labels(data)
+    pc_fig = build_label_phase_count_chart(agg["phase_counts"])
+    ac_fig = build_label_action_count_chart(agg["action_counts"], agg["action_to_phase"])
+    pd_fig = build_label_phase_duration_chart(agg["phase_durations"])
+    ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"])
+    tl_fig = build_label_timeline_chart(agg["steps"])
+
+    n_steps = len(agg.get("steps", []))
+    phase_counts = agg.get("phase_counts", {})
+    n_phases = len(phase_counts)
+
+    from .palette import LABEL_PHASE_COLORS
+    bar_segments = "".join(
+        f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
+        f" title='{phase}: {count}'></span>"
+        for phase, count in phase_counts.items() if count > 0
+    )
+    phase_bar = (
+        "<div style='display:flex;border-radius:4px;overflow:hidden;width:200px;margin-top:4px;'>"
+        f"{bar_segments}</div>"
+    ) if bar_segments else ""
+
+    phase_chips = "".join(
+        f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;"
+        f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:white;'>"
+        f"{phase}: {count}</span>"
+        for phase, count in phase_counts.items() if count > 0
+    )
+
+    badge = (
+        "<div style='display:flex;flex-direction:column;gap:6px;margin:6px 0;'>"
+        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
+        "<span style='background:#059669;color:white;"
+        "padding:4px 12px;border-radius:12px;font-size:13px;'>"
+        f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
+        "<a href='#' onclick=\"document.querySelector('[class*=per-message-acc]:last-child button')?.click();"
+        "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
+        "Jump to Labels</a>"
+        "</div>"
+        f"<div style='display:flex;gap:4px;flex-wrap:wrap;'>{phase_chips}</div>"
+        f"{phase_bar}"
+        "</div>"
+    )
+    return {
+        "kind": "legacy",
+        "badge_html": badge,
+        "status_html": "",
+        "phase_count_fig": pc_fig,
+        "action_count_fig": ac_fig,
+        "phase_duration_fig": pd_fig,
+        "action_duration_fig": ad_fig,
+        "timeline_fig": tl_fig,
+    }
 
 
 def _render_failure_patterns_html(patterns: list[dict]) -> str:
@@ -1687,8 +1830,7 @@ def build_ui() -> gr.Blocks:
                 )
 
             try:
-                data = load_labeled_json(file_path)
-                agg = aggregate_labels(data)
+                payload = build_label_ui_payload(file_path)
             except Exception as exc:
                 return (
                     "",  # label_badge_html
@@ -1700,59 +1842,13 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=False), empty,
                 )
 
-            pc_fig = build_label_phase_count_chart(agg["phase_counts"])
-            ac_fig = build_label_action_count_chart(agg["action_counts"], agg["action_to_phase"])
-            pd_fig = build_label_phase_duration_chart(agg["phase_durations"])
-            ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"])
-            tl_fig = build_label_timeline_chart(agg["steps"])
-
-            n_steps = len(agg.get("steps", []))
-            phase_counts = agg.get("phase_counts", {})
-            n_phases = len(phase_counts)
-
-            # Mini phase distribution bar
-            from .palette import LABEL_PHASE_COLORS
-            total_count = sum(phase_counts.values()) or 1
-            bar_segments = "".join(
-                f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
-                f" title='{phase}: {count}'></span>"
-                for phase, count in phase_counts.items() if count > 0
-            )
-            phase_bar = (
-                f"<div style='display:flex;border-radius:4px;overflow:hidden;width:200px;margin-top:4px;'>"
-                f"{bar_segments}</div>"
-            ) if bar_segments else ""
-
-            # Phase count chips
-            phase_chips = "".join(
-                f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;"
-                f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:white;'>"
-                f"{phase}: {count}</span>"
-                for phase, count in phase_counts.items() if count > 0
-            )
-
-            badge = (
-                f"<div style='display:flex;flex-direction:column;gap:6px;margin:6px 0;'>"
-                f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
-                f"<span style='background:#059669;color:white;"
-                f"padding:4px 12px;border-radius:12px;font-size:13px;'>"
-                f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
-                f"<a href='#' onclick=\"document.querySelector('[class*=per-message-acc]:last-child button')?.click();"
-                f"return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
-                f"Jump to Labels</a>"
-                f"</div>"
-                f"<div style='display:flex;gap:4px;flex-wrap:wrap;'>{phase_chips}</div>"
-                f"{phase_bar}"
-                f"</div>"
-            )
-
             return (
-                badge,  # label_badge_html
+                payload["badge_html"],  # label_badge_html
                 gr.update(open=True),  # labels_accordion (auto-open)
-                "",  # clear status message
-                gr.update(visible=True), pc_fig, ac_fig,
-                gr.update(visible=True), pd_fig, ad_fig,
-                gr.update(visible=True), tl_fig,
+                payload["status_html"],
+                gr.update(visible=True), payload["phase_count_fig"], payload["action_count_fig"],
+                gr.update(visible=True), payload["phase_duration_fig"], payload["action_duration_fig"],
+                gr.update(visible=True), payload["timeline_fig"],
             )
 
         label_outputs = [
