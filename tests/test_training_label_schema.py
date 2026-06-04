@@ -65,6 +65,66 @@ class TrainingLabelSchemaTests(unittest.TestCase):
         finally:
             bad_path.unlink(missing_ok=True)
 
+    def test_schema_requires_phase_and_action_even_when_quality_value_exist(self):
+        from trajectory_visualizer.insight.training_labels import load_training_labeled_json
+
+        bad_path = FIXTURE_DIR / "training_label_v2_missing_behavior.json"
+        bad_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "trajectory_labels.v2",
+                    "taxonomy_version": "v1",
+                    "labeled_at": "2026-06-04T00:00:00+00:00",
+                    "steps": [
+                        {
+                            "index": 1,
+                            "role": "assistant",
+                            "quality": {
+                                "verdict": "good",
+                                "defect_flags": [],
+                                "confidence": "high",
+                            },
+                            "value": {
+                                "tier": "high",
+                                "tags": ["reasoning_pattern"],
+                                "confidence": "medium",
+                            },
+                            "decision": {
+                                "label": "keep",
+                                "reasons": ["quality_good", "value_high"],
+                                "matched_rules": ["keep_high_quality_agentic_turn"],
+                                "policy_version": "keepdrop.v1",
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        try:
+            with self.assertRaises(ValueError):
+                load_training_labeled_json(str(bad_path))
+        finally:
+            bad_path.unlink(missing_ok=True)
+
+    def test_aggregate_training_labels_summarizes_core_counts(self):
+        from trajectory_visualizer.insight.training_labels import (
+            aggregate_training_labels,
+            load_training_labeled_json,
+        )
+
+        data = load_training_labeled_json(str(REVIEW_FIXTURE))
+        agg = aggregate_training_labels(data)
+
+        self.assertEqual(agg["total"], 1)
+        self.assertEqual(agg["quality_verdict_counts"], {"flawed": 1})
+        self.assertEqual(agg["quality_flag_counts"], {"incomplete": 1})
+        self.assertEqual(agg["value_tier_counts"], {"high": 1})
+        self.assertEqual(agg["value_tag_counts"], {"successful_recovery": 1})
+        self.assertEqual(agg["decision_counts"], {"review": 1})
+        self.assertEqual(agg["phase_counts"], {"debug": 1})
+        self.assertEqual(agg["action_counts"], {"debug_hypothesis_test": 1})
+
 
 if __name__ == "__main__":
     unittest.main()
