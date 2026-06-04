@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from pathlib import Path
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 MINIMAL_FIXTURE = FIXTURE_DIR / "training_label_v2_minimal.json"
 REVIEW_FIXTURE = FIXTURE_DIR / "training_label_v2_with_review.json"
+TRAINING_CONVERSATION_FIXTURE = FIXTURE_DIR / "training_conversation_minimal.json"
 
 
 class TrainingLabelSchemaTests(unittest.TestCase):
@@ -124,6 +126,104 @@ class TrainingLabelSchemaTests(unittest.TestCase):
         self.assertEqual(agg["decision_counts"], {"review": 1})
         self.assertEqual(agg["phase_counts"], {"debug": 1})
         self.assertEqual(agg["action_counts"], {"debug_hypothesis_test": 1})
+
+    def test_training_labeler_writes_additive_v2_output(self):
+        from scripts.training_labeler import label_training_trajectory
+        from trajectory_visualizer.insight.training_labels import load_training_labeled_json
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            output_path = Path(f.name)
+
+        try:
+            label_training_trajectory(
+                str(TRAINING_CONVERSATION_FIXTURE),
+                str(output_path),
+                behavior_labeler=lambda step, context: {
+                    "phase": "implement",
+                    "action": "implement_runtime_logic",
+                },
+                quality_labeler=lambda step, context: {
+                    "verdict": "good",
+                    "defect_flags": [],
+                    "confidence": "high",
+                    "decision": {"label": "drop"},
+                },
+                value_labeler=lambda step, context: {
+                    "tier": "high",
+                    "tags": ["tool_use_pattern"],
+                    "confidence": "medium",
+                    "decision": {"label": "drop"},
+                },
+                behavior_model="test-behavior",
+                quality_model="test-quality",
+                value_model="test-value",
+            )
+
+            data = load_training_labeled_json(str(output_path))
+        finally:
+            output_path.unlink(missing_ok=True)
+
+        self.assertEqual(data["schema_version"], "trajectory_labels.v2")
+        self.assertEqual(data["behavior_model"], "test-behavior")
+        self.assertEqual(data["quality_model"], "test-quality")
+        self.assertEqual(data["value_model"], "test-value")
+        self.assertEqual(data["quality_label_version"], "quality.v1")
+        self.assertEqual(data["value_label_version"], "value.v1")
+        self.assertEqual(data["decision_policy_version"], "keepdrop.v1")
+
+        self.assertEqual(len(data["steps"]), 2)
+        step = data["steps"][0]
+        self.assertEqual(step["phase"], "implement")
+        self.assertEqual(step["action"], "implement_runtime_logic")
+        self.assertNotIn("behavior", step)
+        self.assertEqual(step["quality"], {
+            "verdict": "good",
+            "defect_flags": [],
+            "confidence": "high",
+        })
+        self.assertEqual(step["value"], {
+            "tier": "high",
+            "tags": ["tool_use_pattern"],
+            "confidence": "medium",
+        })
+        self.assertEqual(step["decision"]["label"], "keep")
+
+    def test_training_labeler_derives_decision_instead_of_copying_model_output(self):
+        from scripts.training_labeler import label_training_trajectory
+        from trajectory_visualizer.insight.training_labels import load_training_labeled_json
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            output_path = Path(f.name)
+
+        try:
+            label_training_trajectory(
+                str(TRAINING_CONVERSATION_FIXTURE),
+                str(output_path),
+                behavior_labeler=lambda step, context: {
+                    "phase": "debug",
+                    "action": "debug_hypothesis_test",
+                },
+                quality_labeler=lambda step, context: {
+                    "verdict": "reject",
+                    "defect_flags": [],
+                    "confidence": "high",
+                    "decision": {"label": "keep"},
+                },
+                value_labeler=lambda step, context: {
+                    "tier": "high",
+                    "tags": [],
+                    "confidence": "high",
+                    "decision": {"label": "keep"},
+                },
+            )
+
+            data = load_training_labeled_json(str(output_path))
+        finally:
+            output_path.unlink(missing_ok=True)
+
+        step = data["steps"][0]
+        self.assertEqual(step["decision"]["label"], "drop")
+        self.assertIn("drop_rejected_turn", step["decision"]["matched_rules"])
 
 
 if __name__ == "__main__":
