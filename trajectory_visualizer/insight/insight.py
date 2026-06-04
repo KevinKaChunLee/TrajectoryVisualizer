@@ -354,6 +354,9 @@ def _build_overview_outputs(
     trajectory_format: str | None = None,
 ) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
+    if raw.get("_analysis_profile") == "training":
+        return _build_training_overview_outputs(steps, raw, metrics, message_rows, file_path)
+
     _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
     md, timing, outp = _d("metadata"), _d("timing"), _d("output")
     session_raw, retry = _d("session_raw"), _d("retry")
@@ -387,6 +390,89 @@ def _build_overview_outputs(
     }
 
 
+def _build_training_overview_outputs(
+    steps: list[dict], raw: dict, metrics: dict, message_rows: list[dict], file_path: str,
+) -> dict:
+    """Overview copy for training conversations shown as basic trajectories."""
+    scaffold = raw.get("_training_scaffold", {}) if isinstance(raw.get("_training_scaffold"), dict) else {}
+    scaffold_label = scaffold.get("label", "Unknown")
+    scaffold_conf = scaffold.get("confidence", "unknown")
+    assistant_steps = [s for s in steps if s.get("role") == "assistant"]
+    user_steps = [s for s in steps if s.get("role") == "user"]
+    reasoning_steps = [s for s in assistant_steps if s.get("has_reasoning")]
+    est_total = sum((s.get("tokens", {}) or {}).get("estimated_total", 0) or 0 for s in steps)
+    est_reasoning = sum((s.get("tokens", {}) or {}).get("estimated_reasoning_tokens", 0) or 0 for s in steps)
+    est_content = sum((s.get("tokens", {}) or {}).get("estimated_content_tokens", 0) or 0 for s in steps)
+
+    banner = format_banner_html(
+        os.path.basename(file_path),
+        metrics,
+        "n/a",
+        generator="",
+        trajectory_format=trajectory_format_label("training_conversation"),
+    )
+    kpi_html = (
+        "<div class='ov-kpi-grid'>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Turns</div><div class='ov-kpi-value'>{len(steps)}</div>"
+        f"<div class='ov-kpi-sub'>{len(user_steps)} user, {len(assistant_steps)} assistant</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Estimated Tokens</div><div class='ov-kpi-value'>{est_total:,}</div>"
+        f"<div class='ov-kpi-sub'>{est_content:,} content, {est_reasoning:,} reasoning</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Reasoning Coverage</div><div class='ov-kpi-value'>{len(reasoning_steps)}</div>"
+        f"<div class='ov-kpi-sub'>assistant turns with reasoning content</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Scaffold</div><div class='ov-kpi-value'>{html.escape(str(scaffold_label))}</div>"
+        f"<div class='ov-kpi-sub'>{html.escape(str(scaffold_conf))} confidence</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Profile</div><div class='ov-kpi-value'>Training</div>"
+        "<div class='ov-kpi-sub'>basic conversation trajectory view</div></div>"
+        "</div>"
+    )
+    metrics_text = (
+        "### Training conversation\n\n"
+        f"- Scaffold: `{scaffold_label}`\n"
+        f"- Total turns: `{len(steps)}`\n"
+        f"- User turns: `{len(user_steps)}`\n"
+        f"- Assistant turns: `{len(assistant_steps)}`\n"
+        f"- Assistant turns with reasoning content: `{len(reasoning_steps)}`\n"
+        f"- Estimated total tokens: `{est_total}`\n"
+        f"- Estimated content tokens: `{est_content}`\n"
+        f"- Estimated reasoning tokens: `{est_reasoning}`\n\n"
+        "Timing, tool runtime, and recorder-derived efficiency metrics are not available for this profile."
+    )
+    behavior_text = (
+        "### Training behavior\n\n"
+        f"- This dataset is treated as a base conversation trajectory.\n"
+        f"- Inferred scaffold: `{scaffold_label}` ({scaffold_conf} confidence).\n"
+        f"- `{len(assistant_steps)}` assistant turns are available for response-shape inspection.\n"
+        f"- `{len(reasoning_steps)}` assistant turns include explicit reasoning content.\n"
+        "- No tool-call or agent-runtime behavior is assumed in v1."
+    )
+    hotspots_text = (
+        "### Turn hotspots\n\n"
+        "Use this section to inspect longer assistant turns, reasoning-heavy turns, and role transitions."
+    )
+    per_message_lines = []
+    for row in message_rows:
+        if row.get("role") != "assistant":
+            continue
+        step = next((s for s in steps if s.get("index") == row.get("index")), None)
+        tok = (step or {}).get("tokens", {})
+        per_message_lines.append(
+            f"- Step `{row.get('index')}`: estimated `{tok.get('estimated_total', 0)}` tokens, "
+            f"`{tok.get('estimated_reasoning_tokens', 0)}` reasoning, preview: "
+            f"`{((step or {}).get('text_preview', '')[:80])}`"
+        )
+    if not per_message_lines:
+        per_message_lines.append("- No assistant turns available.")
+    return {
+        "banner": banner,
+        "anomaly_html": "",
+        "kpi_html": kpi_html,
+        "metrics_text": metrics_text,
+        "behavior_text": behavior_text,
+        "hotspots_text": hotspots_text,
+        "per_message_text": "### Assistant turn details\n\n" + "\n".join(per_message_lines),
+    }
+
+
 def _build_chart_outputs(
     steps: list[dict], message_rows: list[dict], phases: list[dict],
     step_analytics: list[dict], agent_summaries: list[dict],
@@ -395,6 +481,9 @@ def _build_chart_outputs(
     trajectory_format: str | None = None,
 ) -> dict:
     """Build all chart figures and analytics markdown."""
+    if trajectory_format == "training_conversation":
+        return _build_training_chart_outputs(steps, dark=dark)
+
     traj = trajectory or []
 
     # Compute diagnostic data for charts
@@ -462,6 +551,91 @@ def _build_chart_outputs(
         "error_class_fig": error_class_fig,
         "antipattern_html": antipattern_html,
         "context_growth_fig": context_growth_fig,
+    }
+
+
+def trajectory_format_label(fmt: str | None) -> str:
+    """Return a human-readable trajectory format label."""
+    labels = {
+        "training_conversation": "Training Conversation",
+        "ccsession": "Claude Code",
+        "codearts": "CodeArts",
+        "opencode": "OpenCode",
+    }
+    return labels.get(fmt or "", fmt or "Unknown")
+
+
+def _training_role_count_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    counts: dict[str, int] = {}
+    for step in steps:
+        role = step.get("role", "unknown")
+        counts[role] = counts.get(role, 0) + 1
+    fig = go.Figure(go.Bar(
+        x=list(counts.keys()),
+        y=list(counts.values()),
+        marker_color=["#2563eb", "#16a34a", "#7c3aed", "#6b7280"][: len(counts)],
+        text=list(counts.values()),
+        textposition="outside",
+    ))
+    fig.update_layout(template="plotly_white", height=380, title="Conversation Turns by Role")
+    return fig
+
+
+def _training_estimated_tokens_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    xs = [s.get("index", 0) for s in steps]
+    content = [(s.get("tokens", {}) or {}).get("estimated_content_tokens", 0) or 0 for s in steps]
+    reasoning = [(s.get("tokens", {}) or {}).get("estimated_reasoning_tokens", 0) or 0 for s in steps]
+    fig = go.Figure()
+    fig.add_bar(x=xs, y=content, name="Content", marker_color="#2563eb")
+    fig.add_bar(x=xs, y=reasoning, name="Reasoning", marker_color="#7c3aed")
+    fig.update_layout(template="plotly_white", height=380, barmode="stack", title="Estimated Tokens by Turn")
+    return fig
+
+
+def _training_reasoning_ratio_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    assistant_steps = [s for s in steps if s.get("role") == "assistant"]
+    xs = [s.get("index", 0) for s in assistant_steps]
+    vals = []
+    for step in assistant_steps:
+        tok = step.get("tokens", {}) or {}
+        total = tok.get("estimated_total", 0) or 0
+        reasoning = tok.get("estimated_reasoning_tokens", 0) or 0
+        vals.append(round((reasoning / total) * 100, 1) if total else 0)
+    fig = go.Figure(go.Scatter(x=xs, y=vals, mode="lines+markers", marker_color="#7c3aed"))
+    fig.update_layout(template="plotly_white", height=380, title="Reasoning Share by Assistant Turn", yaxis_title="%")
+    return fig
+
+
+def _build_training_chart_outputs(steps: list[dict], dark: bool = False) -> dict:
+    """Chart outputs that reinterpret work sections for training conversations."""
+    assistant_steps = [s for s in steps if s.get("role") == "assistant"]
+    reasoning_steps = sum(1 for s in assistant_steps if s.get("has_reasoning"))
+    has_tools = any(s.get("tool_call_count", 0) > 0 for s in steps)
+    return {
+        "tok_fig": _training_estimated_tokens_chart(steps, dark=dark),
+        "dur_fig": _training_role_count_chart(steps, dark=dark),
+        "tl_fig": build_tool_chart(steps, dark=dark) if has_tools else _training_role_count_chart(steps, dark=dark),
+        "tool_outcome_fig": build_tool_outcome_timeline(steps, dark=dark) if has_tools else _training_reasoning_ratio_chart(steps, dark=dark),
+        "agent_cards_html": (
+            "<div class='overview-card'>"
+            "<div style='font-weight:700;'>Training profile</div>"
+            f"<div style='font-size:12px;color:var(--ov-muted);'>{len(assistant_steps)} assistant turns, "
+            f"{reasoning_steps} with reasoning content. Agent/runtime identity is not assumed in v1.</div>"
+            "</div>"
+        ),
+        "agent_tok_fig": _training_estimated_tokens_chart(steps, dark=dark),
+        "swimlane_fig": _training_role_count_chart(steps, dark=dark),
+        "plan_timeline_fig": _training_reasoning_ratio_chart(steps, dark=dark),
+        "error_class_fig": _training_role_count_chart(steps, dark=dark),
+        "antipattern_html": (
+            "<div class='overview-card'>"
+            "<div style='font-weight:700;'>Training interpretation</div>"
+            "<div style='font-size:12px;color:var(--ov-muted);'>"
+            "Diagnostics are adapted for conversation structure in v1. Focus on role balance, "
+            "assistant coverage, and reasoning density rather than tool/runtime failures."
+            "</div></div>"
+        ),
+        "context_growth_fig": _training_estimated_tokens_chart(steps, dark=dark),
     }
 
 
@@ -645,6 +819,7 @@ def build_ui() -> gr.Blocks:
                         ("Claude Code", "ccsession"),
                         ("CodeArts", "codearts"),
                         ("OpenCode", "opencode"),
+                        ("Training Conversation", "training_conversation"),
                     ],
                     value="ccsession",
                     interactive=True,
@@ -1103,7 +1278,9 @@ def build_ui() -> gr.Blocks:
 
             # Validate format matches user selection
             _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
-                              "opencode": "OpenCode", "unknown": "Unknown"}
+                              "opencode": "OpenCode",
+                              "training_conversation": "Training Conversation",
+                              "unknown": "Unknown"}
             detected = detect_format(raw)
             if detected != selected_format and detected != "unknown":
                 err_msg = (

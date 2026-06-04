@@ -18,7 +18,7 @@ def safe_get(d: Any, *keys: Any, default: Any = None) -> Any:
 
 
 def detect_format(raw: dict) -> str:
-    """Detect trajectory format: 'ccsession', 'opencode', 'codearts', or 'unknown'."""
+    """Detect trajectory format: 'ccsession', 'opencode', 'codearts', training, or 'unknown'."""
     # Post-conversion marker: the Claude Code converter builds a fresh dict and
     # sets this flag. Check it before the raw-format markers below so already-
     # converted trajectories still report as ccsession.
@@ -30,7 +30,151 @@ def detect_format(raw: dict) -> str:
         return "codearts"
     if isinstance(raw.get("info"), dict) and isinstance(raw.get("messages"), list):
         return "opencode"
+    if _looks_like_training_conversation(raw):
+        return "training_conversation"
     return "unknown"
+
+
+def _looks_like_training_conversation(raw: dict) -> bool:
+    """Return True when a payload looks like a simple training conversation JSON."""
+    messages = raw.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return False
+    seen_roles = set()
+    for msg in messages:
+        if not isinstance(msg, dict):
+            return False
+        role = msg.get("role")
+        if not isinstance(role, str) or not role:
+            return False
+        seen_roles.add(role)
+    return bool(seen_roles & {"user", "assistant"})
+
+
+def _estimate_message_tokens(content: str, reasoning_content: str = "") -> dict:
+    """Return rough token estimates from content lengths without extra deps."""
+    content_chars = len(content or "")
+    reasoning_chars = len(reasoning_content or "")
+    content_tokens = max(0, (content_chars + 3) // 4)
+    reasoning_tokens = max(0, (reasoning_chars + 3) // 4)
+    return {
+        "estimated": True,
+        "estimated_content_chars": content_chars,
+        "estimated_reasoning_chars": reasoning_chars,
+        "estimated_content_tokens": content_tokens,
+        "estimated_reasoning_tokens": reasoning_tokens,
+        "estimated_total": content_tokens + reasoning_tokens,
+    }
+
+
+def _convert_training_tool_calls(tool_calls: Any) -> list[dict]:
+    """Convert OpenAI-style training tool calls into internal part records."""
+    if not isinstance(tool_calls, list):
+        return []
+    out: list[dict] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function")
+        if not isinstance(function, dict):
+            function = {}
+        name = function.get("name") or call.get("name") or call.get("tool_name") or "tool"
+        arguments = function.get("arguments")
+        if arguments is None:
+            arguments = call.get("arguments", call.get("input", {}))
+        out.append({
+            "type": "tool_call",
+            "tool_name": str(name),
+            "tool_id": str(call.get("id", call.get("tool_call_id", ""))),
+            "status": "completed",
+            "input": arguments,
+            "output": "",
+            "metadata": {},
+        })
+    return out
+
+
+def _infer_training_scaffold(messages: list[dict]) -> dict:
+    """Infer a likely training scaffold from system prompt and tool names."""
+    system_prompt = ""
+    tool_names: list[str] = []
+    if messages and isinstance(messages[0], dict) and messages[0].get("role") == "system":
+        system_prompt = str(messages[0].get("content", "") or "")
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        for call in msg.get("tool_calls") or []:
+            fn = call.get("function") if isinstance(call, dict) else None
+            if isinstance(fn, dict) and fn.get("name"):
+                tool_names.append(str(fn["name"]))
+    prompt_lower = system_prompt.lower()
+    tool_set = set(tool_names)
+
+    if "openhands" in prompt_lower:
+        return {"id": "openhands", "label": "OpenHands", "confidence": "high"}
+    if "claude agent sdk" in prompt_lower or "you are a claude agent" in prompt_lower:
+        return {"id": "claude_agent_sdk", "label": "Claude Agent SDK", "confidence": "high"}
+    if "<response>" in system_prompt and "<commands>" in system_prompt:
+        return {"id": "xml_command_line", "label": "XML Command Scaffold", "confidence": "high"}
+    if "claude code" in prompt_lower:
+        return {"id": "claude_code_like", "label": "Claude Code-like", "confidence": "medium"}
+    if "codex" in prompt_lower:
+        return {"id": "codex_like", "label": "Codex-like", "confidence": "medium"}
+    if tool_set & {"TodoWrite", "Read", "Grep", "Edit", "Glob", "BashOutput", "Task", "Bash"}:
+        return {"id": "claude_code_like", "label": "Claude Code-like", "confidence": "medium"}
+    if tool_names:
+        return {"id": "generic_tool_calling", "label": "Generic Tool Calling", "confidence": "medium"}
+    return {"id": "plain_conversation", "label": "Plain Conversation", "confidence": "high"}
+
+
+def _convert_training_conversation_to_internal(raw: dict) -> dict:
+    """Normalize training conversation JSON without trusting meta_info fields."""
+    messages_out = []
+    has_reasoning = False
+    has_tool_calls = False
+    source_messages = raw.get("messages", [])
+    scaffold = _infer_training_scaffold(source_messages if isinstance(source_messages, list) else [])
+    for idx, msg in enumerate(source_messages):
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role", "")).strip()
+        if not role:
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        reasoning_content = msg.get("reasoning_content", "")
+        if not isinstance(reasoning_content, str):
+            reasoning_content = str(reasoning_content)
+        if reasoning_content:
+            has_reasoning = True
+        tool_call_parts = _convert_training_tool_calls(msg.get("tool_calls"))
+        if tool_call_parts or role == "tool":
+            has_tool_calls = True
+        messages_out.append({
+            "index": idx,
+            "role": role,
+            "content": content,
+            "reasoning_content": reasoning_content,
+            "tool_call_parts": tool_call_parts,
+            "tool_call_id": str(msg.get("tool_call_id", "")),
+            "tokens_estimate": _estimate_message_tokens(content, reasoning_content),
+        })
+
+    return {
+        "format": "training-conversation",
+        "messages": messages_out,
+        "_analysis_profile": "training",
+        "_source_format": "openai_conversations",
+        "_training_scaffold": scaffold,
+        "_capabilities": {
+            "has_timing": False,
+            "has_tool_calls": has_tool_calls,
+            "has_runtime_token_usage": False,
+            "has_reasoning_content": has_reasoning,
+            "has_training_labels": False,
+        },
+    }
 
 
 def _iso_to_epoch_ms(iso_str: str | None) -> int | None:
@@ -1351,7 +1495,7 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
                 result = _convert_codex_to_internal(events)
                 result["_source_path"] = file_path
                 return result
-            return {"_error": "JSONL file does not appear to be Codex format"}
+            return {"_error": "JSONL input is not supported for training conversations in v1; expected Codex JSONL format."}
         except (json.JSONDecodeError, OSError) as exc:
             return {"_error": str(exc)}
 
@@ -1370,6 +1514,8 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
         result = _convert_codearts_metadata(raw)
     elif fmt == "opencode":
         result = _convert_opencode_metadata(raw)
+    elif fmt == "training_conversation":
+        result = _convert_training_conversation_to_internal(raw)
     else:
         result = raw
     result["_source_path"] = file_path

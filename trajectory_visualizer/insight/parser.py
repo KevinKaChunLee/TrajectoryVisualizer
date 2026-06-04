@@ -165,6 +165,73 @@ def parse_steps(raw: dict) -> list[dict]:
     for idx, msg in enumerate(trajectory):
         if not isinstance(msg, dict):
             continue
+        if raw.get("_analysis_profile") == "training":
+            content = msg.get("content", "")
+            reasoning = msg.get("reasoning_content", "")
+            parts = []
+            text_preview = ""
+            if reasoning:
+                parts.append({"type": "reasoning", "text": reasoning})
+                text_preview = reasoning
+            if content:
+                parts.append({"type": "text", "text": content})
+                if not text_preview:
+                    text_preview = content
+            raw_tool_parts = msg.get("tool_call_parts", [])
+            if not isinstance(raw_tool_parts, list):
+                raw_tool_parts = []
+            parsed_tool_parts, tool_calls, errors, _, tool_preview = _parse_parts(raw_tool_parts)
+            parts.extend(parsed_tool_parts)
+            if not text_preview and tool_preview:
+                text_preview = tool_preview
+            token_est = msg.get("tokens_estimate", {})
+            tokens = {
+                "total": 0,
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache_read": 0,
+                "cache_write": 0,
+                "estimated": bool(token_est.get("estimated")),
+                "estimated_total": token_est.get("estimated_total", 0) or 0,
+                "estimated_content_tokens": token_est.get("estimated_content_tokens", 0) or 0,
+                "estimated_reasoning_tokens": token_est.get("estimated_reasoning_tokens", 0) or 0,
+                "estimated_content_chars": token_est.get("estimated_content_chars", 0) or 0,
+                "estimated_reasoning_chars": token_est.get("estimated_reasoning_chars", 0) or 0,
+            }
+            steps.append({
+                "index": msg.get("index", idx),
+                "role": msg.get("role", "?"),
+                "tokens": tokens,
+                "duration": None,
+                "parts": parts,
+                "tool_calls": tool_calls,
+                "tool_call_count": len(tool_calls),
+                "error_count": errors,
+                "has_reasoning": bool(reasoning),
+                "text_preview": text_preview,
+                "finish": "",
+                "model_id": "",
+                "provider_id": "",
+                "time_created_ms": None,
+                "time_completed_ms": None,
+                "agent": "",
+                "mode": "",
+                "message_id": "",
+                "id": "",
+                "parent_id": "",
+                "session_id": msg.get("tool_call_id", ""),
+                "cwd": "",
+                "root": "",
+                "round": None,
+                "is_sub_agent": False,
+                "sub_agent_msg_list": [],
+                "tool_output": None,
+                "output_text": content,
+                "agent_id": "",
+                "question": [],
+            })
+            continue
         info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
         role = msg.get("role") or safe_get(info, "role", default="?")
 
@@ -268,4 +335,3 @@ def _fill_missing_last_step_duration(steps: list[dict], raw: dict) -> None:
     last["duration"] = round((end_ms - start_ms) / 1000.0, 2)
     if not last.get("time_completed_ms"):
         last["time_completed_ms"] = end_ms
-
