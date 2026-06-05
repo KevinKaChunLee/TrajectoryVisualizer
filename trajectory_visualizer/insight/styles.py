@@ -685,8 +685,12 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 
 /* ===== Detail panel tabs ===== */
 .dp-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 6;
     display: flex;
     gap: 0;
+    background: var(--ov-card);
     border-bottom: 2px solid var(--ov-border);
     margin-bottom: 12px;
 }

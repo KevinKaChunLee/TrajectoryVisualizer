@@ -61,6 +61,7 @@ from .patterns import (
 )
 from .help import HELP_TEXT
 from .parser import load_labeled_json, aggregate_labels
+from .training_labels import aggregate_training_labels, load_training_labeled_json
 from .rendering import (
     render_workflow_html, render_toc_sidebar, render_filter_chips,
     format_step_detail, render_agent_summary_cards,
@@ -354,6 +355,9 @@ def _build_overview_outputs(
     trajectory_format: str | None = None,
 ) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
+    if raw.get("_analysis_profile") == "training":
+        return _build_training_overview_outputs(steps, raw, metrics, message_rows, file_path)
+
     _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
     md, timing, outp = _d("metadata"), _d("timing"), _d("output")
     session_raw, retry = _d("session_raw"), _d("retry")
@@ -387,6 +391,89 @@ def _build_overview_outputs(
     }
 
 
+def _build_training_overview_outputs(
+    steps: list[dict], raw: dict, metrics: dict, message_rows: list[dict], file_path: str,
+) -> dict:
+    """Overview copy for training conversations shown as basic trajectories."""
+    scaffold = raw.get("_training_scaffold", {}) if isinstance(raw.get("_training_scaffold"), dict) else {}
+    scaffold_label = scaffold.get("label", "Unknown")
+    scaffold_conf = scaffold.get("confidence", "unknown")
+    assistant_steps = [s for s in steps if s.get("role") == "assistant"]
+    user_steps = [s for s in steps if s.get("role") == "user"]
+    reasoning_steps = [s for s in assistant_steps if s.get("has_reasoning")]
+    est_total = sum((s.get("tokens", {}) or {}).get("estimated_total", 0) or 0 for s in steps)
+    est_reasoning = sum((s.get("tokens", {}) or {}).get("estimated_reasoning_tokens", 0) or 0 for s in steps)
+    est_content = sum((s.get("tokens", {}) or {}).get("estimated_content_tokens", 0) or 0 for s in steps)
+
+    banner = format_banner_html(
+        os.path.basename(file_path),
+        metrics,
+        "n/a",
+        generator="",
+        trajectory_format=trajectory_format_label("training_conversation"),
+    )
+    kpi_html = (
+        "<div class='ov-kpi-grid'>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Turns</div><div class='ov-kpi-value'>{len(steps)}</div>"
+        f"<div class='ov-kpi-sub'>{len(user_steps)} user, {len(assistant_steps)} assistant</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Estimated Tokens</div><div class='ov-kpi-value'>{est_total:,}</div>"
+        f"<div class='ov-kpi-sub'>{est_content:,} content, {est_reasoning:,} reasoning</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Reasoning Coverage</div><div class='ov-kpi-value'>{len(reasoning_steps)}</div>"
+        f"<div class='ov-kpi-sub'>assistant turns with reasoning content</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Scaffold</div><div class='ov-kpi-value'>{html.escape(str(scaffold_label))}</div>"
+        f"<div class='ov-kpi-sub'>{html.escape(str(scaffold_conf))} confidence</div></div>"
+        f"<div class='ov-kpi-card'><div class='ov-kpi-label'>Profile</div><div class='ov-kpi-value'>Training</div>"
+        "<div class='ov-kpi-sub'>basic conversation trajectory view</div></div>"
+        "</div>"
+    )
+    metrics_text = (
+        "### Training conversation\n\n"
+        f"- Scaffold: `{scaffold_label}`\n"
+        f"- Total turns: `{len(steps)}`\n"
+        f"- User turns: `{len(user_steps)}`\n"
+        f"- Assistant turns: `{len(assistant_steps)}`\n"
+        f"- Assistant turns with reasoning content: `{len(reasoning_steps)}`\n"
+        f"- Estimated total tokens: `{est_total}`\n"
+        f"- Estimated content tokens: `{est_content}`\n"
+        f"- Estimated reasoning tokens: `{est_reasoning}`\n\n"
+        "Timing, tool runtime, and recorder-derived efficiency metrics are not available for this profile."
+    )
+    behavior_text = (
+        "### Training behavior\n\n"
+        f"- This dataset is treated as a base conversation trajectory.\n"
+        f"- Inferred scaffold: `{scaffold_label}` ({scaffold_conf} confidence).\n"
+        f"- `{len(assistant_steps)}` assistant turns are available for response-shape inspection.\n"
+        f"- `{len(reasoning_steps)}` assistant turns include explicit reasoning content.\n"
+        "- No tool-call or agent-runtime behavior is assumed in v1."
+    )
+    hotspots_text = (
+        "### Turn hotspots\n\n"
+        "Use this section to inspect longer assistant turns, reasoning-heavy turns, and role transitions."
+    )
+    per_message_lines = []
+    for row in message_rows:
+        if row.get("role") != "assistant":
+            continue
+        step = next((s for s in steps if s.get("index") == row.get("index")), None)
+        tok = (step or {}).get("tokens", {})
+        per_message_lines.append(
+            f"- Step `{row.get('index')}`: estimated `{tok.get('estimated_total', 0)}` tokens, "
+            f"`{tok.get('estimated_reasoning_tokens', 0)}` reasoning, preview: "
+            f"`{((step or {}).get('text_preview', '')[:80])}`"
+        )
+    if not per_message_lines:
+        per_message_lines.append("- No assistant turns available.")
+    return {
+        "banner": banner,
+        "anomaly_html": "",
+        "kpi_html": kpi_html,
+        "metrics_text": metrics_text,
+        "behavior_text": behavior_text,
+        "hotspots_text": hotspots_text,
+        "per_message_text": "### Assistant turn details\n\n" + "\n".join(per_message_lines),
+    }
+
+
 def _build_chart_outputs(
     steps: list[dict], message_rows: list[dict], phases: list[dict],
     step_analytics: list[dict], agent_summaries: list[dict],
@@ -395,6 +482,9 @@ def _build_chart_outputs(
     trajectory_format: str | None = None,
 ) -> dict:
     """Build all chart figures and analytics markdown."""
+    if trajectory_format == "training_conversation":
+        return _build_training_chart_outputs(steps, dark=dark)
+
     traj = trajectory or []
 
     # Compute diagnostic data for charts
@@ -462,6 +552,91 @@ def _build_chart_outputs(
         "error_class_fig": error_class_fig,
         "antipattern_html": antipattern_html,
         "context_growth_fig": context_growth_fig,
+    }
+
+
+def trajectory_format_label(fmt: str | None) -> str:
+    """Return a human-readable trajectory format label."""
+    labels = {
+        "training_conversation": "Training Conversation",
+        "ccsession": "Claude Code",
+        "codearts": "CodeArts",
+        "opencode": "OpenCode",
+    }
+    return labels.get(fmt or "", fmt or "Unknown")
+
+
+def _training_role_count_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    counts: dict[str, int] = {}
+    for step in steps:
+        role = step.get("role", "unknown")
+        counts[role] = counts.get(role, 0) + 1
+    fig = go.Figure(go.Bar(
+        x=list(counts.keys()),
+        y=list(counts.values()),
+        marker_color=["#2563eb", "#16a34a", "#7c3aed", "#6b7280"][: len(counts)],
+        text=list(counts.values()),
+        textposition="outside",
+    ))
+    fig.update_layout(template="plotly_white", height=380, title="Conversation Turns by Role")
+    return fig
+
+
+def _training_estimated_tokens_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    xs = [s.get("index", 0) for s in steps]
+    content = [(s.get("tokens", {}) or {}).get("estimated_content_tokens", 0) or 0 for s in steps]
+    reasoning = [(s.get("tokens", {}) or {}).get("estimated_reasoning_tokens", 0) or 0 for s in steps]
+    fig = go.Figure()
+    fig.add_bar(x=xs, y=content, name="Content", marker_color="#2563eb")
+    fig.add_bar(x=xs, y=reasoning, name="Reasoning", marker_color="#7c3aed")
+    fig.update_layout(template="plotly_white", height=380, barmode="stack", title="Estimated Tokens by Turn")
+    return fig
+
+
+def _training_reasoning_ratio_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    assistant_steps = [s for s in steps if s.get("role") == "assistant"]
+    xs = [s.get("index", 0) for s in assistant_steps]
+    vals = []
+    for step in assistant_steps:
+        tok = step.get("tokens", {}) or {}
+        total = tok.get("estimated_total", 0) or 0
+        reasoning = tok.get("estimated_reasoning_tokens", 0) or 0
+        vals.append(round((reasoning / total) * 100, 1) if total else 0)
+    fig = go.Figure(go.Scatter(x=xs, y=vals, mode="lines+markers", marker_color="#7c3aed"))
+    fig.update_layout(template="plotly_white", height=380, title="Reasoning Share by Assistant Turn", yaxis_title="%")
+    return fig
+
+
+def _build_training_chart_outputs(steps: list[dict], dark: bool = False) -> dict:
+    """Chart outputs that reinterpret work sections for training conversations."""
+    assistant_steps = [s for s in steps if s.get("role") == "assistant"]
+    reasoning_steps = sum(1 for s in assistant_steps if s.get("has_reasoning"))
+    has_tools = any(s.get("tool_call_count", 0) > 0 for s in steps)
+    return {
+        "tok_fig": _training_estimated_tokens_chart(steps, dark=dark),
+        "dur_fig": _training_role_count_chart(steps, dark=dark),
+        "tl_fig": build_tool_chart(steps, dark=dark) if has_tools else _training_role_count_chart(steps, dark=dark),
+        "tool_outcome_fig": build_tool_outcome_timeline(steps, dark=dark) if has_tools else _training_reasoning_ratio_chart(steps, dark=dark),
+        "agent_cards_html": (
+            "<div class='overview-card'>"
+            "<div style='font-weight:700;'>Training profile</div>"
+            f"<div style='font-size:12px;color:var(--ov-muted);'>{len(assistant_steps)} assistant turns, "
+            f"{reasoning_steps} with reasoning content. Agent/runtime identity is not assumed in v1.</div>"
+            "</div>"
+        ),
+        "agent_tok_fig": _training_estimated_tokens_chart(steps, dark=dark),
+        "swimlane_fig": _training_role_count_chart(steps, dark=dark),
+        "plan_timeline_fig": _training_reasoning_ratio_chart(steps, dark=dark),
+        "error_class_fig": _training_role_count_chart(steps, dark=dark),
+        "antipattern_html": (
+            "<div class='overview-card'>"
+            "<div style='font-weight:700;'>Training interpretation</div>"
+            "<div style='font-size:12px;color:var(--ov-muted);'>"
+            "Diagnostics are adapted for conversation structure in v1. Focus on role balance, "
+            "assistant coverage, and reasoning density rather than tool/runtime failures."
+            "</div></div>"
+        ),
+        "context_growth_fig": _training_estimated_tokens_chart(steps, dark=dark),
     }
 
 
@@ -584,6 +759,324 @@ def _render_tool_sequences_html(sequences: list[dict]) -> str:
     )
 
 
+def _count_bar_chart(counts: dict[str, int], title: str, dark: bool = False) -> go.Figure:
+    """Build a small categorical count chart for label summaries."""
+    fig = go.Figure(go.Bar(
+        x=list(counts.keys()),
+        y=list(counts.values()),
+        text=list(counts.values()),
+        textposition="outside",
+        marker_color="#2563eb",
+    ))
+    fig.update_layout(template="plotly_dark" if dark else "plotly_white", height=380, title=title)
+    return fig
+
+
+def _training_label_compact_count_chart(
+    counts: dict[str, int],
+    title: str,
+    *,
+    orientation: str = "v",
+    color_map: dict[str, str] | None = None,
+    dark: bool = False,
+) -> go.Figure:
+    """Compact charts for training-label summaries inside the Labels panel."""
+    items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    labels = [key for key, _ in items]
+    values = [value for _, value in items]
+    colors = [
+        (color_map or {}).get(label, "#2563eb")
+        for label in labels
+    ]
+    if orientation == "h":
+        fig = go.Figure(go.Bar(
+            x=values,
+            y=labels,
+            orientation="h",
+            text=[str(v) for v in values],
+            textposition="inside",
+            marker_color=colors,
+            cliponaxis=True,
+            hovertemplate="%{y}: %{x}<extra></extra>",
+        ))
+        fig.update_yaxes(automargin=True)
+        xaxis_title = "Count"
+        yaxis_title = ""
+    else:
+        fig = go.Figure(go.Bar(
+            x=labels,
+            y=values,
+            text=[str(v) for v in values],
+            textposition="inside",
+            marker_color=colors,
+            cliponaxis=True,
+            hovertemplate="%{x}: %{y}<extra></extra>",
+        ))
+        xaxis_title = ""
+        yaxis_title = "Count"
+    max_val = max(values or [0])
+    fig.update_layout(
+        template="plotly_dark" if dark else "plotly_white",
+        height=280,
+        title=dict(text=title, x=0.5, xanchor="center", font=dict(size=14)),
+        margin=dict(l=80 if orientation == "h" else 42, r=24, t=48, b=54),
+        xaxis_title=xaxis_title,
+        yaxis_title=yaxis_title,
+        showlegend=False,
+    )
+    if max_val > 0:
+        if orientation == "h":
+            fig.update_xaxes(range=[0, max_val * 1.12])
+        else:
+            fig.update_yaxes(range=[0, max_val * 1.12])
+    return fig
+
+
+def _build_training_label_token_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    """Training-label timeline using assistant turn token length instead of duration."""
+    if not steps:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark" if dark else "plotly_white", height=380)
+        return fig
+
+    y_pos = list(range(len(steps)))
+    step_indices = [s.get("index", i) for i, s in enumerate(steps)]
+    tokens = [s.get("tokens_total") or 0 for s in steps]
+    phases = [s.get("phase", "") for s in steps]
+    actions = [s.get("action", "") for s in steps]
+    decisions = [(s.get("decision", {}) or {}).get("label", "") for s in steps]
+    values = [(s.get("value", {}) or {}).get("tier", "") for s in steps]
+    qualities = [(s.get("quality", {}) or {}).get("verdict", "") for s in steps]
+    value_tags = [
+        (s.get("value", {}) or {}).get("tags") or []
+        for s in steps
+    ]
+    row_labels = [
+        f"{step_indices[i]} · {actions[i]}"
+        for i in range(len(steps))
+    ]
+
+    from .palette import LABEL_PHASE_COLORS
+    colors = [LABEL_PHASE_COLORS.get(phase, "#6b7280") for phase in phases]
+    hover = [
+        f"<b>Assistant step {step_indices[i]}</b><br>"
+        f"Phase: {phases[i]}<br>"
+        f"Action: {actions[i]}<br>"
+        f"Quality: {qualities[i]}<br>"
+        f"Value: {values[i]}<br>"
+        f"Value tags: {', '.join(value_tags[i]) or 'none'}<br>"
+        f"Decision: {decisions[i]}<br>"
+        f"Estimated tokens: {tokens[i]:,}"
+        for i in range(len(steps))
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=tokens,
+        y=y_pos,
+        orientation="h",
+        marker_color=colors,
+        text=[f"{tokens[i]:,} tok" for i in range(len(steps))],
+        textposition="inside",
+        insidetextanchor="start",
+        textfont=dict(size=10, color="white"),
+        cliponaxis=True,
+        hovertext=hover,
+        hoverinfo="text",
+        showlegend=False,
+    ))
+    fig.update_yaxes(
+        tickmode="array",
+        tickvals=y_pos,
+        ticktext=row_labels,
+        autorange="reversed",
+        automargin=True,
+    )
+    fig.update_layout(
+        template="plotly_dark" if dark else "plotly_white",
+        title="Assistant Token Length Timeline (colored by phase)",
+        xaxis_title="Estimated tokens",
+        yaxis_title="Assistant step",
+        height=max(320, 24 * len(steps)),
+        margin=dict(l=140, r=28, t=56, b=42),
+    )
+    max_tokens = max(tokens or [0])
+    if max_tokens > 0:
+        fig.update_xaxes(range=[0, max_tokens * 1.08])
+    return fig
+
+
+def _counts_inline(counts: dict[str, int], *, limit: int | None = None) -> str:
+    items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    if limit is not None:
+        items = items[:limit]
+    if not items:
+        return "none"
+    return ", ".join(f"{html.escape(str(key))}: {value}" for key, value in items)
+
+
+def _build_training_label_summary_html(agg: dict) -> str:
+    return (
+        "<div style='padding:0.75em 1em;border:1px solid var(--ov-border);"
+        "border-radius:8px;background:var(--ov-card);font-size:13px;'>"
+        "<div style='font-weight:700;margin-bottom:6px;'>Training label summary</div>"
+        f"<div><b>Quality</b>: {_counts_inline(agg.get('quality_verdict_counts', {}))}</div>"
+        f"<div><b>Defects</b>: {_counts_inline(agg.get('quality_flag_counts', {}))}</div>"
+        f"<div><b>Value</b>: {_counts_inline(agg.get('value_tier_counts', {}))}</div>"
+        f"<div><b>Decision</b>: {_counts_inline(agg.get('decision_counts', {}))}</div>"
+        f"<div><b>Top value tags</b>: {_counts_inline(agg.get('value_tag_counts', {}), limit=5)}</div>"
+        "</div>"
+    )
+
+
+def attach_training_labels_to_steps(steps: list[dict], label_data: dict) -> list[dict]:
+    """Return steps with matching training v2 labels attached to assistant turns."""
+    labels_by_index = {
+        step.get("index"): step
+        for step in label_data.get("steps", [])
+        if isinstance(step, dict)
+    }
+    enriched = []
+    for step in steps:
+        copied = dict(step)
+        label = labels_by_index.get(step.get("index"))
+        if label and step.get("role") == "assistant":
+            copied["training_label"] = {
+                "phase": label.get("phase", ""),
+                "action": label.get("action", ""),
+                "quality": label.get("quality", {}),
+                "value": label.get("value", {}),
+                "decision": label.get("decision", {}),
+            }
+        enriched.append(copied)
+    return enriched
+
+
+def _load_label_json_kind(file_path: str) -> str:
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return "unknown"
+    if isinstance(data, dict) and data.get("schema_version") == "trajectory_labels.v2":
+        return "training_v2"
+    return "legacy"
+
+
+def build_label_ui_payload(file_path: str) -> dict:
+    """Build UI-facing label payload for legacy and training v2 label files."""
+    kind = _load_label_json_kind(file_path)
+    if kind == "training_v2":
+        data = load_training_labeled_json(file_path)
+        agg = aggregate_training_labels(data)
+        from .palette import LABEL_PHASE_COLORS
+        action_to_phase = {
+            step.get("action", "unknown"): step.get("phase", "unknown")
+            for step in agg.get("steps", [])
+        }
+        action_colors = {
+            action: LABEL_PHASE_COLORS.get(action_to_phase.get(action, ""), "#2563eb")
+            for action in agg["action_counts"]
+        }
+        phase_fig = _training_label_compact_count_chart(
+            agg["phase_counts"],
+            "Phase Counts",
+            color_map=LABEL_PHASE_COLORS,
+        )
+        action_fig = _training_label_compact_count_chart(
+            agg["action_counts"],
+            "Action Counts",
+            orientation="h",
+            color_map=action_colors,
+        )
+        quality_fig = _training_label_compact_count_chart(
+            agg["quality_verdict_counts"],
+            "Quality Verdicts",
+        )
+        value_fig = _training_label_compact_count_chart(
+            agg["value_tier_counts"],
+            "Value Tiers",
+        )
+        timeline_fig = _build_training_label_token_timeline_chart(agg["steps"])
+        n_steps = len(agg.get("steps", []))
+        decisions = _counts_inline(agg.get("decision_counts", {}))
+        badge = (
+            "<div style='display:flex;flex-direction:column;gap:6px;margin:6px 0;'>"
+            "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
+            "<span style='background:#2563eb;color:white;"
+            "padding:4px 12px;border-radius:12px;font-size:13px;'>"
+            f"Training labels loaded — {n_steps} assistant turns, decisions: {decisions}</span>"
+            "<a href='#' onclick=\"document.querySelector('[class*=per-message-acc]:last-child button')?.click();"
+            "return false;\" style='font-size:12px;color:#2563eb;text-decoration:underline;cursor:pointer;'>"
+            "Jump to Labels</a>"
+            "</div></div>"
+        )
+        return {
+            "kind": "training_v2",
+            "badge_html": badge,
+            "status_html": _build_training_label_summary_html(agg),
+            "phase_count_fig": phase_fig,
+            "action_count_fig": action_fig,
+            "phase_duration_fig": quality_fig,
+            "action_duration_fig": value_fig,
+            "timeline_fig": timeline_fig,
+        }
+
+    data = load_labeled_json(file_path)
+    agg = aggregate_labels(data)
+    pc_fig = build_label_phase_count_chart(agg["phase_counts"])
+    ac_fig = build_label_action_count_chart(agg["action_counts"], agg["action_to_phase"])
+    pd_fig = build_label_phase_duration_chart(agg["phase_durations"])
+    ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"])
+    tl_fig = build_label_timeline_chart(agg["steps"])
+
+    n_steps = len(agg.get("steps", []))
+    phase_counts = agg.get("phase_counts", {})
+    n_phases = len(phase_counts)
+
+    from .palette import LABEL_PHASE_COLORS
+    bar_segments = "".join(
+        f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
+        f" title='{phase}: {count}'></span>"
+        for phase, count in phase_counts.items() if count > 0
+    )
+    phase_bar = (
+        "<div style='display:flex;border-radius:4px;overflow:hidden;width:200px;margin-top:4px;'>"
+        f"{bar_segments}</div>"
+    ) if bar_segments else ""
+
+    phase_chips = "".join(
+        f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;"
+        f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:white;'>"
+        f"{phase}: {count}</span>"
+        for phase, count in phase_counts.items() if count > 0
+    )
+
+    badge = (
+        "<div style='display:flex;flex-direction:column;gap:6px;margin:6px 0;'>"
+        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
+        "<span style='background:#059669;color:white;"
+        "padding:4px 12px;border-radius:12px;font-size:13px;'>"
+        f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
+        "<a href='#' onclick=\"document.querySelector('[class*=per-message-acc]:last-child button')?.click();"
+        "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
+        "Jump to Labels</a>"
+        "</div>"
+        f"<div style='display:flex;gap:4px;flex-wrap:wrap;'>{phase_chips}</div>"
+        f"{phase_bar}"
+        "</div>"
+    )
+    return {
+        "kind": "legacy",
+        "badge_html": badge,
+        "status_html": "",
+        "phase_count_fig": pc_fig,
+        "action_count_fig": ac_fig,
+        "phase_duration_fig": pd_fig,
+        "action_duration_fig": ad_fig,
+        "timeline_fig": tl_fig,
+    }
+
+
 def _render_failure_patterns_html(patterns: list[dict]) -> str:
     """Render failure pattern clusters as expandable cards."""
     if not patterns:
@@ -645,6 +1138,7 @@ def build_ui() -> gr.Blocks:
                         ("Claude Code", "ccsession"),
                         ("CodeArts", "codearts"),
                         ("OpenCode", "opencode"),
+                        ("Training Conversation", "training_conversation"),
                     ],
                     value="ccsession",
                     interactive=True,
@@ -886,6 +1380,28 @@ def build_ui() -> gr.Blocks:
                                 });
                             }
 
+                            /* Detail tab click handler (delegated, survives detail HTML replacement) */
+                            if (!window.__dpTabHandlerAttached) {
+                                window.__dpTabHandlerAttached = true;
+                                document.addEventListener('click', function(e) {
+                                    var tab = e.target.closest('.dp-tab');
+                                    if (!tab) return;
+                                    var panel = tab.closest('.dp-panel');
+                                    if (!panel) return;
+                                    panel.querySelectorAll('.dp-tab').forEach(function(x) {
+                                        x.classList.remove('dp-tab-active');
+                                    });
+                                    panel.querySelectorAll('.dp-tab-content').forEach(function(x) {
+                                        x.classList.remove('dp-tab-visible');
+                                    });
+                                    tab.classList.add('dp-tab-active');
+                                    var content = panel.querySelector(
+                                        '[data-tab-content="' + tab.dataset.tab + '"]'
+                                    );
+                                    if (content) content.classList.add('dp-tab-visible');
+                                });
+                            }
+
                             /* Card click handler */
                             function selectCard(card) {
                                 if (!card) return;
@@ -905,6 +1421,8 @@ def build_ui() -> gr.Blocks:
                                     var details = JSON.parse(atob(storeEl.dataset.b64));
                                     if (details[idx] != null) {
                                         target.innerHTML = details[idx];
+                                        var detailPanel = target.closest('.detail-panel');
+                                        if (detailPanel) detailPanel.scrollTop = 0;
                                     }
                                 } catch(ex) { console.error('wf-click:', ex); }
                             }
@@ -1103,7 +1621,9 @@ def build_ui() -> gr.Blocks:
 
             # Validate format matches user selection
             _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
-                              "opencode": "OpenCode", "unknown": "Unknown"}
+                              "opencode": "OpenCode",
+                              "training_conversation": "Training Conversation",
+                              "unknown": "Unknown"}
             detected = detect_format(raw)
             if detected != selected_format and detected != "unknown":
                 err_msg = (
@@ -1476,7 +1996,7 @@ def build_ui() -> gr.Blocks:
         _empty_label_fig = go.Figure()
         _empty_label_fig.update_layout(template="plotly_white", height=380)
 
-        def do_load_labels(upload_obj):
+        def do_load_labels(upload_obj, steps_state):
             """Load labeled JSON and update all label UI components.
 
             Returns values matching the output list below:
@@ -1489,8 +2009,13 @@ def build_ui() -> gr.Blocks:
               6: label_charts_row2 (Row visibility)
               7: label_phase_dur_chart (Plot)
               8: label_action_dur_chart (Plot)
-              9: label_timeline_row (Row visibility)
+             9: label_timeline_row (Row visibility)
              10: label_timeline_chart (Plot)
+             11: state_steps
+             12: wf_count_html
+             13: workflow_html
+             14: detail_store
+             15: detail_html
             """
             file_path = None
             if upload_obj is not None:
@@ -1507,11 +2032,25 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty,
+                    steps_state, gr.update(), gr.update(), gr.update(), gr.update(),
                 )
 
             try:
-                data = load_labeled_json(file_path)
-                agg = aggregate_labels(data)
+                payload = build_label_ui_payload(file_path)
+                updated_steps = steps_state
+                wf_count_update = gr.update()
+                workflow_update = gr.update()
+                detail_store_update = gr.update()
+                detail_html_update = gr.update()
+                if payload.get("kind") == "training_v2" and steps_state:
+                    label_data = load_training_labeled_json(file_path)
+                    updated_steps = attach_training_labels_to_steps(steps_state, label_data)
+                    wf_count_update = (
+                        f"<div class='wf-count'>Showing {len(updated_steps)} of {len(updated_steps)} steps</div>"
+                    )
+                    workflow_update = render_workflow_html(updated_steps)
+                    detail_store_update = _prerender_step_details(updated_steps)
+                    detail_html_update = _DETAIL_PLACEHOLDER
             except Exception as exc:
                 return (
                     "",  # label_badge_html
@@ -1521,61 +2060,17 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty,
+                    steps_state, gr.update(), gr.update(), gr.update(), gr.update(),
                 )
 
-            pc_fig = build_label_phase_count_chart(agg["phase_counts"])
-            ac_fig = build_label_action_count_chart(agg["action_counts"], agg["action_to_phase"])
-            pd_fig = build_label_phase_duration_chart(agg["phase_durations"])
-            ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"])
-            tl_fig = build_label_timeline_chart(agg["steps"])
-
-            n_steps = len(agg.get("steps", []))
-            phase_counts = agg.get("phase_counts", {})
-            n_phases = len(phase_counts)
-
-            # Mini phase distribution bar
-            from .palette import LABEL_PHASE_COLORS
-            total_count = sum(phase_counts.values()) or 1
-            bar_segments = "".join(
-                f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
-                f" title='{phase}: {count}'></span>"
-                for phase, count in phase_counts.items() if count > 0
-            )
-            phase_bar = (
-                f"<div style='display:flex;border-radius:4px;overflow:hidden;width:200px;margin-top:4px;'>"
-                f"{bar_segments}</div>"
-            ) if bar_segments else ""
-
-            # Phase count chips
-            phase_chips = "".join(
-                f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;"
-                f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:white;'>"
-                f"{phase}: {count}</span>"
-                for phase, count in phase_counts.items() if count > 0
-            )
-
-            badge = (
-                f"<div style='display:flex;flex-direction:column;gap:6px;margin:6px 0;'>"
-                f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
-                f"<span style='background:#059669;color:white;"
-                f"padding:4px 12px;border-radius:12px;font-size:13px;'>"
-                f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
-                f"<a href='#' onclick=\"document.querySelector('[class*=per-message-acc]:last-child button')?.click();"
-                f"return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
-                f"Jump to Labels</a>"
-                f"</div>"
-                f"<div style='display:flex;gap:4px;flex-wrap:wrap;'>{phase_chips}</div>"
-                f"{phase_bar}"
-                f"</div>"
-            )
-
             return (
-                badge,  # label_badge_html
+                payload["badge_html"],  # label_badge_html
                 gr.update(open=True),  # labels_accordion (auto-open)
-                "",  # clear status message
-                gr.update(visible=True), pc_fig, ac_fig,
-                gr.update(visible=True), pd_fig, ad_fig,
-                gr.update(visible=True), tl_fig,
+                payload["status_html"],
+                gr.update(visible=True), payload["phase_count_fig"], payload["action_count_fig"],
+                gr.update(visible=True), payload["phase_duration_fig"], payload["action_duration_fig"],
+                gr.update(visible=True), payload["timeline_fig"],
+                updated_steps, wf_count_update, workflow_update, detail_store_update, detail_html_update,
             )
 
         label_outputs = [
@@ -1587,16 +2082,21 @@ def build_ui() -> gr.Blocks:
             label_charts_row2, label_phase_dur_chart,
             label_action_dur_chart,
             label_timeline_row, label_timeline_chart,
+            state_steps,
+            wf_count_html,
+            workflow_html,
+            detail_store,
+            detail_html,
         ]
         label_load_btn.click(
             fn=do_load_labels,
-            inputs=[label_file_upload],
+            inputs=[label_file_upload, state_steps],
             outputs=label_outputs,
         )
         # Auto-load labels on file upload
         label_file_upload.change(
             fn=do_load_labels,
-            inputs=[label_file_upload],
+            inputs=[label_file_upload, state_steps],
             outputs=label_outputs,
         )
 
@@ -1613,6 +2113,11 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=False), empty, empty,   # row1 + two charts
                 gr.update(visible=False), empty, empty,   # row2 + two charts
                 gr.update(visible=False), empty,          # timeline row + chart
+                gr.update(),                              # state_steps
+                gr.update(),                              # wf_count_html
+                gr.update(),                              # workflow_html
+                gr.update(),                              # detail_store
+                gr.update(),                              # detail_html
                 gr.update(value=None),                    # clear the file picker
             )
 

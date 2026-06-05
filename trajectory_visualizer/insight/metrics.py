@@ -47,6 +47,8 @@ def validate_token_integrity(steps: list[dict]) -> list[str]:
     zero_token_steps = []
     for s in steps:
         tokens = s.get("tokens", {})
+        if tokens.get("estimated"):
+            continue
         total = tokens.get("total", 0) or 0
         inp = tokens.get("input", 0) or 0
         out = tokens.get("output", 0) or 0

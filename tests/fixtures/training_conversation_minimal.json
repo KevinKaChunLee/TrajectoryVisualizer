@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "meta_info": {
+    "unique_info": {
+      "data_label": {
+        "turns": [
+          {
+            "turn_index": 1,
+            "labels": {"intent": "debug"},
+            "value": {"value_score": 9.9}
+          }
+        ],
+        "conversation": {
+          "conv_value": 9.9,
+          "conv_selection": 9.9
+        }
+      }
+    }
+  },
+  "messages": [
+    {"role": "system", "content": "You are a coding assistant."},
+    {"role": "user", "content": "Why does my pygame animation jitter?"},
+    {
+      "role": "assistant",
+      "reasoning_content": "Need inspect crop math and mask composition.",
+      "content": "The jitter is likely caused by integer crop jumps and out-of-range subsurfaces."
+    },
+    {"role": "user", "content": "How should I fix it?"},
+    {
+      "role": "assistant",
+      "content": "Clamp the source rect and keep the player center stable while scaling."
+    }
+  ]
+}
