@@ -96,6 +96,121 @@ def _prerender_step_details(steps: list[dict]) -> str:
     return f'<div data-b64="{b64}" style="display:none"></div>'
 
 
+def _workflow_step_labels(step: dict) -> set[str]:
+    """Return every Workflow filter label that applies to *step*.
+
+    These labels intentionally overlap.  For example, a failed assistant tool
+    call is labelled ``Assistant``, ``Tool Calls``, and ``Errors``.  The
+    Workflow filter treats those labels as alternatives: matching any selected
+    label keeps the step visible.
+    """
+    labels: set[str] = set()
+    role = step.get("role")
+    if role == "assistant":
+        labels.add("Assistant")
+    elif role == "user":
+        labels.add("User")
+    if step.get("tool_call_count", 0) > 0:
+        labels.add("Tool Calls")
+    if step.get("error_count", 0) > 0:
+        labels.add("Errors")
+    if step.get("has_reasoning"):
+        labels.add("Reasoning")
+    return labels
+
+
+def _filter_workflow_steps(
+    steps: list[dict], active_filters: list[str], keyword: str = "",
+) -> list[int]:
+    """Return positions of steps matching Workflow labels, agents, and search.
+
+    Step labels are ORed with each other, selected agents are ORed with each
+    other, and the two groups are ANDed together.  When a multi-agent trace has
+    no selected agent, or no step label is selected, the result is empty.
+    """
+    if not steps:
+        return []
+
+    keyword = (keyword or "").strip().lower()
+    active = {str(value).strip() for value in active_filters if str(value).strip()}
+    step_filters = active & set(_FILTER_CHIPS_DEFAULT)
+    if not step_filters:
+        return []
+
+    available_agents = {effective_agent(step) for step in steps}
+    agent_filters = {
+        value[len("agent:"):]
+        for value in active
+        if value.startswith("agent:")
+    }
+    if len(available_agents) > 1 and not agent_filters:
+        return []
+
+    filtered: list[int] = []
+    for position, step in enumerate(steps):
+        if agent_filters and effective_agent(step) not in agent_filters:
+            continue
+        if not (_workflow_step_labels(step) & step_filters):
+            continue
+
+        if keyword:
+            text = str(step.get("text_preview") or "").lower()
+            tool_names = " ".join(
+                str(tool_call.get("tool_name", ""))
+                for tool_call in step.get("tool_calls", [])
+                if isinstance(tool_call, dict)
+            ).lower()
+            tool_args = " ".join(
+                str(tool_call.get("input", ""))
+                for tool_call in step.get("tool_calls", [])
+                if isinstance(tool_call, dict)
+            ).lower()
+            if keyword not in text and keyword not in tool_names and keyword not in tool_args:
+                continue
+        filtered.append(position)
+    return filtered
+
+
+def _build_filtered_workflow_outputs(
+    steps: list[dict], filter_csv: str, keyword: str,
+) -> tuple[str, str, str]:
+    """Build filtered Workflow cards, count, and matching TOC HTML."""
+    if not steps:
+        return (
+            "<div style='padding:3em;color:#9ca3af;text-align:center;"
+            "font-size:15px;'>Load a trajectory to see the step flow.</div>",
+            "",
+            "",
+        )
+
+    active_filters = [
+        value.strip() for value in (filter_csv or "").split(",") if value.strip()
+    ]
+    indices = _filter_workflow_steps(steps, active_filters, keyword)
+    filtered_steps = [steps[position] for position in indices]
+
+    if not (set(active_filters) & set(_FILTER_CHIPS_DEFAULT)):
+        workflow_html = (
+            "<div style='padding:2em;color:#9ca3af;text-align:center;'>"
+            "No step labels selected &mdash; click a chip to see steps.</div>"
+        )
+    elif len({effective_agent(step) for step in steps}) > 1 and not any(
+        value.startswith("agent:") for value in active_filters
+    ):
+        workflow_html = (
+            "<div style='padding:2em;color:#9ca3af;text-align:center;'>"
+            "No agents selected &mdash; click an agent chip to see steps.</div>"
+        )
+    else:
+        workflow_html = render_workflow_html(filtered_steps)
+
+    count_html = (
+        f"<div class='wf-count'>Showing {len(filtered_steps)} of "
+        f"{len(steps)} steps</div>"
+    )
+    return workflow_html, count_html, render_toc_sidebar(filtered_steps)
+
+
 def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
     """Return a list of anomaly dicts (type, step_idx, value_str) from metrics."""
     anomalies: list[dict] = []
@@ -1353,30 +1468,46 @@ def build_ui() -> gr.Blocks:
                             "font-size:15px;'>Load a trajectory to see the step flow.</div>",
                             js_on_load="""
                             /* Filter chip click handler (delegated, survives re-renders) */
+                            window.__syncWorkflowFilters = function(bar) {
+                                if (!bar) return;
+                                var active = Array.from(bar.querySelectorAll('.filter-chip.chip-active'))
+                                    .map(function(c) { return c.dataset.filter; });
+                                var hiddenEl = document.querySelector(
+                                    '#wf-filter-hidden textarea, #wf-filter-hidden input'
+                                );
+                                if (!hiddenEl) return;
+                                var proto = hiddenEl.tagName === 'TEXTAREA'
+                                    ? window.HTMLTextAreaElement.prototype
+                                    : window.HTMLInputElement.prototype;
+                                var descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+                                if (descriptor && descriptor.set) {
+                                    descriptor.set.call(hiddenEl, active.join(','));
+                                } else {
+                                    hiddenEl.value = active.join(',');
+                                }
+                                hiddenEl.dispatchEvent(new Event('input', {
+                                    bubbles: true,
+                                    composed: true
+                                }));
+                            };
                             if (!window.__wfChipHandlerAttached) {
                                 window.__wfChipHandlerAttached = true;
                                 document.addEventListener('click', function(e) {
                                     var chip = e.target.closest('.filter-chip');
-                                    if (!chip) return;
-                                    chip.classList.toggle('chip-active');
-                                    var bar = chip.closest('.filter-bar') || document.getElementById('wf-filter-chips');
+                                    var showAll = e.target.closest('[data-wf-action="show-all"]');
+                                    if (!chip && !showAll) return;
+                                    var root = (chip || showAll).closest('#wf-filter-chips');
+                                    if (!root) return;
+                                    var bar = root && root.querySelector('.filter-bar');
                                     if (!bar) return;
-                                    var active = Array.from(bar.querySelectorAll('.filter-chip.chip-active'))
-                                        .map(function(c) { return c.dataset.filter; });
-                                    var hiddenEl = document.querySelector('#wf-filter-hidden textarea, #wf-filter-hidden input');
-                                    if (hiddenEl) {
-                                        var nativeSet = Object.getOwnPropertyDescriptor(
-                                            window.HTMLInputElement.prototype, 'value'
-                                        ) || Object.getOwnPropertyDescriptor(
-                                            window.HTMLTextAreaElement.prototype, 'value'
-                                        );
-                                        if (nativeSet && nativeSet.set) {
-                                            nativeSet.set.call(hiddenEl, active.join(','));
-                                        } else {
-                                            hiddenEl.value = active.join(',');
-                                        }
-                                        hiddenEl.dispatchEvent(new Event('input', {bubbles: true}));
+                                    if (showAll) {
+                                        bar.querySelectorAll('.filter-chip').forEach(function(c) {
+                                            c.classList.add('chip-active');
+                                        });
+                                    } else {
+                                        chip.classList.toggle('chip-active');
                                     }
+                                    window.__syncWorkflowFilters(bar);
                                 });
                             }
 
@@ -1457,6 +1588,16 @@ def build_ui() -> gr.Blocks:
                                     if (card) {
                                         card.scrollIntoView({behavior:'smooth', block:'center'});
                                         selectCard(card);
+                                    } else {
+                                        var target = document.getElementById('wf-detail-content');
+                                        if (target) {
+                                            target.innerHTML =
+                                                "<div style='padding:2em 1em;text-align:center;color:#9ca3af;'>" +
+                                                "<p style='font-size:15px;margin-bottom:0.5em;'>" +
+                                                "Selected step is hidden by the current filters</p>" +
+                                                "<p style='font-size:12px;'>Adjust the filters to show it again.</p>" +
+                                                "</div>";
+                                        }
                                     }
                                 }
                             }, 500);
@@ -1890,81 +2031,9 @@ def build_ui() -> gr.Blocks:
         )
 
         # -- Workflow filter callback --
-        def _filter_workflow_steps(steps, active_filters, keyword):
-            """Return indices of steps matching filters and keyword."""
-            if not steps:
-                return []
-            keyword = (keyword or "").strip().lower()
-            active = set(active_filters)
-            # Separate role filters (gate) from content filters (narrow)
-            role_filters = active & {"Assistant", "User"}
-            content_filters = active & {"Tool Calls", "Errors", "Reasoning"}
-            # Agent filters: "agent:<id>" entries
-            agent_filters = {f[6:] for f in active if f.startswith("agent:")}
-            filtered = []
-            for i, s in enumerate(steps):
-                # Agent gate: if agent chips are active, step must be from one of them
-                if agent_filters:
-                    step_agent = effective_agent(s)
-                    if step_agent not in agent_filters:
-                        continue
-                role = s["role"]
-                # Role gate: step must match a checked role
-                role_ok = (
-                    ("Assistant" in role_filters and role == "assistant")
-                    or ("User" in role_filters and role == "user")
-                )
-                if not role_ok:
-                    continue
-                # Content gate: only applies to steps that have filterable content
-                if content_filters:
-                    has_content = (s["tool_call_count"] > 0
-                                   or s["error_count"] > 0
-                                   or s["has_reasoning"])
-                    if has_content:
-                        content_ok = (
-                            ("Tool Calls" in content_filters and s["tool_call_count"] > 0)
-                            or ("Errors" in content_filters and s["error_count"] > 0)
-                            or ("Reasoning" in content_filters and s["has_reasoning"])
-                        )
-                        if not content_ok:
-                            continue
-                # Keyword match
-                if keyword:
-                    text = (s.get("text_preview") or "").lower()
-                    tool_names = " ".join(tc["tool_name"] for tc in s.get("tool_calls", [])).lower()
-                    tool_args = " ".join(
-                        str(tc.get("input", "")) for tc in s.get("tool_calls", [])
-                    ).lower()
-                    if keyword not in text and keyword not in tool_names and keyword not in tool_args:
-                        continue
-                filtered.append(i)
-            return filtered
-
         def do_filter_workflow(steps, filter_csv, keyword):
-            """Re-render workflow HTML with filters applied."""
-            if not steps:
-                return (
-                    "<div style='padding:3em;color:#9ca3af;text-align:center;"
-                    "font-size:15px;'>Load a trajectory to see the step flow.</div>",
-                    "",
-                )
-            active_filters = [f.strip() for f in (filter_csv or "").split(",") if f.strip()]
-            if not active_filters:
-                return (
-                    "<div style='padding:2em;color:#9ca3af;text-align:center;'>"
-                    "No filters selected &mdash; click a chip to see steps.</div>",
-                    "<div class='wf-count'>Showing 0 of "
-                    f"{len(steps)} steps</div>",
-                )
-            indices = _filter_workflow_steps(steps, active_filters, keyword)
-            filtered_steps = [steps[i] for i in indices]
-            wf_html = render_workflow_html(filtered_steps)
-            count_html = (
-                f"<div class='wf-count'>Showing {len(filtered_steps)} of "
-                f"{len(steps)} steps</div>"
-            )
-            return wf_html, count_html
+            """Re-render Workflow cards, count, and TOC with filters applied."""
+            return _build_filtered_workflow_outputs(steps, filter_csv, keyword)
 
         # -- TOC toggle callback --
         def on_toc_toggle(current_toc):
@@ -1981,15 +2050,15 @@ def build_ui() -> gr.Blocks:
             outputs=[toc_html],
         )
 
-        wf_filter_hidden.change(
+        wf_filter_hidden.input(
             fn=do_filter_workflow,
             inputs=[state_steps, wf_filter_hidden, wf_search],
-            outputs=[workflow_html, wf_count_html],
+            outputs=[workflow_html, wf_count_html, toc_html],
         )
         wf_search.change(
             fn=do_filter_workflow,
             inputs=[state_steps, wf_filter_hidden, wf_search],
-            outputs=[workflow_html, wf_count_html],
+            outputs=[workflow_html, wf_count_html, toc_html],
         )
 
         # -- Label file upload callback --

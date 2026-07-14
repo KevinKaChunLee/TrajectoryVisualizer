@@ -203,10 +203,11 @@ def render_agent_summary_cards(agent_summaries: list[dict]) -> str:
 def render_filter_chips(active: list[str] | None = None, agent_labels: list[dict] | None = None) -> str:
     """Generate styled chip buttons for workflow filter categories.
 
-    All chips are active by default. The HTML includes ``data-filter`` attributes
-    and an ``onclick`` handler that toggles the ``chip-active`` class and writes
-    the active values into a hidden Gradio Textbox (``#wf-filter-hidden``).
+    All chips are active by default.  The HTML exposes ``data-filter`` and
+    ``data-wf-action`` attributes; a delegated handler in the Workflow component
+    owns state changes so it continues to work after Gradio re-renders.
     """
+    activate_all_agents = active is None
     if active is None:
         active = list(_FILTER_CHIPS)
     active_set = set(active)
@@ -224,28 +225,20 @@ def render_filter_chips(active: list[str] | None = None, agent_labels: list[dict
             label = html.escape(al["label"])
             agent_hex = AGENT_COLORS[i % len(AGENT_COLORS)]
             filter_key = f"agent:{al['agent_id']}"
+            cls = "filter-chip filter-chip-agent"
+            if activate_all_agents or filter_key in active_set:
+                cls += " chip-active"
             chips.append(
-                f"<span class='filter-chip filter-chip-agent chip-active'"
+                f"<span class='{cls}'"
                 f" data-filter='{html.escape(filter_key)}'"
                 f" style='--agent-color:{agent_hex};'>"
                 f"{label}</span>"
             )
-    # Clear-all JS handler
-    clear_js = (
-        "(function(){"
-        "var bar=document.getElementById('wf-filter-bar');"
-        "if(!bar)return;"
-        "bar.querySelectorAll('.filter-chip').forEach(function(c){c.classList.add('chip-active');});"
-        "var active=Array.from(bar.querySelectorAll('.filter-chip.chip-active'))"
-        ".map(function(c){return c.dataset.filter;});"
-        "var h=document.querySelector('#wf-filter-hidden textarea,#wf-filter-hidden input');"
-        "if(h){h.value=active.join(',');h.dispatchEvent(new Event('input',{bubbles:true}));}"
-        "})()"
-    )
     filter_summary = (
         f"<div class='filter-summary' id='wf-filter-summary'>"
         f"<span id='wf-filter-count'></span>"
-        f"<span class='clear-all' onclick=\"{clear_js}\">Clear all</span>"
+        f"<span class='clear-all' data-wf-action='show-all'"
+        f" title='Restore all step and agent filters'>Clear all</span>"
         f"</div>"
     )
     return (
