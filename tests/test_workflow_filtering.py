@@ -53,70 +53,86 @@ class WorkflowFilteringTests(unittest.TestCase):
             _step(3, agent="sub-agent", tool=True, error=True, text="command failed"),
             _step(4, agent="sub-agent", reasoning=True, text="consider options"),
         ]
-        self.all_agents = ["agent:", "agent:sub-agent"]
 
-    def test_step_labels_are_combined_with_or(self):
-        from trajectory_visualizer.insight.insight import _filter_workflow_steps
-
-        filters = ["User", "Tool Calls", "Errors", "Reasoning", *self.all_agents]
-
-        self.assertEqual(_filter_workflow_steps(self.steps, filters), [0, 1, 3, 4])
-
-    def test_error_step_remains_visible_when_any_of_its_labels_is_selected(self):
+    def test_roles_are_combined_with_or(self):
         from trajectory_visualizer.insight.insight import _filter_workflow_steps
 
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Assistant", *self.all_agents]),
+            _filter_workflow_steps(self.steps, ["Assistant", "User", "All"]),
+            [0, 1, 2, 3, 4],
+        )
+        self.assertEqual(
+            _filter_workflow_steps(self.steps, ["Assistant", "All"]),
             [1, 2, 3, 4],
         )
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Tool Calls", *self.all_agents]),
+            _filter_workflow_steps(self.steps, ["User", "All"]),
+            [0],
+        )
+
+    def test_features_are_combined_with_or_inside_selected_roles(self):
+        from trajectory_visualizer.insight.insight import _filter_workflow_steps
+
+        self.assertEqual(
+            _filter_workflow_steps(
+                self.steps,
+                ["Assistant", "Tool Calls", "Reasoning"],
+            ),
+            [1, 3, 4],
+        )
+
+    def test_role_and_feature_groups_are_combined_with_and(self):
+        from trajectory_visualizer.insight.insight import _filter_workflow_steps
+
+        self.assertEqual(
+            _filter_workflow_steps(self.steps, ["Assistant", "Tool Calls"]),
             [1, 3],
         )
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Errors", *self.all_agents]),
-            [3],
+            _filter_workflow_steps(self.steps, ["User", "Tool Calls"]),
+            [],
         )
 
-    def test_agent_filter_is_anded_with_step_labels(self):
+    def test_all_or_an_omitted_feature_selection_has_no_feature_predicate(self):
         from trajectory_visualizer.insight.insight import _filter_workflow_steps
 
-        filters = ["Assistant", "User", "Tool Calls", "Errors", "Reasoning"]
-
-        self.assertEqual(_filter_workflow_steps(self.steps, [*filters, "agent:"]), [0, 1])
+        expected = [1, 2, 3, 4]
         self.assertEqual(
-            _filter_workflow_steps(self.steps, [*filters, "agent:sub-agent"]),
-            [2, 3, 4],
+            _filter_workflow_steps(self.steps, ["Assistant", "All"]),
+            expected,
+        )
+        self.assertEqual(
+            _filter_workflow_steps(self.steps, ["Assistant"]),
+            expected,
         )
 
-    def test_multi_agent_trace_with_no_agent_selected_is_empty(self):
+    def test_no_selected_role_is_empty(self):
         from trajectory_visualizer.insight.insight import _filter_workflow_steps
-
-        self.assertEqual(_filter_workflow_steps(self.steps, ["Assistant", "User"]), [])
-
-    def test_single_agent_trace_does_not_require_hidden_agent_filter(self):
-        from trajectory_visualizer.insight.insight import _filter_workflow_steps
-
-        main_steps = self.steps[:2]
 
         self.assertEqual(
-            _filter_workflow_steps(main_steps, ["Assistant", "User"]),
-            [0, 1],
+            _filter_workflow_steps(self.steps, ["All", "Tool Calls"]),
+            [],
         )
 
-    def test_no_selected_step_label_is_empty(self):
+    def test_agent_tokens_do_not_apply_a_hidden_filter(self):
         from trajectory_visualizer.insight.insight import _filter_workflow_steps
 
-        self.assertEqual(_filter_workflow_steps(self.steps, self.all_agents), [])
+        self.assertEqual(
+            _filter_workflow_steps(
+                self.steps,
+                ["Assistant", "All", "agent:sub-agent"],
+            ),
+            [1, 2, 3, 4],
+        )
 
-    def test_keyword_is_anded_with_labels_and_agent(self):
+    def test_keyword_is_anded_with_role_and_features(self):
         from trajectory_visualizer.insight.insight import _filter_workflow_steps
 
         self.steps[3]["tool_calls"][0] = {
             "tool_name": "Bash",
             "input": {"command": "pytest workflow"},
         }
-        filters = ["Tool Calls", *self.all_agents]
+        filters = ["Assistant", "Tool Calls"]
 
         self.assertEqual(_filter_workflow_steps(self.steps, filters, "pytest"), [3])
         self.assertEqual(_filter_workflow_steps(self.steps, filters, "inspect"), [1])
@@ -126,7 +142,7 @@ class WorkflowFilteringTests(unittest.TestCase):
 
         workflow, count, toc = _build_filtered_workflow_outputs(
             self.steps,
-            "Errors,agent:,agent:sub-agent",
+            "Assistant,Errors",
             "",
         )
 
@@ -136,28 +152,70 @@ class WorkflowFilteringTests(unittest.TestCase):
         self.assertIn("data-step-idx='3'", toc)
         self.assertNotIn("data-step-idx='1'", toc)
 
-    def test_filter_chips_use_delegated_show_all_action(self):
+    def test_filter_chips_render_two_explicit_groups_without_agents(self):
         from trajectory_visualizer.insight.rendering import render_filter_chips
 
-        chips = render_filter_chips(agent_labels=[
-            {"label": "main", "agent_id": ""},
-            {"label": "sub", "agent_id": "sub-agent"},
-        ])
+        chips = render_filter_chips()
 
-        self.assertIn("data-wf-action='show-all'", chips)
+        self.assertIn("data-filter-group-container='role'", chips)
+        self.assertIn("data-filter-group-container='feature'", chips)
+        self.assertIn("data-filter='All'", chips)
+        self.assertIn("data-wf-action='reset-filters'", chips)
+        self.assertIn("select at least one", chips)
+        self.assertIn("match any selected", chips)
+        self.assertNotIn("agent:", chips)
+        self.assertNotIn("Clear all", chips)
         self.assertNotIn("onclick=", chips)
-        self.assertIn("data-filter='agent:'", chips)
-        self.assertIn("data-filter='agent:sub-agent'", chips)
+
+    def test_default_chips_select_both_roles_and_all_only(self):
+        from trajectory_visualizer.insight.rendering import render_filter_chips
+
+        chips = render_filter_chips()
+
+        for name in ("Assistant", "User", "All"):
+            start = chips.index(f"data-filter='{name}'")
+            button_start = chips.rfind("<button", 0, start)
+            self.assertIn("chip-active", chips[button_start:start])
+        for name in ("Tool Calls", "Errors", "Reasoning"):
+            start = chips.index(f"data-filter='{name}'")
+            button_start = chips.rfind("<button", 0, start)
+            self.assertNotIn("chip-active", chips[button_start:start])
+
+    def test_chip_handler_enforces_required_roles_and_mutually_exclusive_all(self):
+        from trajectory_visualizer.insight import insight
+
+        source = inspect.getsource(insight.build_ui)
+
+        self.assertIn("selectedRoles.length === 1", source)
+        self.assertIn("chip.dataset.filter === 'All'", source)
+        self.assertIn("selectedFeatures.length === 0", source)
+        self.assertIn("data-wf-action=\"reset-filters\"", source)
+        self.assertIn("c.dataset.filter === 'All'", source)
+        self.assertIn("window.__updateWorkflowFilterQuery(root)", source)
 
     def test_chip_handler_updates_the_real_hidden_input_and_all_outputs(self):
         from trajectory_visualizer.insight import insight
 
         source = inspect.getsource(insight.build_ui)
 
+        hidden_filter_source = source[source.index("wf_filter_hidden = gr.Textbox("):]
+        hidden_filter_source = hidden_filter_source[:hidden_filter_source.index("wf_count_html")]
+        self.assertIn("visible=True", hidden_filter_source)
         self.assertIn("hiddenEl.tagName === 'TEXTAREA'", source)
         self.assertIn("descriptor.set.call(hiddenEl, active.join(','))", source)
-        self.assertIn("wf_filter_hidden.input(", source)
+        self.assertIn("new InputEvent('input'", source)
+        self.assertIn("new Event('change'", source)
+        self.assertIn("wf_filter_hidden.change(", source)
         self.assertIn("outputs=[workflow_html, wf_count_html, toc_html]", source)
+
+    def test_hidden_filter_bridge_is_visually_hidden_with_css(self):
+        from pathlib import Path
+
+        styles = Path("trajectory_visualizer/insight/styles.py").read_text()
+
+        start = styles.index("#wf-filter-hidden")
+        bridge_css = styles[start:styles.index(".filter-summary {", start)]
+        self.assertIn("display: none !important", bridge_css)
 
     def test_hidden_selected_step_gets_a_clear_detail_message(self):
         from trajectory_visualizer.insight import insight
