@@ -94,14 +94,45 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("Metrics unavailable", html)
         self.assertIn("Missing or unavailable: Cache Write", html)
 
-    def test_missing_duration_also_makes_metrics_unavailable(self):
+    def test_missing_duration_keeps_token_table_with_na_derived_rows(self):
+        # The final step of a Claude Code trajectory has genuine token data
+        # but no recorded duration; the table must not be hidden for it.
         from trajectory_visualizer.insight.rendering import _format_metrics_tab
 
         html = _format_metrics_tab(self._metric_step(duration=None))
 
-        self.assertNotIn("<table", html)
-        self.assertIn("Duration", html)
-        self.assertIn("Throughput", html)
+        self.assertIn("<table class='dp-meta-table'>", html)
+        self.assertNotIn("Metrics unavailable", html)
+        self.assertIn("<td>Total Tokens</td><td>100</td>", html)
+        self.assertIn("<td>Duration</td><td>n/a</td>", html)
+        self.assertIn("<td>Throughput</td><td>n/a</td>", html)
+        self.assertIn("<td>Cache Ratio</td><td>0.0%</td>", html)
+
+    def test_real_zero_duration_renders_as_zero_not_missing(self):
+        from trajectory_visualizer.insight.rendering import _format_metrics_tab
+
+        html = _format_metrics_tab(self._metric_step(duration=0.0))
+
+        self.assertIn("<table class='dp-meta-table'>", html)
+        self.assertNotIn("Metrics unavailable", html)
+        self.assertIn("<td>Duration</td><td>0.0s</td>", html)
+        self.assertIn("<td>Throughput</td><td>n/a</td>", html)
+
+    def test_zero_total_tokens_shows_na_derived_rows_without_dividing(self):
+        from trajectory_visualizer.insight.rendering import _format_metrics_tab
+
+        tokens = {
+            "total": 0, "input": 0, "output": 0,
+            "reasoning": 0, "cache_read": 0, "cache_write": 0,
+        }
+        html = _format_metrics_tab(self._metric_step(tokens=tokens))
+
+        self.assertIn("<table class='dp-meta-table'>", html)
+        self.assertIn("<td>Total Tokens</td><td>0</td>", html)
+        # 0 tokens over a real duration is a genuine 0 tok/s, but 0/0 cache
+        # ratio is undefined and must degrade to n/a instead of dividing.
+        self.assertIn("<td>Throughput</td><td>0 tok/s</td>", html)
+        self.assertIn("<td>Cache Ratio</td><td>n/a</td>", html)
 
     def test_codearts_marks_placeholder_breakdown_and_cache_values_unavailable(self):
         from trajectory_visualizer.insight.parser import parse_steps
@@ -134,7 +165,6 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertNotIn("CodeArts", html)
         self.assertIn("Input Tokens", html)
         self.assertIn("Cache Write", html)
-        self.assertIn("Cache Ratio", html)
 
 
 if __name__ == "__main__":

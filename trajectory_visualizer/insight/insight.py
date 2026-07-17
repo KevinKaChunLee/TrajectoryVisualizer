@@ -72,7 +72,7 @@ from .styles import APP_CSS
 
 _DETAIL_PLACEHOLDER = (
     "<div id='wf-detail-content'>"
-    "<div style='padding:2em 1em;text-align:center;color:#9ca3af;'>"
+    "<div data-wf-detail-placeholder='1' style='padding:2em 1em;text-align:center;color:#9ca3af;'>"
     "<p style='font-size:15px;margin-bottom:0.5em;'>Select a step to inspect</p>"
     "<p style='font-size:12px;'>Click any card on the left, or press <kbd>j</kbd>/<kbd>k</kbd> to navigate</p>"
     "</div></div>"
@@ -170,9 +170,13 @@ def _filter_workflow_steps(
 
 
 def _build_filtered_workflow_outputs(
-    steps: list[dict], filter_csv: str, keyword: str,
+    steps: list[dict], filter_csv: str, keyword: str, current_toc: str = "",
 ) -> tuple[str, str, str]:
-    """Build filtered Workflow cards, count, and matching TOC HTML."""
+    """Build filtered Workflow cards, count, and matching TOC HTML.
+
+    ``current_toc`` carries the previous TOC HTML so a user-collapsed
+    sidebar (``toc-hidden``) stays collapsed across re-renders.
+    """
     if not steps:
         return (
             "<div style='padding:3em;color:#9ca3af;text-align:center;"
@@ -199,7 +203,8 @@ def _build_filtered_workflow_outputs(
         f"<div class='wf-count'>Showing {len(filtered_steps)} of "
         f"{len(steps)} steps</div>"
     )
-    return workflow_html, count_html, render_toc_sidebar(filtered_steps)
+    collapsed = "toc-hidden" in (current_toc or "")
+    return workflow_html, count_html, render_toc_sidebar(filtered_steps, collapsed=collapsed)
 
 
 def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
@@ -1506,6 +1511,62 @@ def build_ui() -> gr.Blocks:
                                 query.textContent = 'Role: ' + roles.join(' or ')
                                     + ' · Step feature: ' + featureText;
                             };
+                            /* Pure chip state machine, unit-tested in
+                               tests/test_workflow_filtering.py by executing this
+                               exact source in Node. Keep it DOM-free. */
+                            /* __WF_CHIP_STATE_BEGIN__ */
+                            window.__wfComputeChipState = function(state, action) {
+                                var roles = {};
+                                var features = {};
+                                Object.keys(state.roles).forEach(function(k) { roles[k] = !!state.roles[k]; });
+                                Object.keys(state.features).forEach(function(k) { features[k] = !!state.features[k]; });
+                                var rejected = false;
+                                if (action.type === 'reset') {
+                                    Object.keys(roles).forEach(function(k) { roles[k] = true; });
+                                    Object.keys(features).forEach(function(k) { features[k] = (k === 'All'); });
+                                } else if (action.group === 'role') {
+                                    var activeRoles = Object.keys(roles).filter(function(k) { return roles[k]; });
+                                    if (roles[action.name] && activeRoles.length === 1) {
+                                        /* Refuse to deselect the last active role. */
+                                        rejected = true;
+                                    } else {
+                                        roles[action.name] = !roles[action.name];
+                                    }
+                                } else if (action.name === 'All') {
+                                    /* 'All' is exclusive with specific features. */
+                                    Object.keys(features).forEach(function(k) { features[k] = (k === 'All'); });
+                                } else {
+                                    features[action.name] = !features[action.name];
+                                    features['All'] = false;
+                                    var anySpecific = Object.keys(features).some(function(k) {
+                                        return k !== 'All' && features[k];
+                                    });
+                                    if (!anySpecific) {
+                                        /* Auto-restore 'All' when nothing specific is left. */
+                                        features['All'] = true;
+                                    }
+                                }
+                                return {roles: roles, features: features, rejected: rejected};
+                            };
+                            /* __WF_CHIP_STATE_END__ */
+                            window.__wfReadChipState = function(bar) {
+                                var state = {roles: {}, features: {}};
+                                bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
+                                    state.roles[c.dataset.filter] = c.classList.contains('chip-active');
+                                });
+                                bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
+                                    state.features[c.dataset.filter] = c.classList.contains('chip-active');
+                                });
+                                return state;
+                            };
+                            window.__wfApplyChipState = function(bar, state) {
+                                bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
+                                    window.__setWorkflowChipActive(c, !!state.roles[c.dataset.filter]);
+                                });
+                                bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
+                                    window.__setWorkflowChipActive(c, !!state.features[c.dataset.filter]);
+                                });
+                            };
                             if (!window.__wfChipHandlerAttached) {
                                 window.__wfChipHandlerAttached = true;
                                 document.addEventListener('click', function(e) {
@@ -1516,57 +1577,25 @@ def build_ui() -> gr.Blocks:
                                     if (!root) return;
                                     var bar = root.querySelector('#wf-filter-bar');
                                     if (!bar) return;
-                                    if (reset) {
-                                        bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
-                                            window.__setWorkflowChipActive(c, true);
-                                        });
-                                        bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
-                                            window.__setWorkflowChipActive(c, c.dataset.filter === 'All');
-                                        });
-                                    } else if (chip.dataset.filterGroup === 'role') {
-                                        var selectedRoles = bar.querySelectorAll(
-                                            '[data-filter-group="role"].chip-active'
-                                        );
-                                        if (chip.classList.contains('chip-active') && selectedRoles.length === 1) {
-                                            var roleGroup = chip.closest('.filter-group');
-                                            if (roleGroup) {
+                                    var action = reset
+                                        ? {type: 'reset'}
+                                        : {type: 'toggle', group: chip.dataset.filterGroup, name: chip.dataset.filter};
+                                    var next = window.__wfComputeChipState(
+                                        window.__wfReadChipState(bar), action
+                                    );
+                                    if (next.rejected) {
+                                        var roleGroup = chip.closest('.filter-group');
+                                        if (roleGroup) {
+                                            roleGroup.classList.remove('filter-group-attention');
+                                            void roleGroup.offsetWidth;
+                                            roleGroup.classList.add('filter-group-attention');
+                                            window.setTimeout(function() {
                                                 roleGroup.classList.remove('filter-group-attention');
-                                                void roleGroup.offsetWidth;
-                                                roleGroup.classList.add('filter-group-attention');
-                                                window.setTimeout(function() {
-                                                    roleGroup.classList.remove('filter-group-attention');
-                                                }, 900);
-                                            }
-                                            return;
+                                            }, 900);
                                         }
-                                        window.__setWorkflowChipActive(
-                                            chip, !chip.classList.contains('chip-active')
-                                        );
-                                    } else {
-                                        var anyChip = bar.querySelector(
-                                            '[data-filter-group="feature"][data-filter="All"]'
-                                        );
-                                        var specificFeatures = bar.querySelectorAll(
-                                            '[data-filter-group="feature"]:not([data-filter="All"])'
-                                        );
-                                        if (chip.dataset.filter === 'All') {
-                                            window.__setWorkflowChipActive(anyChip, true);
-                                            specificFeatures.forEach(function(c) {
-                                                window.__setWorkflowChipActive(c, false);
-                                            });
-                                        } else {
-                                            window.__setWorkflowChipActive(
-                                                chip, !chip.classList.contains('chip-active')
-                                            );
-                                            window.__setWorkflowChipActive(anyChip, false);
-                                            var selectedFeatures = bar.querySelectorAll(
-                                                '[data-filter-group="feature"].chip-active:not([data-filter="All"])'
-                                            );
-                                            if (selectedFeatures.length === 0) {
-                                                window.__setWorkflowChipActive(anyChip, true);
-                                            }
-                                        }
+                                        return;
                                     }
+                                    window.__wfApplyChipState(bar, next);
                                     window.__updateWorkflowFilterQuery(root);
                                     window.__syncWorkflowFilters(bar);
                                 });
@@ -1604,6 +1633,7 @@ def build_ui() -> gr.Blocks:
                                 var idx = card.dataset.stepIdx;
                                 /* URL deep linking */
                                 if (idx != null) {
+                                    window.__wfSelectedStep = idx;
                                     history.replaceState(null, '', '#step-' + idx);
                                 }
                                 var storeEl = document.querySelector('#wf-detail-store [data-b64]');
@@ -1650,18 +1680,57 @@ def build_ui() -> gr.Blocks:
                                         card.scrollIntoView({behavior:'smooth', block:'center'});
                                         selectCard(card);
                                     } else {
-                                        var target = document.getElementById('wf-detail-content');
-                                        if (target) {
-                                            target.innerHTML =
-                                                "<div style='padding:2em 1em;text-align:center;color:#9ca3af;'>" +
-                                                "<p style='font-size:15px;margin-bottom:0.5em;'>" +
-                                                "Selected step is hidden by the current filters</p>" +
-                                                "<p style='font-size:12px;'>Adjust the filters to show it again.</p>" +
-                                                "</div>";
-                                        }
+                                        /* Stale hash from an earlier session or another
+                                           trajectory: drop it rather than guess. */
+                                        history.replaceState(
+                                            null, '',
+                                            window.location.pathname + window.location.search
+                                        );
                                     }
                                 }
                             }, 500);
+
+                            /* Hidden-selection watcher: when a re-render (filter,
+                               search, or label upload) removes the selected step's
+                               card, tell the user in the detail panel; when the
+                               card comes back, restore its detail. */
+                            if (!window.__wfHiddenStepObserverAttached) {
+                                window.__wfHiddenStepObserverAttached = true;
+                                var hiddenStepCheckPending = null;
+                                var checkSelectedStepVisible = function() {
+                                    hiddenStepCheckPending = null;
+                                    var target = document.getElementById('wf-detail-content');
+                                    if (!target) return;
+                                    if (target.querySelector('[data-wf-detail-placeholder]')) {
+                                        /* The app reset the detail panel (new trajectory
+                                           or label upload): the old selection is gone. */
+                                        window.__wfSelectedStep = null;
+                                        return;
+                                    }
+                                    var idx = window.__wfSelectedStep;
+                                    if (idx == null) return;
+                                    var card = document.getElementById('wf-card-' + idx);
+                                    if (card) {
+                                        if (target.querySelector('[data-wf-hidden-msg]')) {
+                                            selectCard(card);
+                                        }
+                                        return;
+                                    }
+                                    if (!document.querySelector('.wf-card')) return;
+                                    if (target.querySelector('[data-wf-hidden-msg]')) return;
+                                    target.innerHTML =
+                                        "<div data-wf-hidden-msg='1'" +
+                                        " style='padding:2em 1em;text-align:center;color:#9ca3af;'>" +
+                                        "<p style='font-size:15px;margin-bottom:0.5em;'>" +
+                                        "Selected step is hidden by the current filters</p>" +
+                                        "<p style='font-size:12px;'>Adjust the filters to show it again.</p>" +
+                                        "</div>";
+                                };
+                                new MutationObserver(function() {
+                                    if (hiddenStepCheckPending) return;
+                                    hiddenStepCheckPending = window.setTimeout(checkSelectedStepVisible, 120);
+                                }).observe(document.body, {childList: true, subtree: true});
+                            }
 
                             /* Auto-select first assistant card if no hash link */
                             setTimeout(function() {
@@ -2092,9 +2161,9 @@ def build_ui() -> gr.Blocks:
         )
 
         # -- Workflow filter callback --
-        def do_filter_workflow(steps, filter_csv, keyword):
+        def do_filter_workflow(steps, filter_csv, keyword, current_toc):
             """Re-render Workflow cards, count, and TOC with filters applied."""
-            return _build_filtered_workflow_outputs(steps, filter_csv, keyword)
+            return _build_filtered_workflow_outputs(steps, filter_csv, keyword, current_toc)
 
         # -- TOC toggle callback --
         def on_toc_toggle(current_toc):
@@ -2113,12 +2182,12 @@ def build_ui() -> gr.Blocks:
 
         wf_filter_hidden.change(
             fn=do_filter_workflow,
-            inputs=[state_steps, wf_filter_hidden, wf_search],
+            inputs=[state_steps, wf_filter_hidden, wf_search, toc_html],
             outputs=[workflow_html, wf_count_html, toc_html],
         )
         wf_search.change(
             fn=do_filter_workflow,
-            inputs=[state_steps, wf_filter_hidden, wf_search],
+            inputs=[state_steps, wf_filter_hidden, wf_search, toc_html],
             outputs=[workflow_html, wf_count_html, toc_html],
         )
 
@@ -2126,7 +2195,7 @@ def build_ui() -> gr.Blocks:
         _empty_label_fig = go.Figure()
         _empty_label_fig.update_layout(template="plotly_white", height=380)
 
-        def do_load_labels(upload_obj, steps_state):
+        def do_load_labels(upload_obj, steps_state, filter_csv, keyword, current_toc):
             """Load labeled JSON and update all label UI components.
 
             Returns values matching the output list below:
@@ -2146,6 +2215,7 @@ def build_ui() -> gr.Blocks:
              13: workflow_html
              14: detail_store
              15: detail_html
+             16: toc_html
             """
             file_path = None
             if upload_obj is not None:
@@ -2163,6 +2233,7 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty,
                     steps_state, gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(),
                 )
 
             try:
@@ -2172,13 +2243,17 @@ def build_ui() -> gr.Blocks:
                 workflow_update = gr.update()
                 detail_store_update = gr.update()
                 detail_html_update = gr.update()
+                toc_update = gr.update()
                 if payload.get("kind") == "training_v2" and steps_state:
                     label_data = load_training_labeled_json(file_path)
                     updated_steps = attach_training_labels_to_steps(steps_state, label_data)
-                    wf_count_update = (
-                        f"<div class='wf-count'>Showing {len(updated_steps)} of {len(updated_steps)} steps</div>"
+                    # Re-apply the active filters so cards, count, and TOC stay
+                    # in sync with the filter chips after the re-render.
+                    workflow_update, wf_count_update, toc_update = (
+                        _build_filtered_workflow_outputs(
+                            updated_steps, filter_csv, keyword, current_toc
+                        )
                     )
-                    workflow_update = render_workflow_html(updated_steps)
                     detail_store_update = _prerender_step_details(updated_steps)
                     detail_html_update = _DETAIL_PLACEHOLDER
             except Exception as exc:
@@ -2191,6 +2266,7 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty,
                     steps_state, gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(),
                 )
 
             return (
@@ -2201,6 +2277,7 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=True), payload["phase_duration_fig"], payload["action_duration_fig"],
                 gr.update(visible=True), payload["timeline_fig"],
                 updated_steps, wf_count_update, workflow_update, detail_store_update, detail_html_update,
+                toc_update,
             )
 
         label_outputs = [
@@ -2217,16 +2294,18 @@ def build_ui() -> gr.Blocks:
             workflow_html,
             detail_store,
             detail_html,
+            toc_html,
         ]
+        label_inputs = [label_file_upload, state_steps, wf_filter_hidden, wf_search, toc_html]
         label_load_btn.click(
             fn=do_load_labels,
-            inputs=[label_file_upload, state_steps],
+            inputs=label_inputs,
             outputs=label_outputs,
         )
         # Auto-load labels on file upload
         label_file_upload.change(
             fn=do_load_labels,
-            inputs=[label_file_upload, state_steps],
+            inputs=label_inputs,
             outputs=label_outputs,
         )
 
@@ -2248,6 +2327,7 @@ def build_ui() -> gr.Blocks:
                 gr.update(),                              # workflow_html
                 gr.update(),                              # detail_store
                 gr.update(),                              # detail_html
+                gr.update(),                              # toc_html
                 gr.update(value=None),                    # clear the file picker
             )
 

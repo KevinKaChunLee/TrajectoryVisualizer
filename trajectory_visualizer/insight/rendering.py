@@ -258,8 +258,12 @@ def render_filter_chips(active: list[str] | None = None) -> str:
     )
 
 
-def render_toc_sidebar(steps: list[dict]) -> str:
-    """Generate an HTML ``<nav>`` listing step numbers and role badges for a TOC sidebar."""
+def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
+    """Generate an HTML ``<nav>`` listing step numbers and role badges for a TOC sidebar.
+
+    ``collapsed`` re-applies the user's ``toc-hidden`` state so re-renders
+    (filter or search changes) don't pop a hidden sidebar back open.
+    """
     if not steps:
         return ""
     items: list[str] = []
@@ -281,8 +285,9 @@ def render_toc_sidebar(steps: list[dict]) -> str:
             f"{html.escape(role.title())}</span>"
             f"</div>"
         )
+    nav_class = "wf-toc-sidebar toc-hidden" if collapsed else "wf-toc-sidebar"
     return (
-        "<nav class='wf-toc-sidebar' id='wf-toc-sidebar'>"
+        f"<nav class='{nav_class}' id='wf-toc-sidebar'>"
         "<div class='toc-title'>Steps</div>"
         + "".join(items)
         + "</nav>"
@@ -726,7 +731,14 @@ _METRIC_TOKEN_FIELDS = (
 
 
 def _unavailable_metric_fields(step: dict) -> list[str]:
-    """Return required Metrics fields that cannot be shown reliably."""
+    """Return required Metrics fields that cannot be shown reliably.
+
+    Only the token counts are required. Duration is structurally absent on
+    some steps with genuine token data (e.g. the final step of a Claude Code
+    trajectory, whose duration is computed from the next step's timestamp),
+    so it and the derived Throughput / Cache Ratio rows degrade to ``n/a``
+    per row instead of making the whole table unavailable.
+    """
     missing = list(step.get("_metrics_unavailable_fields") or [])
     tokens = step.get("tokens")
     if not isinstance(tokens, dict):
@@ -742,27 +754,6 @@ def _unavailable_metric_fields(step: dict) -> list[str]:
         ):
             if label not in missing:
                 missing.append(label)
-
-    duration = step.get("duration")
-    duration_available = (
-        isinstance(duration, (int, float))
-        and not isinstance(duration, bool)
-        and duration > 0
-    )
-    if not duration_available and "Duration" not in missing:
-        missing.append("Duration")
-
-    total = tokens.get("total")
-    total_available = (
-        isinstance(total, (int, float))
-        and not isinstance(total, bool)
-        and total > 0
-    )
-    if (not total_available or not duration_available) and "Throughput" not in missing:
-        missing.append("Throughput")
-    cache_read_available = "Cache Read" not in missing
-    if (not total_available or not cache_read_available) and "Cache Ratio" not in missing:
-        missing.append("Cache Ratio")
     return missing
 
 
@@ -782,15 +773,33 @@ def _format_metrics_unavailable(missing: list[str]) -> str:
 
 
 def _format_metrics_tab(step: dict) -> str:
-    """Render a complete Metrics table or one explicit unavailable state."""
+    """Render the Metrics table, or one explicit unavailable state.
+
+    A real ``0`` in any token count renders as ``0``; the table is replaced
+    by the unavailable notice only when a token count is genuinely missing.
+    Duration and the derived rows show ``n/a`` individually when they cannot
+    be computed, so complete token data is never hidden by a missing timing.
+    """
     missing = _unavailable_metric_fields(step)
     if missing:
         return _format_metrics_unavailable(missing)
 
     tokens = step["tokens"]
-    duration = step["duration"]
-    tok_per_s = tokens["total"] / duration
-    cache_ratio = tokens["cache_read"] / tokens["total"] * 100
+    duration = step.get("duration")
+    duration_available = (
+        isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and duration >= 0
+    )
+    duration_text = f"{duration}s" if duration_available else "n/a"
+    if duration_available and duration > 0:
+        throughput_text = f"{tokens['total'] / duration:,.0f} tok/s"
+    else:
+        throughput_text = "n/a"
+    if tokens["total"] > 0:
+        cache_ratio_text = f"{tokens['cache_read'] / tokens['total'] * 100:.1f}%"
+    else:
+        cache_ratio_text = "n/a"
     rows = [
         ("Total Tokens", f"{tokens['total']:,}"),
         ("Input Tokens", f"{tokens['input']:,}"),
@@ -798,9 +807,9 @@ def _format_metrics_tab(step: dict) -> str:
         ("Reasoning Tokens", f"{tokens['reasoning']:,}"),
         ("Cache Read", f"{tokens['cache_read']:,}"),
         ("Cache Write", f"{tokens['cache_write']:,}"),
-        ("Duration", f"{duration}s"),
-        ("Throughput", f"{tok_per_s:,.0f} tok/s"),
-        ("Cache Ratio", f"{cache_ratio:.1f}%"),
+        ("Duration", duration_text),
+        ("Throughput", throughput_text),
+        ("Cache Ratio", cache_ratio_text),
     ]
 
     tr_parts = "".join(
