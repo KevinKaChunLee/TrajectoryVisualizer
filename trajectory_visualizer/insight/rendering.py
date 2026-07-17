@@ -133,7 +133,9 @@ def _md_to_html_preview(text: str) -> str:
     return "".join(parts) if parts else html.escape(text)
 
 
-_FILTER_CHIPS = ["Assistant", "User", "Tool Calls", "Errors", "Reasoning"]
+_ROLE_FILTER_CHIPS = ["Assistant", "User"]
+_FEATURE_FILTER_CHIPS = ["Tool Calls", "Errors", "Reasoning"]
+_ALL_FEATURE_FILTER = "All"
 
 
 def _render_one_agent_card(a: dict, agent_hex: str) -> str:
@@ -200,57 +202,59 @@ def render_agent_summary_cards(agent_summaries: list[dict]) -> str:
     return "<div class='agent-cards-grid'>" + "".join(cards) + "</div>"
 
 
-def render_filter_chips(active: list[str] | None = None, agent_labels: list[dict] | None = None) -> str:
-    """Generate styled chip buttons for workflow filter categories.
+def render_filter_chips(active: list[str] | None = None) -> str:
+    """Render the two-level Workflow filter.
 
-    All chips are active by default. The HTML includes ``data-filter`` attributes
-    and an ``onclick`` handler that toggles the ``chip-active`` class and writes
-    the active values into a hidden Gradio Textbox (``#wf-filter-hidden``).
+    Roles are a required multi-select (OR within the group).  Step features are
+    also ORed, while ``All`` means that no feature predicate is applied.  The
+    delegated browser handler enforces these states and combines the two groups
+    with AND semantics in the backend.
     """
     if active is None:
-        active = list(_FILTER_CHIPS)
+        active = [*_ROLE_FILTER_CHIPS, _ALL_FEATURE_FILTER]
     active_set = set(active)
-    chips: list[str] = []
-    for name in _FILTER_CHIPS:
-        cls = "filter-chip chip-active" if name in active_set else "filter-chip"
-        chips.append(
-            f"<span class='{cls}' data-filter='{html.escape(name)}'>"
-            f"{html.escape(name)}</span>"
+
+    def _chip(name: str, group: str, *, extra_class: str = "") -> str:
+        classes = ["filter-chip"]
+        if extra_class:
+            classes.append(extra_class)
+        is_active = name in active_set
+        if is_active:
+            classes.append("chip-active")
+        escaped = html.escape(name, quote=True)
+        return (
+            f"<button type='button' class='{' '.join(classes)}'"
+            f" data-filter='{escaped}' data-filter-group='{group}'"
+            f" aria-pressed='{'true' if is_active else 'false'}'>"
+            f"{html.escape(name)}</button>"
         )
-    # Agent chips (after divider) when multi-agent
-    if agent_labels and len(agent_labels) > 1:
-        chips.append("<span class='filter-chip-divider'></span>")
-        for i, al in enumerate(agent_labels):
-            label = html.escape(al["label"])
-            agent_hex = AGENT_COLORS[i % len(AGENT_COLORS)]
-            filter_key = f"agent:{al['agent_id']}"
-            chips.append(
-                f"<span class='filter-chip filter-chip-agent chip-active'"
-                f" data-filter='{html.escape(filter_key)}'"
-                f" style='--agent-color:{agent_hex};'>"
-                f"{label}</span>"
-            )
-    # Clear-all JS handler
-    clear_js = (
-        "(function(){"
-        "var bar=document.getElementById('wf-filter-bar');"
-        "if(!bar)return;"
-        "bar.querySelectorAll('.filter-chip').forEach(function(c){c.classList.add('chip-active');});"
-        "var active=Array.from(bar.querySelectorAll('.filter-chip.chip-active'))"
-        ".map(function(c){return c.dataset.filter;});"
-        "var h=document.querySelector('#wf-filter-hidden textarea,#wf-filter-hidden input');"
-        "if(h){h.value=active.join(',');h.dispatchEvent(new Event('input',{bubbles:true}));}"
-        "})()"
-    )
-    filter_summary = (
-        f"<div class='filter-summary' id='wf-filter-summary'>"
-        f"<span id='wf-filter-count'></span>"
-        f"<span class='clear-all' onclick=\"{clear_js}\">Clear all</span>"
-        f"</div>"
-    )
+
+    role_chips = "".join(_chip(name, "role") for name in _ROLE_FILTER_CHIPS)
+    feature_chips = _chip(
+        _ALL_FEATURE_FILTER,
+        "feature",
+        extra_class="filter-chip-all",
+    ) + "".join(_chip(name, "feature") for name in _FEATURE_FILTER_CHIPS)
+
     return (
-        "<div class='filter-bar' id='wf-filter-bar'>" + "".join(chips) + "</div>"
-        + filter_summary
+        "<div class='filter-panel' id='wf-filter-bar'>"
+        "<div class='filter-group' data-filter-group-container='role'>"
+        "<div class='filter-group-label'>Role"
+        "<span>select at least one</span></div>"
+        f"<div class='filter-options'>{role_chips}</div>"
+        "</div>"
+        "<div class='filter-group' data-filter-group-container='feature'>"
+        "<div class='filter-group-label'>Step feature"
+        "<span>match any selected</span></div>"
+        f"<div class='filter-options'>{feature_chips}</div>"
+        "</div>"
+        "</div>"
+        "<div class='filter-summary' id='wf-filter-summary'>"
+        "<span id='wf-filter-query'>Role: Assistant or User &middot; Step feature: All</span>"
+        "<button type='button' class='reset-filters' data-wf-action='reset-filters'"
+        " title='Restore all roles and remove the step feature restriction'>"
+        "Reset filters</button>"
+        "</div>"
     )
 
 
@@ -711,9 +715,82 @@ def _format_patch_section(p: dict) -> str:
     )
 
 
+_METRIC_TOKEN_FIELDS = (
+    ("total", "Total Tokens"),
+    ("input", "Input Tokens"),
+    ("output", "Output Tokens"),
+    ("reasoning", "Reasoning Tokens"),
+    ("cache_read", "Cache Read"),
+    ("cache_write", "Cache Write"),
+)
+
+
+def _unavailable_metric_fields(step: dict) -> list[str]:
+    """Return required Metrics fields that cannot be shown reliably."""
+    missing = list(step.get("_metrics_unavailable_fields") or [])
+    tokens = step.get("tokens")
+    if not isinstance(tokens, dict):
+        tokens = {}
+
+    for key, label in _METRIC_TOKEN_FIELDS:
+        value = tokens.get(key)
+        if (
+            key not in tokens
+            or value is None
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+        ):
+            if label not in missing:
+                missing.append(label)
+
+    duration = step.get("duration")
+    duration_available = (
+        isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and duration > 0
+    )
+    if not duration_available and "Duration" not in missing:
+        missing.append("Duration")
+
+    total = tokens.get("total")
+    total_available = (
+        isinstance(total, (int, float))
+        and not isinstance(total, bool)
+        and total > 0
+    )
+    if (not total_available or not duration_available) and "Throughput" not in missing:
+        missing.append("Throughput")
+    cache_read_available = "Cache Read" not in missing
+    if (not total_available or not cache_read_available) and "Cache Ratio" not in missing:
+        missing.append("Cache Ratio")
+    return missing
+
+
+def _format_metrics_unavailable(missing: list[str]) -> str:
+    description = "The trajectory does not provide complete per-step metrics."
+    missing_text = ", ".join(html.escape(field) for field in missing)
+    return (
+        "<div class='dp-metrics-unavailable' role='status'>"
+        "<div class='dp-metrics-unavailable-icon' aria-hidden='true'>i</div>"
+        "<div>"
+        "<div class='dp-metrics-unavailable-title'>Metrics unavailable</div>"
+        f"<div class='dp-metrics-unavailable-description'>{description}</div>"
+        f"<div class='dp-metrics-unavailable-fields'>Missing or unavailable: "
+        f"{missing_text}</div>"
+        "</div></div>"
+    )
+
+
 def _format_metrics_tab(step: dict) -> str:
-    """Render the Metrics tab content for a step detail panel."""
+    """Render a complete Metrics table or one explicit unavailable state."""
+    missing = _unavailable_metric_fields(step)
+    if missing:
+        return _format_metrics_unavailable(missing)
+
     tokens = step["tokens"]
+    duration = step["duration"]
+    tok_per_s = tokens["total"] / duration
+    cache_ratio = tokens["cache_read"] / tokens["total"] * 100
     rows = [
         ("Total Tokens", f"{tokens['total']:,}"),
         ("Input Tokens", f"{tokens['input']:,}"),
@@ -721,15 +798,10 @@ def _format_metrics_tab(step: dict) -> str:
         ("Reasoning Tokens", f"{tokens['reasoning']:,}"),
         ("Cache Read", f"{tokens['cache_read']:,}"),
         ("Cache Write", f"{tokens['cache_write']:,}"),
+        ("Duration", f"{duration}s"),
+        ("Throughput", f"{tok_per_s:,.0f} tok/s"),
+        ("Cache Ratio", f"{cache_ratio:.1f}%"),
     ]
-    if step.get("duration") is not None:
-        rows.append(("Duration", f"{step['duration']}s"))
-        if tokens['total'] > 0 and step['duration'] > 0:
-            tok_per_s = tokens['total'] / step['duration']
-            rows.append(("Throughput", f"{tok_per_s:,.0f} tok/s"))
-    if tokens['total'] > 0:
-        cache_ratio = tokens['cache_read'] / tokens['total'] * 100
-        rows.append(("Cache Ratio", f"{cache_ratio:.1f}%"))
 
     tr_parts = "".join(
         f"<tr><td>{html.escape(k)}</td><td>{html.escape(v)}</td></tr>"

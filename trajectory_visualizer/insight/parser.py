@@ -43,6 +43,29 @@ from .labels import (  # noqa: F401
 )
 
 
+_TOKEN_METRIC_FIELDS = {
+    "total": "Total Tokens",
+    "input": "Input Tokens",
+    "output": "Output Tokens",
+    "reasoning": "Reasoning Tokens",
+}
+
+
+def _missing_token_metric_fields(tokens_info: dict) -> list[str]:
+    """Return display labels for token fields absent from the source payload."""
+    missing = [
+        label
+        for key, label in _TOKEN_METRIC_FIELDS.items()
+        if key not in tokens_info or tokens_info.get(key) is None
+    ]
+    cache = tokens_info.get("cache")
+    if not isinstance(cache, dict) or "read" not in cache or cache.get("read") is None:
+        missing.append("Cache Read")
+    if not isinstance(cache, dict) or "write" not in cache or cache.get("write") is None:
+        missing.append("Cache Write")
+    return missing
+
+
 def infer_non_cache_input(
     total_tokens: int,
     input_tokens: int,
@@ -230,6 +253,11 @@ def parse_steps(raw: dict) -> list[dict]:
                 "output_text": content,
                 "agent_id": "",
                 "question": [],
+                "_metrics_unavailable_fields": [
+                    "Total Tokens", "Input Tokens", "Output Tokens",
+                    "Reasoning Tokens", "Cache Read", "Cache Write",
+                ],
+                "_metrics_source_format": "Training conversation",
             })
             continue
         info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
@@ -238,6 +266,16 @@ def parse_steps(raw: dict) -> list[dict]:
         tokens_info = safe_get(info, "tokens", default={})
         if not isinstance(tokens_info, dict):
             tokens_info = {}
+        metrics_unavailable_fields = _missing_token_metric_fields(tokens_info)
+        metrics_source_format = ""
+        if isinstance(msg.get("_codearts_raw"), dict):
+            metrics_source_format = "CodeArts"
+            for field in (
+                "Input Tokens", "Output Tokens", "Reasoning Tokens",
+                "Cache Read", "Cache Write",
+            ):
+                if field not in metrics_unavailable_fields:
+                    metrics_unavailable_fields.append(field)
         tokens = {
             "total": tokens_info.get("total", 0) or 0,
             "input": tokens_info.get("input", 0) or 0,
@@ -286,6 +324,8 @@ def parse_steps(raw: dict) -> list[dict]:
             "output_text": info.get("outputText", ""),
             "agent_id": info.get("agentId", ""),
             "question": info.get("question", []),
+            "_metrics_unavailable_fields": metrics_unavailable_fields,
+            "_metrics_source_format": metrics_source_format,
         })
 
     _fill_missing_last_step_duration(steps, raw)

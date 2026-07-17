@@ -77,7 +77,10 @@ _DETAIL_PLACEHOLDER = (
     "<p style='font-size:12px;'>Click any card on the left, or press <kbd>j</kbd>/<kbd>k</kbd> to navigate</p>"
     "</div></div>"
 )
-_FILTER_CHIPS_DEFAULT = ["Assistant", "User", "Tool Calls", "Errors", "Reasoning"]
+_ROLE_FILTERS = ["Assistant", "User"]
+_FEATURE_FILTERS = ["Tool Calls", "Errors", "Reasoning"]
+_ALL_FEATURE_FILTER = "All"
+_FILTER_CHIPS_DEFAULT = [*_ROLE_FILTERS, _ALL_FEATURE_FILTER]
 
 # Maximum steps to process — keeps rendering, metrics, and charts bounded.
 _MAX_STEPS = 2000
@@ -94,6 +97,109 @@ def _prerender_step_details(steps: list[dict]) -> str:
         details[str(step['index'])] = format_step_detail(step)
     b64 = base64.b64encode(json.dumps(details).encode()).decode()
     return f'<div data-b64="{b64}" style="display:none"></div>'
+
+
+def _workflow_step_labels(step: dict) -> set[str]:
+    """Return every Workflow filter label that applies to *step*.
+
+    These labels intentionally overlap.  For example, a failed assistant tool
+    call is labelled ``Assistant``, ``Tool Calls``, and ``Errors``.  The
+    Workflow filter treats those labels as alternatives: matching any selected
+    label keeps the step visible.
+    """
+    labels: set[str] = set()
+    role = step.get("role")
+    if role == "assistant":
+        labels.add("Assistant")
+    elif role == "user":
+        labels.add("User")
+    if step.get("tool_call_count", 0) > 0:
+        labels.add("Tool Calls")
+    if step.get("error_count", 0) > 0:
+        labels.add("Errors")
+    if step.get("has_reasoning"):
+        labels.add("Reasoning")
+    return labels
+
+
+def _filter_workflow_steps(
+    steps: list[dict], active_filters: list[str], keyword: str = "",
+) -> list[int]:
+    """Return positions matching required roles, optional features, and search.
+
+    Roles are ORed with each other, selected features are ORed with each other,
+    and the two groups are ANDed. ``All`` (or an omitted feature selection)
+    means that no feature predicate is applied. Agent filtering is intentionally
+    not exposed until its interaction with role-less/user steps is made explicit.
+    """
+    if not steps:
+        return []
+
+    keyword = (keyword or "").strip().lower()
+    active = {str(value).strip() for value in active_filters if str(value).strip()}
+    role_filters = active & set(_ROLE_FILTERS)
+    if not role_filters:
+        return []
+    feature_filters = active & set(_FEATURE_FILTERS)
+    restrict_features = _ALL_FEATURE_FILTER not in active and bool(feature_filters)
+
+    filtered: list[int] = []
+    for position, step in enumerate(steps):
+        labels = _workflow_step_labels(step)
+        if not (labels & role_filters):
+            continue
+        if restrict_features and not (labels & feature_filters):
+            continue
+
+        if keyword:
+            text = str(step.get("text_preview") or "").lower()
+            tool_names = " ".join(
+                str(tool_call.get("tool_name", ""))
+                for tool_call in step.get("tool_calls", [])
+                if isinstance(tool_call, dict)
+            ).lower()
+            tool_args = " ".join(
+                str(tool_call.get("input", ""))
+                for tool_call in step.get("tool_calls", [])
+                if isinstance(tool_call, dict)
+            ).lower()
+            if keyword not in text and keyword not in tool_names and keyword not in tool_args:
+                continue
+        filtered.append(position)
+    return filtered
+
+
+def _build_filtered_workflow_outputs(
+    steps: list[dict], filter_csv: str, keyword: str,
+) -> tuple[str, str, str]:
+    """Build filtered Workflow cards, count, and matching TOC HTML."""
+    if not steps:
+        return (
+            "<div style='padding:3em;color:#9ca3af;text-align:center;"
+            "font-size:15px;'>Load a trajectory to see the step flow.</div>",
+            "",
+            "",
+        )
+
+    active_filters = [
+        value.strip() for value in (filter_csv or "").split(",") if value.strip()
+    ]
+    indices = _filter_workflow_steps(steps, active_filters, keyword)
+    filtered_steps = [steps[position] for position in indices]
+
+    if not (set(active_filters) & set(_ROLE_FILTERS)):
+        workflow_html = (
+            "<div style='padding:2em;color:#9ca3af;text-align:center;'>"
+            "Select at least one role to see steps.</div>"
+        )
+    else:
+        workflow_html = render_workflow_html(filtered_steps)
+
+    count_html = (
+        f"<div class='wf-count'>Showing {len(filtered_steps)} of "
+        f"{len(steps)} steps</div>"
+    )
+    return workflow_html, count_html, render_toc_sidebar(filtered_steps)
 
 
 def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
@@ -706,20 +812,15 @@ def _build_diagnostics_outputs(
     }
 
 
-def _build_workflow_outputs(steps: list[dict], agent_summaries: list[dict]) -> dict:
+def _build_workflow_outputs(steps: list[dict]) -> dict:
     """Build workflow HTML, TOC, filter chips, and detail store."""
     wf_html = render_workflow_html(steps)
     wf_count = f"<div class='wf-count'>Showing {len(steps)} of {len(steps)} steps</div>"
     toc_html_val = render_toc_sidebar(steps)
     detail_store_val = _prerender_step_details(steps)
 
-    agent_label_list = [{"label": a["label"], "agent_id": a["agent_id"]}
-                        for a in agent_summaries]
-    wf_chips = render_filter_chips(agent_labels=agent_label_list)
-    default_filters = list(_FILTER_CHIPS_DEFAULT)
-    for al in agent_label_list:
-        default_filters.append(f"agent:{al['agent_id']}")
-    wf_filter_val = ",".join(default_filters)
+    wf_chips = render_filter_chips()
+    wf_filter_val = ",".join(_FILTER_CHIPS_DEFAULT)
 
     return {
         "wf_chips": wf_chips,
@@ -1339,8 +1440,11 @@ def build_ui() -> gr.Blocks:
                     )
                 # Hidden textbox that JS writes active filters into (comma-separated)
                 wf_filter_hidden = gr.Textbox(
-                    value="Assistant,User,Tool Calls,Errors,Reasoning",
-                    visible=False,
+                    value=",".join(_FILTER_CHIPS_DEFAULT),
+                    # Keep the component mounted so the delegated chip handler
+                    # can update it and trigger Gradio's input event.  Gradio
+                    # omits visible=False components from the browser DOM.
+                    visible=True,
                     elem_id="wf-filter-hidden",
                 )
                 wf_count_html = gr.HTML("")
@@ -1353,30 +1457,118 @@ def build_ui() -> gr.Blocks:
                             "font-size:15px;'>Load a trajectory to see the step flow.</div>",
                             js_on_load="""
                             /* Filter chip click handler (delegated, survives re-renders) */
+                            window.__syncWorkflowFilters = function(bar) {
+                                if (!bar) return;
+                                var active = Array.from(bar.querySelectorAll('.filter-chip.chip-active'))
+                                    .map(function(c) { return c.dataset.filter; });
+                                var hiddenEl = document.querySelector(
+                                    '#wf-filter-hidden textarea, #wf-filter-hidden input'
+                                );
+                                if (!hiddenEl) return;
+                                var proto = hiddenEl.tagName === 'TEXTAREA'
+                                    ? window.HTMLTextAreaElement.prototype
+                                    : window.HTMLInputElement.prototype;
+                                var descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+                                if (descriptor && descriptor.set) {
+                                    descriptor.set.call(hiddenEl, active.join(','));
+                                } else {
+                                    hiddenEl.value = active.join(',');
+                                }
+                                hiddenEl.dispatchEvent(new InputEvent('input', {
+                                    bubbles: true,
+                                    composed: true,
+                                    inputType: 'insertText',
+                                    data: null
+                                }));
+                                hiddenEl.dispatchEvent(new Event('change', {
+                                    bubbles: true,
+                                    composed: true
+                                }));
+                            };
+                            window.__setWorkflowChipActive = function(chip, active) {
+                                if (!chip) return;
+                                chip.classList.toggle('chip-active', active);
+                                chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+                            };
+                            window.__updateWorkflowFilterQuery = function(root) {
+                                if (!root) return;
+                                var roles = Array.from(root.querySelectorAll(
+                                    '[data-filter-group="role"].chip-active'
+                                )).map(function(c) { return c.dataset.filter; });
+                                var features = Array.from(root.querySelectorAll(
+                                    '[data-filter-group="feature"].chip-active'
+                                )).map(function(c) { return c.dataset.filter; });
+                                var query = root.querySelector('#wf-filter-query');
+                                if (!query) return;
+                                var featureText = features.indexOf('All') >= 0
+                                    ? 'All'
+                                    : features.join(' or ');
+                                query.textContent = 'Role: ' + roles.join(' or ')
+                                    + ' · Step feature: ' + featureText;
+                            };
                             if (!window.__wfChipHandlerAttached) {
                                 window.__wfChipHandlerAttached = true;
                                 document.addEventListener('click', function(e) {
                                     var chip = e.target.closest('.filter-chip');
-                                    if (!chip) return;
-                                    chip.classList.toggle('chip-active');
-                                    var bar = chip.closest('.filter-bar') || document.getElementById('wf-filter-chips');
+                                    var reset = e.target.closest('[data-wf-action="reset-filters"]');
+                                    if (!chip && !reset) return;
+                                    var root = (chip || reset).closest('#wf-filter-chips');
+                                    if (!root) return;
+                                    var bar = root.querySelector('#wf-filter-bar');
                                     if (!bar) return;
-                                    var active = Array.from(bar.querySelectorAll('.filter-chip.chip-active'))
-                                        .map(function(c) { return c.dataset.filter; });
-                                    var hiddenEl = document.querySelector('#wf-filter-hidden textarea, #wf-filter-hidden input');
-                                    if (hiddenEl) {
-                                        var nativeSet = Object.getOwnPropertyDescriptor(
-                                            window.HTMLInputElement.prototype, 'value'
-                                        ) || Object.getOwnPropertyDescriptor(
-                                            window.HTMLTextAreaElement.prototype, 'value'
+                                    if (reset) {
+                                        bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
+                                            window.__setWorkflowChipActive(c, true);
+                                        });
+                                        bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
+                                            window.__setWorkflowChipActive(c, c.dataset.filter === 'All');
+                                        });
+                                    } else if (chip.dataset.filterGroup === 'role') {
+                                        var selectedRoles = bar.querySelectorAll(
+                                            '[data-filter-group="role"].chip-active'
                                         );
-                                        if (nativeSet && nativeSet.set) {
-                                            nativeSet.set.call(hiddenEl, active.join(','));
-                                        } else {
-                                            hiddenEl.value = active.join(',');
+                                        if (chip.classList.contains('chip-active') && selectedRoles.length === 1) {
+                                            var roleGroup = chip.closest('.filter-group');
+                                            if (roleGroup) {
+                                                roleGroup.classList.remove('filter-group-attention');
+                                                void roleGroup.offsetWidth;
+                                                roleGroup.classList.add('filter-group-attention');
+                                                window.setTimeout(function() {
+                                                    roleGroup.classList.remove('filter-group-attention');
+                                                }, 900);
+                                            }
+                                            return;
                                         }
-                                        hiddenEl.dispatchEvent(new Event('input', {bubbles: true}));
+                                        window.__setWorkflowChipActive(
+                                            chip, !chip.classList.contains('chip-active')
+                                        );
+                                    } else {
+                                        var anyChip = bar.querySelector(
+                                            '[data-filter-group="feature"][data-filter="All"]'
+                                        );
+                                        var specificFeatures = bar.querySelectorAll(
+                                            '[data-filter-group="feature"]:not([data-filter="All"])'
+                                        );
+                                        if (chip.dataset.filter === 'All') {
+                                            window.__setWorkflowChipActive(anyChip, true);
+                                            specificFeatures.forEach(function(c) {
+                                                window.__setWorkflowChipActive(c, false);
+                                            });
+                                        } else {
+                                            window.__setWorkflowChipActive(
+                                                chip, !chip.classList.contains('chip-active')
+                                            );
+                                            window.__setWorkflowChipActive(anyChip, false);
+                                            var selectedFeatures = bar.querySelectorAll(
+                                                '[data-filter-group="feature"].chip-active:not([data-filter="All"])'
+                                            );
+                                            if (selectedFeatures.length === 0) {
+                                                window.__setWorkflowChipActive(anyChip, true);
+                                            }
+                                        }
                                     }
+                                    window.__updateWorkflowFilterQuery(root);
+                                    window.__syncWorkflowFilters(bar);
                                 });
                             }
 
@@ -1457,6 +1649,16 @@ def build_ui() -> gr.Blocks:
                                     if (card) {
                                         card.scrollIntoView({behavior:'smooth', block:'center'});
                                         selectCard(card);
+                                    } else {
+                                        var target = document.getElementById('wf-detail-content');
+                                        if (target) {
+                                            target.innerHTML =
+                                                "<div style='padding:2em 1em;text-align:center;color:#9ca3af;'>" +
+                                                "<p style='font-size:15px;margin-bottom:0.5em;'>" +
+                                                "Selected step is hidden by the current filters</p>" +
+                                                "<p style='font-size:12px;'>Adjust the filters to show it again.</p>" +
+                                                "</div>";
+                                        }
                                     }
                                 }
                             }, 500);
@@ -1681,7 +1883,7 @@ def build_ui() -> gr.Blocks:
                                       step_analytics, agent_summaries, dark=dark,
                                       trajectory=raw.get("trajectory", []),
                                       trajectory_format=detected)
-            wf = _build_workflow_outputs(steps, agent_summaries)
+            wf = _build_workflow_outputs(steps)
 
             # Pattern detection
             tool_seqs = detect_tool_sequences(steps)
@@ -1890,81 +2092,9 @@ def build_ui() -> gr.Blocks:
         )
 
         # -- Workflow filter callback --
-        def _filter_workflow_steps(steps, active_filters, keyword):
-            """Return indices of steps matching filters and keyword."""
-            if not steps:
-                return []
-            keyword = (keyword or "").strip().lower()
-            active = set(active_filters)
-            # Separate role filters (gate) from content filters (narrow)
-            role_filters = active & {"Assistant", "User"}
-            content_filters = active & {"Tool Calls", "Errors", "Reasoning"}
-            # Agent filters: "agent:<id>" entries
-            agent_filters = {f[6:] for f in active if f.startswith("agent:")}
-            filtered = []
-            for i, s in enumerate(steps):
-                # Agent gate: if agent chips are active, step must be from one of them
-                if agent_filters:
-                    step_agent = effective_agent(s)
-                    if step_agent not in agent_filters:
-                        continue
-                role = s["role"]
-                # Role gate: step must match a checked role
-                role_ok = (
-                    ("Assistant" in role_filters and role == "assistant")
-                    or ("User" in role_filters and role == "user")
-                )
-                if not role_ok:
-                    continue
-                # Content gate: only applies to steps that have filterable content
-                if content_filters:
-                    has_content = (s["tool_call_count"] > 0
-                                   or s["error_count"] > 0
-                                   or s["has_reasoning"])
-                    if has_content:
-                        content_ok = (
-                            ("Tool Calls" in content_filters and s["tool_call_count"] > 0)
-                            or ("Errors" in content_filters and s["error_count"] > 0)
-                            or ("Reasoning" in content_filters and s["has_reasoning"])
-                        )
-                        if not content_ok:
-                            continue
-                # Keyword match
-                if keyword:
-                    text = (s.get("text_preview") or "").lower()
-                    tool_names = " ".join(tc["tool_name"] for tc in s.get("tool_calls", [])).lower()
-                    tool_args = " ".join(
-                        str(tc.get("input", "")) for tc in s.get("tool_calls", [])
-                    ).lower()
-                    if keyword not in text and keyword not in tool_names and keyword not in tool_args:
-                        continue
-                filtered.append(i)
-            return filtered
-
         def do_filter_workflow(steps, filter_csv, keyword):
-            """Re-render workflow HTML with filters applied."""
-            if not steps:
-                return (
-                    "<div style='padding:3em;color:#9ca3af;text-align:center;"
-                    "font-size:15px;'>Load a trajectory to see the step flow.</div>",
-                    "",
-                )
-            active_filters = [f.strip() for f in (filter_csv or "").split(",") if f.strip()]
-            if not active_filters:
-                return (
-                    "<div style='padding:2em;color:#9ca3af;text-align:center;'>"
-                    "No filters selected &mdash; click a chip to see steps.</div>",
-                    "<div class='wf-count'>Showing 0 of "
-                    f"{len(steps)} steps</div>",
-                )
-            indices = _filter_workflow_steps(steps, active_filters, keyword)
-            filtered_steps = [steps[i] for i in indices]
-            wf_html = render_workflow_html(filtered_steps)
-            count_html = (
-                f"<div class='wf-count'>Showing {len(filtered_steps)} of "
-                f"{len(steps)} steps</div>"
-            )
-            return wf_html, count_html
+            """Re-render Workflow cards, count, and TOC with filters applied."""
+            return _build_filtered_workflow_outputs(steps, filter_csv, keyword)
 
         # -- TOC toggle callback --
         def on_toc_toggle(current_toc):
@@ -1984,12 +2114,12 @@ def build_ui() -> gr.Blocks:
         wf_filter_hidden.change(
             fn=do_filter_workflow,
             inputs=[state_steps, wf_filter_hidden, wf_search],
-            outputs=[workflow_html, wf_count_html],
+            outputs=[workflow_html, wf_count_html, toc_html],
         )
         wf_search.change(
             fn=do_filter_workflow,
             inputs=[state_steps, wf_filter_hidden, wf_search],
-            outputs=[workflow_html, wf_count_html],
+            outputs=[workflow_html, wf_count_html, toc_html],
         )
 
         # -- Label file upload callback --
