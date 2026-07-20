@@ -95,8 +95,14 @@ def aggregate_labels(data: dict) -> dict:
             raw = load_trajectory(traj_path)
             if "_error" not in raw:
                 all_steps = parse_steps(raw)
+                embedded_user_indices = {
+                    s.get("index")
+                    for s in timeline_steps
+                    if s.get("role") == "user"
+                }
                 for s in all_steps:
-                    if s.get("role") == "user":
+                    if (s.get("role") == "user"
+                            and s.get("index") not in embedded_user_indices):
                         timeline_steps.append({
                             "index": s.get("index", 0),
                             "role": "user",
@@ -110,6 +116,7 @@ def aggregate_labels(data: dict) -> dict:
                             "model_id": "",
                             "text_preview": s.get("text_preview", ""),
                         })
+                        embedded_user_indices.add(s.get("index"))
                 # Extract trajectory-end timestamp so we can backfill the last
                 # labeled step's duration if its completion time was missing.
                 timing = raw.get("timing") if isinstance(raw.get("timing"), dict) else {}

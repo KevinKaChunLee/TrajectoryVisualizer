@@ -114,6 +114,70 @@ class TrainingLabelUiTests(unittest.TestCase):
         self.assertEqual(list(payload["timeline_fig"].data[0].x), [2.5])
         self.assertEqual(payload["timeline_fig"].layout.xaxis.title.text, "Duration (s)")
 
+    def test_behavior_v2_with_user_steps_is_not_misread_as_training_labels(self):
+        from trajectory_visualizer.insight.insight import build_label_ui_payload
+
+        behavior_v2 = {
+            "schema_version": "trajectory_labels.v2",
+            "trajectory_file": str(TRAINING_CONVERSATION_FIXTURE.resolve()),
+            "taxonomy_version": "v1",
+            "model": "test-model",
+            "labeled_at": "2026-07-20T00:00:00+00:00",
+            "defaults": {
+                "user": {"phase": "user", "action": "user_prompt"},
+                "other": {"phase": "unknown", "action": "unknown"},
+            },
+            "counts": {"total": 2, "assistant": 1, "user": 1},
+            "steps": [
+                {
+                    "index": 1,
+                    "raw_index": 1,
+                    "role": "user",
+                    "phase": "user",
+                    "action": "user_prompt",
+                    "label_source": "default",
+                    "duration_s": 0,
+                    "tokens_total": 0,
+                    "text_preview": "Please inspect the project.",
+                },
+                {
+                    "index": 2,
+                    "raw_index": 2,
+                    "role": "assistant",
+                    "phase": "understand",
+                    "action": "repository_exploration",
+                    "label_source": "model",
+                    "duration_s": 1.5,
+                    "tokens_total": 100,
+                    "text_preview": "I will inspect the repository.",
+                },
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile("w", suffix="_labeled_v2.json", delete=False, encoding="utf-8") as f:
+            json.dump(behavior_v2, f)
+            path = Path(f.name)
+
+        try:
+            payload = build_label_ui_payload(str(path))
+        finally:
+            path.unlink(missing_ok=True)
+
+        self.assertEqual(payload["kind"], "behavior_v2")
+        self.assertIn("Labels loaded", payload["badge_html"])
+        self.assertNotIn("Training labels loaded", payload["badge_html"])
+        # The source trajectory also contains user step 1.  It must not be
+        # appended a second time, while its other user step is still included.
+        self.assertEqual(list(payload["timeline_fig"].layout.yaxis.ticktext), ["1", "2", "3"])
+        self.assertEqual(
+            [annotation.text for annotation in payload["timeline_fig"].layout.annotations],
+            ["<i>user prompt</i>", "<i>user prompt</i>"],
+        )
+        self.assertNotIn(
+            "Please inspect the project.",
+            "".join(annotation.text for annotation in payload["timeline_fig"].layout.annotations),
+        )
+
     def test_training_labels_can_be_attached_to_workflow_steps(self):
         from trajectory_visualizer.insight.insight import attach_training_labels_to_steps
         from trajectory_visualizer.insight.loaders import load_trajectory

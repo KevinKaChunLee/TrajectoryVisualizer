@@ -667,6 +667,7 @@ def trajectory_format_label(fmt: str | None) -> str:
         "training_conversation": "Training Conversation",
         "ccsession": "Claude Code",
         "codearts": "CodeArts",
+        "codearts_v2": "CodeArts V2",
         "opencode": "OpenCode",
     }
     return labels.get(fmt or "", fmt or "Unknown")
@@ -774,7 +775,7 @@ def _build_diagnostics_outputs(
     # Counts are still computed so the summary line stays accurate.
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
-    if trajectory_format == "opencode":
+    if trajectory_format in ("opencode", "codearts_v2"):
         rootcause_html = ""
     else:
         rootcause_html = build_root_cause_html(clusters)
@@ -1059,12 +1060,37 @@ def _load_label_json_kind(file_path: str) -> str:
     except Exception:
         return "unknown"
     if isinstance(data, dict) and data.get("schema_version") == "trajectory_labels.v2":
-        return "training_v2"
+        # ``trajectory_labels.v2`` is used by two additive formats:
+        #
+        # * behavior labels for every trajectory step (including user turns)
+        # * training labels for assistant turns, with quality/value/decision
+        #
+        # The schema version alone therefore cannot identify a training label
+        # file.  Keep malformed training files on the training validation path
+        # when either their metadata or any training-specific step field is
+        # present, so callers still receive the useful validation error.
+        training_metadata = {
+            "behavior_model",
+            "quality_model",
+            "value_model",
+            "quality_label_version",
+            "value_label_version",
+            "decision_policy_version",
+        }
+        steps = data.get("steps")
+        has_training_step_fields = isinstance(steps, list) and any(
+            isinstance(step, dict)
+            and any(field in step for field in ("quality", "value", "decision"))
+            for step in steps
+        )
+        if training_metadata.intersection(data) or has_training_step_fields:
+            return "training_v2"
+        return "behavior_v2"
     return "legacy"
 
 
 def build_label_ui_payload(file_path: str) -> dict:
-    """Build UI-facing label payload for legacy and training v2 label files."""
+    """Build a UI payload for legacy, behavior v2, and training v2 labels."""
     kind = _load_label_json_kind(file_path)
     if kind == "training_v2":
         data = load_training_labeled_json(file_path)
@@ -1167,7 +1193,7 @@ def build_label_ui_payload(file_path: str) -> dict:
         "</div>"
     )
     return {
-        "kind": "legacy",
+        "kind": kind,
         "badge_html": badge,
         "status_html": "",
         "phase_count_fig": pc_fig,
@@ -1238,6 +1264,7 @@ def build_ui() -> gr.Blocks:
                     choices=[
                         ("Claude Code", "ccsession"),
                         ("CodeArts", "codearts"),
+                        ("CodeArts V2", "codearts_v2"),
                         ("OpenCode", "opencode"),
                         ("Training Conversation", "training_conversation"),
                     ],
@@ -1384,6 +1411,7 @@ def build_ui() -> gr.Blocks:
                             choices=[
                                 ("Claude Code", "ccsession"),
                                 ("CodeArts", "codearts"),
+                                ("CodeArts V2", "codearts_v2"),
                                 ("OpenCode", "opencode"),
                             ],
                             value="ccsession",
@@ -1836,6 +1864,7 @@ def build_ui() -> gr.Blocks:
 
             # Validate format matches user selection
             _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
+                              "codearts_v2": "CodeArts V2",
                               "opencode": "OpenCode",
                               "training_conversation": "Training Conversation",
                               "unknown": "Unknown"}

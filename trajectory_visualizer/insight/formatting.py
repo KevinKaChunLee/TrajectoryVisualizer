@@ -257,6 +257,13 @@ def format_session_md(timing: dict, metadata: dict, retry: dict,
         ("Directory", md.get("directory_name", "N/A")),
         ("Platform", (md.get("platform") or "N/A")[:20]),
     ]
+    if md.get("agent") == "codearts-v2":
+        pairs.extend([
+            ("Format", "CodeArts V2"),
+            ("Sessions", str(md.get("session_count", 1))),
+            ("Sub-agents", str(md.get("sub_agent_count", 0))),
+            ("Export", "Complete" if md.get("export_complete") is True else "Incomplete"),
+        ])
     if retry:
         pairs.append(("Retries", f"{retry.get('total_attempts', '?')}/{retry.get('max_retries', '?')}"))
 
@@ -558,12 +565,13 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
             "Total tokens per step are shown."
             "</div>"
         )
-    elif trajectory_format == "opencode":
+    elif trajectory_format in ("opencode", "codearts_v2"):
+        format_name = "CodeArts V2" if trajectory_format == "codearts_v2" else "OpenCode"
         banner += (
             f"<div style='{note_style}'>"
-            "OpenCode format — Token Usage by Step shows all five fields stacked: "
+            f"{format_name} format — Token Usage by Step shows all five fields stacked: "
             "Fresh Input + Cache Read + Output + Reasoning = Total, with Cache Write as the 5th segment. "
-            "Cache Read typically dominates (~97% of each bar) because OpenCode records it as a running "
+            "Cache Read can dominate each bar because the source records it as a running "
             "conversation prefix."
             "</div>"
         )
