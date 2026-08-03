@@ -24,6 +24,8 @@ def detect_format(raw: dict) -> str:
     # converted trajectories still report as ccsession.
     if raw.get("_cc_format") is True:
         return "ccsession"
+    if raw.get("_codex_format") is True:
+        return "codex"
     if raw.get("format") == "ccsession-trajectory":
         return "ccsession"
     # CodeArts exports use an OpenCode-compatible ``info + messages``
@@ -63,8 +65,10 @@ def _cc_extract_usage(usage: dict | None) -> dict:
     out = usage.get("output_tokens", 0) or 0
     cache_read = usage.get("cache_read_input_tokens", 0) or 0
     cache_write = usage.get("cache_creation_input_tokens", 0) or 0
-    # cache_write overlaps with input_tokens in Claude API — don't double-count
-    total = inp + out + cache_read
+    # input_tokens, cache_creation_input_tokens and cache_read_input_tokens are
+    # mutually exclusive in the Anthropic usage object, so the processed total is
+    # their sum; cache_creation must be included to agree with the session total.
+    total = inp + out + cache_read + cache_write
     return {
         "total": total, "input": inp, "output": out, "reasoning": 0,
         "cache": {"read": cache_read, "write": cache_write},
@@ -500,8 +504,8 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
     metadata = {
         "session_id": session.get("id", ""),
         "slug": session.get("slug", ""),
-        "directory": session.get("working_directory", ""),
-        "directory_name": os.path.basename(session.get("working_directory", "")),
+        "directory": session.get("working_directory") or "",
+        "directory_name": os.path.basename(session.get("working_directory") or ""),
         "agent": "claude-code",
         "model": model,
         "hostname": "",
@@ -598,21 +602,44 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
             if step.get("agent", "") not in sub_agent_ids_processed:
                 converted_trajectory.append(step)
 
-    # Sort by timestamp to maintain chronological order
-    def _sort_key(step):
-        ts = step.get("time_created_ms")
-        return ts if isinstance(ts, (int, float)) else 0
-    converted_trajectory.sort(key=_sort_key)
+    # Sort chronologically for display order.  A step whose timestamp is missing
+    # keeps its original position (it carries the previous step's timestamp)
+    # instead of collapsing to 0 and jumping ahead of the opening user prompt.
+    _orig_order = {id(s): i for i, s in enumerate(converted_trajectory)}
+    _carry: dict[int, float | None] = {}
+    _last_ts: float | None = None
+    for s in converted_trajectory:
+        ts = s.get("time_created_ms")
+        if isinstance(ts, (int, float)):
+            _last_ts = ts
+        _carry[id(s)] = _last_ts
+    converted_trajectory.sort(key=lambda s: (
+        _carry[id(s)] if _carry[id(s)] is not None else float("-inf"),
+        _orig_order[id(s)],
+    ))
 
-    # Assign indices and compute durations from consecutive timestamps
     for idx, step in enumerate(converted_trajectory):
         step["index"] = idx
-    for i in range(len(converted_trajectory) - 1):
-        t1 = converted_trajectory[i].get("time_created_ms")
-        t2 = converted_trajectory[i + 1].get("time_created_ms")
-        if isinstance(t1, (int, float)) and isinstance(t2, (int, float)):
-            converted_trajectory[i]["duration"] = round((t2 - t1) / 1000.0, 2)
-            converted_trajectory[i]["time_completed_ms"] = t2
+
+    # Compute per-step durations WITHIN each agent's own timeline.  A delegated
+    # sub-agent runs concurrently while the main agent is blocked on the Task
+    # tool, so the gap to the next step in the globally-interleaved list would
+    # otherwise charge the main agent's idle wait to the sub-agent's step.
+    by_agent: dict[str, list[dict]] = {}
+    for step in converted_trajectory:
+        by_agent.setdefault(step.get("agent", ""), []).append(step)
+    for agent_steps in by_agent.values():
+        # Pair consecutive *timestamped* steps within the agent, stepping over
+        # any untimed step so its missing timestamp does not blank out the
+        # duration of the timestamped step before it.
+        timed = [s for s in agent_steps
+                 if isinstance(s.get("time_created_ms"), (int, float))]
+        for i in range(len(timed) - 1):
+            t1 = timed[i]["time_created_ms"]
+            t2 = timed[i + 1]["time_created_ms"]
+            if t2 >= t1:
+                timed[i]["duration"] = round((t2 - t1) / 1000.0, 2)
+                timed[i]["time_completed_ms"] = t2
 
     # --- Sub-agent summary for session display ---
     sub_agent_info = []
@@ -741,8 +768,8 @@ def _convert_opencode_metadata(raw: dict) -> dict:
         "session_id": info.get("id", ""),
         "slug": info.get("slug", ""),
         "title": info.get("title", ""),
-        "directory": info.get("directory", ""),
-        "directory_name": info.get("directory", "").replace("\\", "/").rsplit("/", 1)[-1],
+        "directory": info.get("directory") or "",
+        "directory_name": (info.get("directory") or "").replace("\\", "/").rsplit("/", 1)[-1],
         "agent": "opencode",
         "model": model_info.get("modelID", ""),
         "hostname": "",
@@ -992,7 +1019,7 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
     # Extract session metadata
     session_meta = {}
     for e in events:
-        if e.get("type") == "session_meta":
+        if isinstance(e, dict) and e.get("type") == "session_meta":
             session_meta = e.get("payload", {})
             break
 
@@ -1003,24 +1030,31 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
     current_parts: list[dict] = []
     current_role = None
     current_timestamp = None
+    current_tokens: dict | None = None
 
     def _flush_message():
-        nonlocal current_parts, current_role, current_timestamp
+        nonlocal current_parts, current_role, current_timestamp, current_tokens
         if current_parts and current_role:
-            messages.append({
-                "info": {
-                    "role": current_role,
-                    "time": {"created": current_timestamp or 0},
-                },
-                "parts": current_parts,
-            })
+            info_block = {
+                "role": current_role,
+                "time": {"created": current_timestamp or 0},
+            }
+            if current_tokens:
+                info_block["tokens"] = current_tokens
+            messages.append({"info": info_block, "parts": current_parts})
         current_parts = []
         current_role = None
         current_timestamp = None
+        current_tokens = None
 
     for event in events:
+        if not isinstance(event, dict):
+            continue
         etype = event.get("type")
-        ts = event.get("timestamp", "")
+        # Codex records timestamps as ISO-8601 strings; the internal contract is
+        # epoch milliseconds, so convert here (parse_steps and every timing
+        # consumer discard non-numeric timestamps).
+        ts = _iso_to_epoch_ms(event.get("timestamp"))
 
         if etype == "response_item":
             payload = event.get("payload", {})
@@ -1056,7 +1090,7 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                 summary_text = " ".join(s.get("text", "") for s in summary) if summary else ""
                 current_parts.append({"type": "reasoning", "text": summary_text})
 
-            elif item_type == "function_call":
+            elif item_type in ("function_call", "custom_tool_call"):
                 if current_role != "assistant" and current_parts:
                     _flush_message()
                 current_role = "assistant"
@@ -1065,7 +1099,7 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
 
                 call_id = payload.get("call_id", "")
                 name = payload.get("name", "exec_command")
-                args_str = payload.get("arguments", "{}")
+                args_str = payload.get("arguments") or payload.get("input") or "{}"
                 try:
                     args = json.loads(args_str) if isinstance(args_str, str) else args_str
                 except json.JSONDecodeError:
@@ -1084,7 +1118,7 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                     "cmd": cmd,
                 }
 
-            elif item_type == "function_call_output":
+            elif item_type in ("function_call_output", "custom_tool_call_output"):
                 call_id = payload.get("call_id", "")
                 output = payload.get("output", "")
                 tc = pending_tool_calls.pop(call_id, {})
@@ -1108,40 +1142,87 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                 })
 
         elif etype == "event_msg":
-            msg_type = event.get("payload", {}).get("type", "")
-            if msg_type == "task_complete":
+            payload = event.get("payload", {}) if isinstance(event.get("payload"), dict) else {}
+            msg_type = payload.get("type", "")
+            if msg_type == "token_count":
+                # token_count carries the session usage; last_token_usage is the
+                # per-turn delta (total_token_usage is cumulative). Attach the
+                # delta to the turn currently being assembled so per-step token
+                # metrics are populated instead of structurally zero.
+                usage = payload.get("info", {}) if isinstance(payload.get("info"), dict) else {}
+                tu = usage.get("last_token_usage") or usage.get("total_token_usage")
+                if isinstance(tu, dict):
+                    current_tokens = {
+                        "total": tu.get("total_tokens", 0) or 0,
+                        "input": tu.get("input_tokens", 0) or 0,
+                        "output": tu.get("output_tokens", 0) or 0,
+                        "reasoning": tu.get("reasoning_output_tokens", 0) or 0,
+                        "cache": {"read": tu.get("cached_input_tokens", 0) or 0, "write": 0},
+                    }
+            elif msg_type == "task_complete":
                 _flush_message()
 
     # Flush any remaining parts
     _flush_message()
+
+    # Approximate each turn's completion as the next turn's start so per-step
+    # durations exist (Codex is single-session; parse_steps backfills the final
+    # turn from the session end timestamp).
+    for i in range(len(messages) - 1):
+        cur_t = messages[i]["info"]["time"].get("created")
+        nxt_t = messages[i + 1]["info"]["time"].get("created")
+        if isinstance(cur_t, (int, float)) and isinstance(nxt_t, (int, float)) and nxt_t >= cur_t:
+            messages[i]["info"]["time"]["completed"] = nxt_t
+
+    first_ts_iso = events[0].get("timestamp") if events and isinstance(events[0], dict) else None
+    last_ts_iso = events[-1].get("timestamp") if events and isinstance(events[-1], dict) else None
+    directory = session_meta.get("cwd", "") or ""
+    start_ms = _iso_to_epoch_ms(first_ts_iso)
+    end_ms = _iso_to_epoch_ms(last_ts_iso)
+    total_duration = (
+        round((end_ms - start_ms) / 1000.0, 3)
+        if isinstance(start_ms, int) and isinstance(end_ms, int) else 0
+    )
+    total_tokens = sum(
+        (m["info"].get("tokens") or {}).get("total", 0) for m in messages
+    )
 
     # Build metadata
     info = {
         "id": session_meta.get("id", ""),
         "slug": "",
         "projectID": "",
-        "directory": session_meta.get("cwd", ""),
+        "directory": directory,
         "title": "",
         "version": session_meta.get("cli_version", ""),
-        "time": {
-            "created": events[0].get("timestamp", 0) if events else 0,
-            "updated": events[-1].get("timestamp", 0) if events else 0,
-        },
+        "time": {"created": start_ms or 0, "updated": end_ms or 0},
     }
 
     return {
         "info": info,
         "messages": messages,
         "metadata": {
+            "session_id": session_meta.get("id", ""),
+            "directory": directory,
+            "directory_name": directory.replace("\\", "/").rsplit("/", 1)[-1],
+            "agent": "codex",
+            "model": session_meta.get("model", "") or "",
             "source": "codex",
             "model_provider": session_meta.get("model_provider", "openai"),
             "originator": session_meta.get("originator", "Codex CLI"),
+            "server_version": session_meta.get("cli_version", ""),
+            "timestamp_utc": first_ts_iso or "",
         },
-        "timing": {},
+        "timing": {
+            "total_duration": total_duration,
+            "started_at": first_ts_iso or "",
+            "finished_at": last_ts_iso or "",
+        },
         "output": {},
         "input": {},
-        "token_usage": {},
+        "token_usage": {"total_tokens": total_tokens},
         "stats": {},
+        "_codex_format": True,
     }
 
 
@@ -1253,20 +1334,27 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
 
     # Handle Codex JSONL format
     if file_path.endswith(".jsonl"):
+        events = []
         try:
-            events = []
             with open(file_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    if line:
+                    if not line:
+                        continue
+                    try:
                         events.append(json.loads(line))
-            if events and events[0].get("type") == "session_meta":
-                result = _convert_codex_to_internal(events)
-                result["_source_path"] = file_path
-                return result
-            return {"_error": "Unsupported JSONL input; expected Codex JSONL format (leading session_meta event)."}
-        except (json.JSONDecodeError, OSError) as exc:
+                    except json.JSONDecodeError:
+                        # Rollouts are append-only and are often read mid-write or
+                        # after a crash, leaving a partial final line. Skip the bad
+                        # line rather than discarding the whole otherwise-valid file.
+                        continue
+        except OSError as exc:
             return {"_error": str(exc)}
+        if events and isinstance(events[0], dict) and events[0].get("type") == "session_meta":
+            result = _convert_codex_to_internal(events)
+            result["_source_path"] = file_path
+            return result
+        return {"_error": "Unsupported JSONL input; expected Codex JSONL format (leading session_meta event)."}
 
     try:
         with open(file_path, "r", encoding="utf-8") as f:

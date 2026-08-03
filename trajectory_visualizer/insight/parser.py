@@ -203,9 +203,12 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
 
 def parse_steps(raw: dict) -> list[dict]:
     """Normalize each message in trajectory[] into a step dict."""
-    # If already parsed by Claude Code converter, return directly
+    # If already parsed by Claude Code converter, return directly (still backfill
+    # the final step's duration, which the fast-path would otherwise skip).
     if raw.get("_cc_format") and "_cc_parsed_steps" in raw:
-        return raw["_cc_parsed_steps"]
+        steps = raw["_cc_parsed_steps"]
+        _fill_missing_last_step_duration(steps, raw)
+        return steps
 
     trajectory = raw.get("trajectory", [])
     if not isinstance(trajectory, list) or not trajectory:
