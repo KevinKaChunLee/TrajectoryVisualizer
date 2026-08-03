@@ -2,9 +2,9 @@
 
 **Offline analytics & visualization for LLM agent trajectories.**
 
-TrajectoryVisualizer loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, training-label analysis, and cross-trajectory divergence.
+TrajectoryVisualizer loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
-Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, and JSON **training conversations** out of the box.
+Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, and **Codex CLI** out of the box.
 
 ---
 
@@ -109,7 +109,7 @@ TrajectoryVisualizer auto-detects and normalizes the following formats on load:
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `format: codearts` | Sub-agent `session_id` threading |
-| Training Conversation | OpenAI-style `messages` list | Training profile: normalized turns, reasoning/tool-call preservation, scaffold inference, token-length timelines, optional v2 label analysis |
+| Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the OpenCode-style step model (select **OpenCode** in the format dropdown); tool intent (Read / Grep / Glob / Write / Bash) inferred from each `exec_command` shell command |
 
 ---
 
@@ -200,20 +200,20 @@ The consolidator wraps `chat_baseInfo.json` + `messages_0.json` into a single
 JSON with `"format": "codearts"` at the top level. Upload the consolidated
 file in the dashboard.
 
-### Training Conversation
+### Codex CLI
 
-Training conversations are OpenAI-style JSON payloads with a top-level
-`messages` array. The loader treats these as a training profile rather than a
-runtime trace: it preserves assistant reasoning content, OpenAI-style tool
-calls, and tool results, but avoids wall-clock or runtime efficiency claims
-when the source data does not contain timing metadata.
+Codex CLI records every session automatically as a JSONL rollout under
+`~/.codex/sessions/` (date-bucketed `rollout-<timestamp>-<session-id>.jsonl`
+files) — no exporter needed.
 
-Upload the conversation JSON directly in the dashboard and choose
-**Training Conversation** from the format dropdown if auto-detection is not
-enough. If you also have a v2 training-label sidecar from
-`training_labeler.py`, upload it in the **Labels (optional)** slot to show
-behavior / quality / value / keep-review-drop decisions in the Labels panel and
-Workflow step details.
+1. Run a Codex session as normal.
+2. Locate the rollout file for the session — the most recent
+   `rollout-*.jsonl` under `~/.codex/sessions/`.
+3. Upload the `.jsonl` file and select **OpenCode** as the format. The loader
+   detects the leading `session_meta` event and threads the rollout into the
+   OpenCode-style step model. Codex exposes a single `exec_command` tool, so
+   per-step tool intent (Read / Grep / Glob / Write / Bash) is inferred from
+   the shell command text.
 
 ---
 
@@ -226,13 +226,11 @@ Helper utilities that live in `scripts/` (run from the repo root):
 | `codearts_consolidator.py` | Merge a CodeArts session folder (`chat_baseInfo.json` + `messages_0.json`) into a single consolidated JSON. Single-session and `--batch` modes. See the **CodeArts** collection section above. |
 | `opencode_consolidator.py` | Recursively merge an OpenCode parent session and child sub-agent sessions into a single JSON. See the **OpenCode** collection section above. |
 | `step_labeler.py` | LLM-based per-step classifier. Reads a trajectory and emits a sidecar `*_labeled.json` with phase and action tags from the taxonomy. |
-| `training_labeler.py` | LLM-based training-turn labeler. Reads a training conversation and emits a `trajectory_labels.v2` sidecar with behavior, quality, value, and deterministic keep/review/drop decisions. |
 | `TAXONOMY_REFERENCE.md` | Authoritative list of phase and action tags the labeler emits. Auto-loaded by `step_labeler.py` from its own directory. |
-| `TRAINING_LABEL_REFERENCE.md` | Rubric for v2 training labels used by `training_labeler.py`. |
 
 ### Labeling a trajectory
 
-`step_labeler.py` and `training_labeler.py` make live LLM calls via
+`step_labeler.py` makes live LLM calls via
 `requests`, which is installed by default with the rest of the project.
 
 The labeler needs three config values — provide them via a `.env` file (in
@@ -256,10 +254,6 @@ Required variables and their CLI-flag equivalents:
 Optional: `LABEL_PROVIDER` (`openai` | `anthropic`, default `openai`),
 `LABEL_TEMPERATURE` (default `0.3`), `LABEL_MAX_TOKENS` (default `1024`).
 
-For training labels, `LABEL_MODEL` is used as the fallback model for all three
-passes. You can override the passes independently with
-`BEHAVIOR_LABEL_MODEL`, `QUALITY_LABEL_MODEL`, and `VALUE_LABEL_MODEL`.
-
 Example invocations:
 
 ```bash
@@ -272,17 +266,10 @@ python scripts/step_labeler.py cc_trajectory.json \
     --base-url https://api.openai.com/v1 \
     --api-key sk-... \
     --model gpt-4o-mini
-
-# Training v2 labels for assistant-turn SFT / loss-mask analysis
-python scripts/training_labeler.py training_conversation.json \
-    --output training_conversation_training_labeled.json \
-    --model gpt-4o-mini
 ```
 
 Upload the trajectory **and** its labels sidecar in the dashboard's two upload
-slots to unlock the semantic pattern detectors and label-phase charts. For
-training conversations, the v2 sidecar additionally enriches Workflow cards
-and per-step details with quality, value, and keep/review/drop decisions.
+slots to unlock the semantic pattern detectors and label-phase charts.
 
 ---
 
@@ -297,13 +284,17 @@ TrajectoryVisualizer/
 │   │   ├── parser.py            # Step model
 │   │   ├── metrics.py           # Per-step & session metrics
 │   │   ├── analytics.py         # Phase detection, behavioral analytics
-│   │   ├── charts.py            # Plotly chart builders (40+ figures)
+│   │   ├── charts.py            # Plotly chart builders (34 figures)
 │   │   ├── rendering.py         # HTML rendering (workflow cards, code blocks)
 │   │   ├── diagnostics.py       # Failure chains, root causes
 │   │   ├── patterns.py          # Tool sequences, anti-patterns
 │   │   ├── scoring.py           # Quality scoring
-│   │   ├── judge.py             # LLM-as-judge
+│   │   ├── scoring_config.py    # Scoring profiles & thresholds
+│   │   ├── labels.py            # Phase/action label model
 │   │   ├── comparison.py        # Bridge to converge pipeline
+│   │   ├── formatting.py        # Markdown/HTML metric grids
+│   │   ├── palette.py           # Shared chart & phase colors
+│   │   ├── help.py              # Metric tooltip registry
 │   │   ├── styles.py            # CSS (light/dark)
 │   │   ├── insight.py           # Gradio UI builder
 │   │   ├── __main__.py          # CLI entry
@@ -313,15 +304,22 @@ TrajectoryVisualizer/
 │       ├── alignment.py         # DP alignment algorithm
 │       ├── milestones.py        # Milestone extraction & comparison
 │       ├── divergence.py        # Divergence classification
+│       ├── anchor.py            # Ground-truth patch grounding
+│       ├── eval_layers.py       # Diagnostic evaluation layers
+│       ├── batch.py             # Manifest batch mode & aggregation
+│       ├── intervention.py      # Before/after intervention comparison
 │       ├── charts.py            # Comparison charts
-│       └── rendering.py         # Comparison HTML report
+│       ├── rendering.py         # Comparison HTML report
+│       ├── cli.py               # Pairwise / batch / before-after CLI
+│       ├── app.py               # Standalone Gradio comparison app
+│       ├── styles.py            # Comparison report CSS
+│       └── detectors/           # Catalog-aligned divergence detectors
 ├── scripts/                     # Trajectory helpers
 │   ├── codearts_consolidator.py # CodeArts session → single JSON
 │   ├── opencode_consolidator.py # OpenCode parent + sub-agent sessions → single JSON
 │   ├── step_labeler.py          # LLM-based step classifier
-│   ├── training_labeler.py      # LLM-based training-turn labeler
-│   ├── TAXONOMY_REFERENCE.md    # Phase/action tag catalog
-│   └── TRAINING_LABEL_REFERENCE.md # Training label rubric
+│   └── TAXONOMY_REFERENCE.md    # Phase/action tag catalog
+├── tests/                       # Workflow UI regression tests
 ├── pyproject.toml               # Package metadata & dependencies
 ├── requirements.txt             # Mirror of pyproject runtime dependencies
 ├── .env.example                 # Sample env for the step labeler

@@ -360,8 +360,6 @@ def render_workflow_html(steps: list[dict]) -> str:
             sub_agent_badge = '<span class="wf-badge" style="background:var(--wf-border-reasoning);color:white;font-size:10px;">sub-agent</span>'
             sub_indent = "margin-left:24px;"
 
-        label_badges = _format_training_label_badges(step.get("training_label"))
-
         # Tool output preview (collapsed, for Bash commands)
         tool_output_html = ""
         tool_out = step.get("tool_output")
@@ -385,7 +383,6 @@ def render_workflow_html(steps: list[dict]) -> str:
                 <span class="wf-badge" style="{role_style}">{role_label}</span>
                 {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{border};border:1px solid {border};">{label}</span>'}
                 {sub_agent_badge}
-                {label_badges}
                 {agent_badge}
                 <span class="wf-icons">{icon_str}</span>
             </div>
@@ -407,25 +404,6 @@ def render_workflow_html(steps: list[dict]) -> str:
         + '<div class="wf-scroll"><div class="wf-container">'
         + "\n".join(cards_html)
         + '</div></div>'
-    )
-
-
-def _format_training_label_badges(training_label: dict | None) -> str:
-    if not isinstance(training_label, dict):
-        return ""
-    quality = training_label.get("quality", {}) if isinstance(training_label.get("quality"), dict) else {}
-    value = training_label.get("value", {}) if isinstance(training_label.get("value"), dict) else {}
-    decision = training_label.get("decision", {}) if isinstance(training_label.get("decision"), dict) else {}
-    q = html.escape(str(quality.get("verdict", "?")))
-    v = html.escape(str(value.get("tier", "?")))
-    d = html.escape(str(decision.get("label", "?")))
-    return (
-        '<span class="wf-badge" style="background:#eef2ff;color:#3730a3;border:1px solid #818cf8;">'
-        f'Q {q}</span>'
-        '<span class="wf-badge" style="background:#ecfdf5;color:#047857;border:1px solid #34d399;">'
-        f'V {v}</span>'
-        '<span class="wf-badge" style="background:#fef3c7;color:#92400e;border:1px solid #f59e0b;">'
-        f'{d}</span>'
     )
 
 
@@ -917,10 +895,6 @@ def format_step_detail(step: dict) -> str:
                     f"</details>"
                 )
 
-    training_label_html = _format_training_label_detail(step.get("training_label"))
-    if training_label_html:
-        content_parts.insert(0, training_label_html)
-
     content_html = "\n".join(content_parts) if content_parts else "<em>No content</em>"
     metrics_html = _format_metrics_tab(step)
     raw_html = _format_raw_tab(step)
@@ -938,27 +912,6 @@ def format_step_detail(step: dict) -> str:
         f"<div class='dp-tab-content' data-tab-content='metrics'>{metrics_html}</div>"
         f"<div class='dp-tab-content' data-tab-content='raw'>{raw_html}</div>"
         f"</div>"
-    )
-
-
-def _format_training_label_detail(training_label: dict | None) -> str:
-    if not isinstance(training_label, dict):
-        return ""
-    quality = training_label.get("quality", {}) if isinstance(training_label.get("quality"), dict) else {}
-    value = training_label.get("value", {}) if isinstance(training_label.get("value"), dict) else {}
-    decision = training_label.get("decision", {}) if isinstance(training_label.get("decision"), dict) else {}
-    tags = ", ".join(html.escape(str(tag)) for tag in value.get("tags", [])) or "none"
-    defects = ", ".join(html.escape(str(flag)) for flag in quality.get("defect_flags", [])) or "none"
-    reasons = ", ".join(html.escape(str(reason)) for reason in decision.get("reasons", [])) or "none"
-    return (
-        "<div class='dp-section' style='border-left-color:#2563eb;'>"
-        "<div class='dp-section-title'>Training Labels</div>"
-        "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;font-size:13px;'>"
-        f"<div><strong>Behavior</strong><br>{html.escape(str(training_label.get('phase', '')))} / {html.escape(str(training_label.get('action', '')))}</div>"
-        f"<div><strong>Quality</strong><br>{html.escape(str(quality.get('verdict', '')))} ({html.escape(str(quality.get('confidence', '')))} confidence)<br>Defects: {defects}</div>"
-        f"<div><strong>Value</strong><br>{html.escape(str(value.get('tier', '')))} ({html.escape(str(value.get('confidence', '')))} confidence)<br>Tags: {tags}</div>"
-        f"<div><strong>Decision</strong><br>{html.escape(str(decision.get('label', '')))}<br>Reasons: {reasons}</div>"
-        "</div></div>"
     )
 
 

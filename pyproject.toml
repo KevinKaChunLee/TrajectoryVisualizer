@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "trajectory-visualizer"
 version = "0.1.0"
-description = "Offline analytics & visualization for LLM agent trajectories (Claude Code, OpenCode, CodeArts)"
+description = "Offline analytics & visualization for LLM agent trajectories (Claude Code, OpenCode, CodeArts, Codex CLI)"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

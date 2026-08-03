@@ -289,20 +289,6 @@ class WorkflowFilteringTests(unittest.TestCase):
         )
         self.assertIn("outputs=[workflow_html, wf_count_html, toc_html]", source)
 
-    def test_label_upload_reapplies_active_filters_to_cards_count_and_toc(self):
-        from trajectory_visualizer.insight import insight
-
-        source = inspect.getsource(insight.build_ui)
-
-        load_labels = source[source.index("def do_load_labels("):source.index("label_outputs = [")]
-        self.assertIn("_build_filtered_workflow_outputs(", load_labels)
-        outputs_block = source[source.index("label_outputs = ["):source.index("label_inputs = [")]
-        self.assertIn("toc_html", outputs_block)
-        self.assertIn(
-            "label_inputs = [label_file_upload, state_steps, wf_filter_hidden, wf_search, toc_html]",
-            source,
-        )
-
     def test_hidden_selection_watcher_reacts_to_rerenders_not_page_load(self):
         # The message must come from a DOM watcher (re-renders never re-run
         # js_on_load in Gradio 6), must never fire while the detail panel
