@@ -338,11 +338,12 @@ def main():
 
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        # Read-only: never mutate the user's live store (a journal_mode=WAL
+        # PRAGMA rewrites the DB header and creates -wal/-shm sidecar files).
+        db_uri = f"{Path(db_path).expanduser().resolve().as_uri()}?mode=ro"
+        conn = sqlite3.connect(db_uri, uri=True, timeout=10)
         conn.row_factory = sqlite3.Row
-
-        # Enable WAL mode for better concurrent reads
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA query_only=ON")
 
         # Export session with all children
         result = export_session_and_collect_children(conn, session_id, set())
@@ -384,31 +385,35 @@ def main():
                 current_input = tokens.get("input", 0) or 0
                 current_output = tokens.get("output", 0) or 0
                 current_reasoning = tokens.get("reasoning", 0) or 0
-                
+                current_cache = tokens.get("cache", {}) if isinstance(tokens.get("cache"), dict) else {}
+                current_cache_read = current_cache.get("read", 0) or 0
+                current_cache_write = current_cache.get("write", 0) or 0
+
                 if sid in prev_tokens:
                     prev = prev_tokens[sid]
-                    # Calculate delta (tokens consumed in this step)
-                    delta_total = max(0, current_total - prev["total"])
-                    delta_input = max(0, current_input - prev["input"])
-                    delta_output = max(0, current_output - prev["output"])
-                    delta_reasoning = max(0, current_reasoning - prev["reasoning"])
-                    
-                    # Replace with per-step tokens
-                    tokens["total"] = delta_total
-                    tokens["input"] = delta_input
-                    tokens["output"] = delta_output
-                    tokens["reasoning"] = delta_reasoning
+                    # Per-step deltas. Cache read/write are cumulative too and
+                    # must be delta'd alongside the rest, otherwise they stay
+                    # cumulative and over-count on every message after the first.
+                    tokens["total"] = max(0, current_total - prev["total"])
+                    tokens["input"] = max(0, current_input - prev["input"])
+                    tokens["output"] = max(0, current_output - prev["output"])
+                    tokens["reasoning"] = max(0, current_reasoning - prev["reasoning"])
+                    if isinstance(tokens.get("cache"), dict):
+                        tokens["cache"]["read"] = max(0, current_cache_read - prev["cache_read"])
+                        tokens["cache"]["write"] = max(0, current_cache_write - prev["cache_write"])
                 else:
                     # First message - all tokens are the initial consumption
                     # Keep as-is since it represents tokens used in that first step
                     pass
-                
-                # Update previous tracking
+
+                # Update previous tracking (cumulative values seen for this session)
                 prev_tokens[sid] = {
                     "total": current_total,
                     "input": current_input,
                     "output": current_output,
                     "reasoning": current_reasoning,
+                    "cache_read": current_cache_read,
+                    "cache_write": current_cache_write,
                 }
 
         output = json.dumps(result, indent=2, ensure_ascii=False)
