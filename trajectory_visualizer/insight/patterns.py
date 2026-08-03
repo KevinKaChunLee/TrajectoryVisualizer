@@ -603,30 +603,6 @@ def extract_subagent_sessions(
     if current_session is not None:
         sessions.append(current_session)
 
-    # Link to parent spawn step via subAgentMsgList
-    for session in sessions:
-        first_msg_id = ""
-        first_step_idx = session["start_step"]
-        # Find the trajectory entry for the first step
-        for s in steps:
-            if s.get("index") == first_step_idx:
-                info = _get_step_info(s, trajectory)
-                first_msg_id = info.get("id", "")
-                break
-
-        if first_msg_id:
-            for entry in trajectory:
-                entry_info = entry.get("info", {}) if isinstance(entry, dict) else {}
-                sub_list = entry_info.get("subAgentMsgList", [])
-                if first_msg_id in sub_list:
-                    entry_id = entry_info.get("id", "")
-                    for s in steps:
-                        s_info = _get_step_info(s, trajectory)
-                        if s_info.get("id") == entry_id:
-                            session["spawn_step"] = s.get("index", 0)
-                            break
-                    break
-
     return sessions
 
 
@@ -658,13 +634,12 @@ def compute_subagent_metrics(
 # 6. Fruitless Search & Anti-Pattern Detection
 # ---------------------------------------------------------------------------
 
-def _is_fruitless_step(step: dict, trajectory: list[dict]) -> bool:
+def _is_fruitless_step(step: dict) -> bool:
     """Check if a step's search/grep tool calls all returned empty results.
 
-    Supports three detection methods:
-    1. CodeArts: info.toolOutput.bash.content == ""
-    2. CC/OpenCode: tool_call output/result is empty or contains no matches
-    3. Universal: tool_call status indicates no results
+    Supports two detection methods:
+    1. tool_call output/result is empty or contains no matches
+    2. tool_call status indicates no results
     """
     tool_calls = step.get("tool_calls", [])
     if not tool_calls:
@@ -675,14 +650,7 @@ def _is_fruitless_step(step: dict, trajectory: list[dict]) -> bool:
     if not search_calls:
         return False
 
-    # Method 1: CodeArts toolOutput field
-    info = _get_step_info(step, trajectory)
-    tool_output = info.get("toolOutput", {})
-    if isinstance(tool_output, dict) and tool_output:
-        bash_out = tool_output.get("bash", {}).get("content", "") if isinstance(tool_output.get("bash"), dict) else ""
-        return bash_out == ""
-
-    # Method 2: Check individual tool call outputs/results
+    # Method 1: Check individual tool call outputs/results
     for tc in search_calls:
         output = tc.get("output", tc.get("result", ""))
         if isinstance(output, str):
@@ -699,9 +667,7 @@ def _is_fruitless_step(step: dict, trajectory: list[dict]) -> bool:
     return True
 
 
-def detect_fruitless_streaks(
-    steps: list[dict], trajectory: list[dict],
-) -> list[dict]:
+def detect_fruitless_streaks(steps: list[dict]) -> list[dict]:
     """Detect consecutive steps with empty search/grep tool output.
 
     Returns list of streaks:
@@ -717,7 +683,7 @@ def detect_fruitless_streaks(
             current_streak = None
             continue
 
-        if _is_fruitless_step(s, trajectory):
+        if _is_fruitless_step(s):
             tool_names = [tc.get("tool_name", "?") for tc in s["tool_calls"]]
             step_idx = s.get("index", 0)
             if current_streak is None:
@@ -742,9 +708,7 @@ def detect_fruitless_streaks(
     return streaks
 
 
-def compute_autonomy_ratio(
-    steps: list[dict], trajectory: list[dict],
-) -> float:
+def compute_autonomy_ratio(steps: list[dict]) -> float:
     """Compute autonomy ratio from trigger fields.
 
     Returns ratio of autonomous steps to total assistant steps (0.0 to 1.0).
@@ -754,25 +718,7 @@ def compute_autonomy_ratio(
     if not assistant_steps:
         return 0.0
 
-    trigger_values: set[str] = set()
-    user_triggered = 0
-    for s in steps[:_MAX_STEPS]:
-        if s.get("role") != "assistant":
-            continue
-        info = _get_step_info(s, trajectory)
-        trigger = info.get("trigger", "")
-        if trigger:
-            trigger_values.add(trigger)
-            if trigger == "COMMENT_SLASH":
-                user_triggered += 1
-
-    # Only use trigger-based autonomy if the field has meaningful diversity.
-    # If ALL steps have the same trigger (e.g., CodeArts "COMMENT_SLASH"),
-    # it's a platform artifact, not real trigger data — fall through.
-    if len(trigger_values) > 1:
-        return round(1.0 - (user_triggered / len(assistant_steps)), 4) if assistant_steps else 0.0
-
-    # Fallback: use user/total ratio
+    # Autonomy = share of turns not directly driven by the user.
     user_steps = sum(1 for s in steps if s.get("role") == "user")
     total = len(steps)
     return round(1.0 - (user_steps / total), 4) if total > 0 else 0.0

@@ -134,38 +134,6 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("<td>Throughput</td><td>0 tok/s</td>", html)
         self.assertIn("<td>Cache Ratio</td><td>n/a</td>", html)
 
-    def test_codearts_marks_placeholder_breakdown_and_cache_values_unavailable(self):
-        from trajectory_visualizer.insight.parser import parse_steps
-        from trajectory_visualizer.insight.rendering import _format_metrics_tab
-
-        raw = {
-            "trajectory": [{
-                "info": {
-                    "role": "assistant",
-                    "tokens": {
-                        "total": 100,
-                        "input": 0,
-                        "output": 0,
-                        "reasoning": 0,
-                        "cache": {"read": 0, "write": 0},
-                    },
-                    "time": {"created": 1000, "completed": 3000},
-                },
-                "parts": [],
-                "_codearts_raw": {"total_tokens": 100},
-            }],
-        }
-
-        step = parse_steps(raw)[0]
-        html = _format_metrics_tab(step)
-
-        self.assertNotIn("<table", html)
-        self.assertIn("Metrics unavailable", html)
-        self.assertIn("The trajectory does not provide complete per-step metrics.", html)
-        self.assertNotIn("CodeArts", html)
-        self.assertIn("Input Tokens", html)
-        self.assertIn("Cache Write", html)
-
 
 if __name__ == "__main__":
     unittest.main()

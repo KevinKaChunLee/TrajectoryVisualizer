@@ -3,15 +3,15 @@ import unittest
 from pathlib import Path
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "codearts_v2_minimal.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "codearts_minimal.json"
 
 
-class CodeArtsV2Tests(unittest.TestCase):
+class CodeArtsTests(unittest.TestCase):
     def test_format_is_detected_before_generic_opencode(self):
         from trajectory_visualizer.insight.loaders import detect_format
 
         raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        self.assertEqual(detect_format(raw), "codearts_v2")
+        self.assertEqual(detect_format(raw), "codearts")
 
         generic = {"info": {"id": "ses_open"}, "messages": []}
         self.assertEqual(detect_format(generic), "opencode")
@@ -21,9 +21,9 @@ class CodeArtsV2Tests(unittest.TestCase):
 
         loaded = load_trajectory(str(FIXTURE))
 
-        self.assertEqual(detect_format(loaded), "codearts_v2")
-        self.assertEqual(loaded["metadata"]["agent"], "codearts-v2")
-        self.assertEqual(loaded["metadata"]["generator_name"], "codearts_v2")
+        self.assertEqual(detect_format(loaded), "codearts")
+        self.assertEqual(loaded["metadata"]["agent"], "codearts")
+        self.assertEqual(loaded["metadata"]["generator_name"], "codearts")
         self.assertEqual(loaded["metadata"]["session_count"], 2)
         self.assertEqual(loaded["metadata"]["sub_agent_count"], 1)
         self.assertTrue(loaded["metadata"]["export_complete"])
@@ -31,7 +31,7 @@ class CodeArtsV2Tests(unittest.TestCase):
         self.assertEqual(loaded["token_usage"]["reasoning_tokens"], 15)
         self.assertEqual(loaded["token_usage"]["cache_read_tokens"], 35)
 
-    def test_parser_preserves_v2_message_part_and_session_fields(self):
+    def test_parser_preserves_message_part_and_session_fields(self):
         from trajectory_visualizer.insight.loaders import load_trajectory
         from trajectory_visualizer.insight.parser import parse_steps
 
@@ -58,13 +58,13 @@ class CodeArtsV2Tests(unittest.TestCase):
 
         self.assertEqual(preview, "actual user request")
 
-    def test_codearts_v2_keeps_all_five_token_legend_items(self):
+    def test_codearts_keeps_all_five_token_legend_items(self):
         from trajectory_visualizer.insight.charts import build_token_chart
         from trajectory_visualizer.insight.loaders import load_trajectory
         from trajectory_visualizer.insight.parser import parse_steps
 
         steps = parse_steps(load_trajectory(str(FIXTURE)))
-        figure = build_token_chart(steps, format="codearts_v2")
+        figure = build_token_chart(steps, format="codearts")
 
         self.assertEqual(
             [trace.name for trace in figure.data],
@@ -76,7 +76,7 @@ class CodeArtsV2Tests(unittest.TestCase):
     def test_human_readable_format_label(self):
         from trajectory_visualizer.insight.insight import trajectory_format_label
 
-        self.assertEqual(trajectory_format_label("codearts_v2"), "CodeArts V2")
+        self.assertEqual(trajectory_format_label("codearts"), "CodeArts")
 
 
 if __name__ == "__main__":

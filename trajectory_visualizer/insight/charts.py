@@ -136,7 +136,7 @@ def _add_token_bar_traces(fig: go.Figure, x_values: list,
     """Add token category bar traces to a figure.
 
     By default only adds traces that have non-zero data to avoid misleading legends
-    (e.g., CodeArts trajectories only have total tokens, no breakdown).
+    (e.g., trajectories that only report total tokens, no breakdown).
 
     Pass ``include_empty=True`` to force every trace into the legend (useful when
     the viewer wants to see which fields are tracked even if they happen to be
@@ -270,11 +270,11 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
                       + net_output (output - reasoning) + reasoning = total
 
     Per-format overrides:
-    - ``format in ("opencode", "codearts_v2")``: render all five token fields
+    - ``format in ("opencode", "codearts")``: render all five token fields
       stacked — Fresh Input, Cache Read, Output, Reasoning, Cache Write — with
       every trace forced into the legend even when a field is zero across the
       trajectory.  Both formats expose the same complete token schema.
-    - No breakdown available (e.g., CodeArts): fall back to a single ``Total``
+    - No breakdown available: fall back to a single ``Total``
       bar.
     """
     if not steps:
@@ -307,8 +307,8 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
     )
 
     fig = go.Figure()
-    if format in ("opencode", "codearts_v2") and has_breakdown:
-        # OpenCode / CodeArts V2 view: show all five fields explicitly, forcing
+    if format in ("opencode", "codearts") and has_breakdown:
+        # OpenCode / CodeArts view: show all five fields explicitly, forcing
         # zero traces into the legend so no existing legend item disappears.
         # These formats report output and reasoning as disjoint fields, so use
         # the raw output value instead of subtracting reasoning a second time.
@@ -317,7 +317,7 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
     elif has_breakdown:
         _add_token_bar_traces(fig, indices, fresh_input, cache_r, net_output, reasoning_t)
     else:
-        # No breakdown available (e.g., CodeArts) — single "Total" trace.
+        # No breakdown available — single "Total" trace.
         totals = [s["tokens"]["total"] for s in steps]
         fig.add_trace(go.Bar(
             x=indices, y=totals, name="Total",
@@ -2169,7 +2169,7 @@ def build_error_classification_chart(
         for tc in s.get("tool_calls", []):
             etype = tc.get("error_type")
             # Fallback for formats that don't pre-classify (OpenCode, Claude Code):
-            # run the same pattern matcher used by the CodeArts loader against the
+            # run the shared loader error-pattern matcher against the
             # raw error message so we still get a non-empty chart.
             if not etype:
                 err_text = tc.get("error") or ""
@@ -2319,138 +2319,3 @@ def build_duration_gap_chart(
     return fig
 
 
-# -- Context Growth (CodeArts cumulative) ------------------------------------
-
-def build_context_growth_ca_chart(
-    steps: list[dict],
-    trajectory: list[dict],
-    context_limit: int | None = None,
-    dark: bool = False,
-) -> go.Figure:
-    """Line chart of cumulative context size over steps for CodeArts trajectories.
-
-    Uses the raw cumulative total_tokens (before delta conversion) to show
-    how the LLM's context window fills up.  Sessions are identified by
-    ``sessionID`` (derived from ``chatId``); within each session, a drop in
-    cumulative tokens flags a **compression event**.
-    """
-    if not trajectory:
-        fig = _empty_figure(340, "No context growth data available")
-        _apply_dark(fig, dark)
-        return fig
-
-    # ── 1. Extract per-step data points ──────────────────────────────
-    points: list[dict] = []
-    for i, entry in enumerate(trajectory):
-        info = entry.get("info", {})
-        if info.get("role") != "assistant":
-            continue
-        # Original cumulative value lives in _codearts_raw.total_tokens;
-        # the delta conversion overwrote tokens["total"].
-        raw_msg = entry.get("_codearts_raw", {})
-        cumulative = raw_msg.get("total_tokens", 0) if isinstance(raw_msg, dict) else 0
-        if cumulative == 0:
-            cumulative = info.get("tokens", {}).get("total", 0)
-        # Skip zero-token entries (tool dispatch steps with no LLM inference)
-        if cumulative == 0:
-            continue
-        session_id = info.get("sessionID", "")
-        is_sub = info.get("isSubAgent", False)
-        step_idx = steps[i].get("index", i) if i < len(steps) else i
-        # For CodeArts sub-agents, effective_agent returns the full session_id
-        # from parsed steps — use it for consistent labeling with agent breakdown
-        step_session = steps[i].get("session_id", "") if i < len(steps) else ""
-        points.append({
-            "step": step_idx,
-            "cumulative": cumulative,
-            "session_id": session_id,
-            "is_sub": is_sub,
-            "step_session_id": step_session,
-        })
-
-    if not points:
-        fig = _empty_figure(340, "No context growth data available")
-        _apply_dark(fig, dark)
-        return fig
-
-    # ── 2. Group by sessionID (preserves appearance order) ───────────
-    from collections import OrderedDict
-    session_map: OrderedDict[str, dict] = OrderedDict()
-    for p in points:
-        sid = p["session_id"]
-        if sid not in session_map:
-            session_map[sid] = {
-                "x": [], "y": [], "is_sub": p["is_sub"], "id": sid,
-                "step_session_id": p.get("step_session_id", ""),
-            }
-        session_map[sid]["x"].append(p["step"])
-        session_map[sid]["y"].append(p["cumulative"])
-
-    # ── 3. Detect compression events (token drops within a session) ──
-    compressions: list[dict] = []
-    for sess in session_map.values():
-        prev = 0
-        for x, y in zip(sess["x"], sess["y"]):
-            if y < prev and prev > 0:
-                compressions.append({"step": x, "from": prev, "to": y})
-            prev = y
-
-    # ── 4. Plot each session as its own trace ────────────────────────
-    fig = go.Figure()
-    _SESSION_COLORS = ["#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2"]
-    main_idx = 0
-    sub_idx = 0
-    n_main = sum(1 for s in session_map.values() if not s["is_sub"])
-    n_sub = sum(1 for s in session_map.values() if s["is_sub"])
-    for i, sess in enumerate(session_map.values()):
-        if not sess["x"]:
-            continue
-        color = _SESSION_COLORS[i % len(_SESSION_COLORS)]
-        if sess["is_sub"]:
-            sub_idx += 1
-            # Use step_session_id (matches agent breakdown grid label)
-            ssid = sess.get("step_session_id", "") or sess["id"]
-            short = ssid[:12] if ssid else f"#{sub_idx}"
-            label = f"sub {short}"
-        else:
-            main_idx += 1
-            label = f"main {main_idx}" if n_main > 1 else "main"
-        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-        fig.add_trace(go.Scatter(
-            x=sess["x"], y=sess["y"],
-            mode="lines+markers", name=label,
-            line=dict(color=color, width=2),
-            marker=dict(size=3),
-            fill="tozeroy",
-            fillcolor=f"rgba({r},{g},{b},0.08)",
-            hovertemplate=f"Step %{{x}}<br>Context: %{{y:,.0f}} tokens<br>{label}<extra></extra>",
-        ))
-
-    # ── 5. Mark compression events ───────────────────────────────────
-    if compressions:
-        fig.add_trace(go.Scatter(
-            x=[c["step"] for c in compressions],
-            y=[c["to"] for c in compressions],
-            mode="markers",
-            name="Compression",
-            marker=dict(symbol="triangle-down", size=10, color="#f59e0b",
-                        line=dict(width=1, color="#92400e")),
-            hovertemplate="Step %{x}<br>Compressed to %{y:,.0f} tokens<extra>compression</extra>",
-        ))
-
-    # Context limit line
-    if context_limit and context_limit > 0:
-        fig.add_hline(
-            y=context_limit, line_dash="dash", line_color="#dc2626", line_width=1.5,
-            annotation_text=f"Context limit: {context_limit:,}",
-            annotation_position="top right",
-            annotation_font=dict(size=10, color="#dc2626"),
-        )
-
-    _apply_chart_layout(
-        fig, "Context Growth (Cumulative Tokens per Session)",
-        xaxis="Step", yaxis="Cumulative Tokens", height=340,
-        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
-    )
-    _apply_dark(fig, dark)
-    return fig

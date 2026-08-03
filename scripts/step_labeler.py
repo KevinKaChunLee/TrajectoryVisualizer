@@ -175,9 +175,6 @@ def build_step_message(step: dict, max_chars: int = 8000) -> str:
 
     # Basic metadata
     parts.append(f"Step #{step.get('index', '?')}")
-    rnd = step.get("round")
-    if rnd is not None:
-        parts.append(f"Round: {rnd}")
     dur = step.get("duration")
     if dur is not None:
         parts.append(f"Duration: {dur}s")
@@ -187,21 +184,11 @@ def build_step_message(step: dict, max_chars: int = 8000) -> str:
     finish = step.get("finish", "")
     if finish:
         parts.append(f"Finish reason: {finish}")
-    agent = step.get("agent", "") or step.get("agent_id", "")
+    agent = step.get("agent", "")
     if agent:
         parts.append(f"Agent: {agent}")
     if step.get("is_sub_agent"):
         parts.append("Context: This is a sub-agent step")
-
-    # Question/prompt context (CodeArts)
-    question = step.get("question", [])
-    if question:
-        for q in question:
-            if isinstance(q, dict):
-                q_text = q.get("content", q.get("value", {}).get("input", ""))
-                if q_text:
-                    parts.append(f"Prompt:\n{str(q_text)[:500]}")
-                    break
 
     # Tool calls (include output/error for classification accuracy)
     tool_calls = step.get("tool_calls", [])
@@ -266,17 +253,6 @@ def build_step_message(step: dict, max_chars: int = 8000) -> str:
     ]
     if reasoning_blocks:
         parts.append("Reasoning:\n" + "\n---\n".join(reasoning_blocks))
-
-    # Tool execution output (CodeArts operateCacheData)
-    tool_output = step.get("tool_output")
-    if isinstance(tool_output, dict):
-        for tool_name, tool_data in tool_output.items():
-            out_content = tool_data.get("content", "") if isinstance(tool_data, dict) else str(tool_data)
-            if out_content:
-                out_str = str(out_content)
-                if len(out_str) > 500:
-                    out_str = out_str[:500] + "..."
-                parts.append(f"Tool output ({tool_name}):\n{out_str}")
 
     content = "\n".join(parts)
     if len(content) > max_chars:
@@ -576,11 +552,9 @@ def label_trajectory(
             "tokens_total": tokens.get("total", 0),
             "tool_calls": tool_names,
             "finish": step.get("finish", ""),
-            "agent": step.get("agent", "") or step.get("agent_id", ""),
+            "agent": step.get("agent", ""),
             "model_id": step.get("model_id", ""),
             "text_preview": (step.get("text_preview", "") or "")[:200],
-            # Format-specific (absent for formats that don't have them)
-            "round": step.get("round"),
             "is_sub_agent": step.get("is_sub_agent", False),
             "session_id": step.get("session_id", ""),
             "executor_id": step.get("agent", ""),

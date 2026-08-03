@@ -128,7 +128,7 @@ def _build_hotspots_md(rows: list[dict]) -> str:
     # Lowest cache ratio (assistant steps with tokens, excluding 0-token steps).
     # Skip the table entirely if no step reports any cache read — otherwise the
     # table is just five rows of 0.0% (uninformative) for trajectories whose
-    # provider doesn't emit cache metrics (e.g., some Codex/CodeArts sessions).
+    # provider doesn't emit cache metrics (e.g., some Codex sessions).
     asst_with_tok = [r for r in rows
                      if r.get("role") == "assistant" and r["tokens_total"] > 0]
     if asst_with_tok and any(r["cache_ratio"] > 0 for r in asst_with_tok):
@@ -257,9 +257,9 @@ def format_session_md(timing: dict, metadata: dict, retry: dict,
         ("Directory", md.get("directory_name", "N/A")),
         ("Platform", (md.get("platform") or "N/A")[:20]),
     ]
-    if md.get("agent") == "codearts-v2":
+    if md.get("agent") == "codearts":
         pairs.extend([
-            ("Format", "CodeArts V2"),
+            ("Format", "CodeArts"),
             ("Sessions", str(md.get("session_count", 1))),
             ("Sub-agents", str(md.get("sub_agent_count", 0))),
             ("Export", "Complete" if md.get("export_complete") is True else "Incomplete"),
@@ -533,8 +533,7 @@ def wall_clock_fmt(metrics: dict) -> tuple[float, str]:
 
 
 def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
-                       *, generator: str = "",
-                       trajectory_format: str | None = None) -> str:
+                       *, trajectory_format: str | None = None) -> str:
     """Build the one-line HTML summary banner for the loaded trajectory."""
     import html as _html
     parts = [
@@ -558,15 +557,8 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
         "border-left:3px solid #d97706;border-radius:4px;"
         "font-size:12px;color:#92400e;"
     )
-    if generator == "codearts" or trajectory_format == "codearts":
-        banner += (
-            f"<div style='{note_style}'>"
-            "CodeArts format — per-step token breakdown, cache metrics, and tool duration not available. "
-            "Total tokens per step are shown."
-            "</div>"
-        )
-    elif trajectory_format in ("opencode", "codearts_v2"):
-        format_name = "CodeArts V2" if trajectory_format == "codearts_v2" else "OpenCode"
+    if trajectory_format in ("opencode", "codearts"):
+        format_name = "CodeArts" if trajectory_format == "codearts" else "OpenCode"
         banner += (
             f"<div style='{note_style}'>"
             f"{format_name} format — Token Usage by Step shows all five fields stacked: "

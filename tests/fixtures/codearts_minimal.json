@@ -3,7 +3,7 @@
     "id": "ses_root",
     "slug": "root-session",
     "directory": "C:\\workspace\\demo",
-    "title": "CodeArts V2 fixture",
+    "title": "CodeArts fixture",
     "version": "2.0-test",
     "summary": {"additions": 0, "deletions": 0, "files": 0},
     "time": {"created": 1000, "updated": 5000}

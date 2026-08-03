@@ -48,7 +48,6 @@ from .charts import (
     build_plan_timeline_chart,
     build_error_classification_chart,
     build_context_growth_chart,
-    build_context_growth_ca_chart,
 )
 
 from .comparison import run_comparison
@@ -470,9 +469,7 @@ def _build_overview_outputs(
     session_raw, retry = _d("session_raw"), _d("retry")
     model_id, provider_id, agent_id = extract_agent_info(steps)
 
-    generator = md.get("generator_name", "")
     banner = format_banner_html(os.path.basename(file_path), metrics, wfmt,
-                                generator=generator,
                                 trajectory_format=trajectory_format)
     kpi_html = _build_overview_kpi_html(metrics, wfmt, verdicts=verdicts,
                                         message_rows=message_rows)
@@ -513,19 +510,12 @@ def _build_chart_outputs(
     plan_metrics = compute_plan_metrics(plan_history)
     subagent_sessions = extract_subagent_sessions(steps, traj)
     subagent_metrics = compute_subagent_metrics(subagent_sessions, steps)
-    fruitless_streaks = detect_fruitless_streaks(steps, traj)
+    fruitless_streaks = detect_fruitless_streaks(steps)
     tool_selection = detect_tool_selection_antipatterns(steps)
-
-    # Detect compression steps
-    compression_steps = []
-    for i, entry in enumerate(traj):
-        if entry.get("info", {}).get("compressMessage"):
-            compression_steps.append(steps[i].get("index", i) if i < len(steps) else i)
 
     # Core charts
     tok_fig = build_token_chart(steps, dark=dark, format=trajectory_format)
-    dur_fig = build_duration_chart(steps, dark=dark,
-                                    compression_steps=compression_steps or None)
+    dur_fig = build_duration_chart(steps, dark=dark)
     tl_fig = build_tool_chart(steps, dark=dark)
 
     tool_outcome_fig = build_tool_outcome_timeline(steps, dark=dark)
@@ -537,23 +527,11 @@ def _build_chart_outputs(
     plan_timeline_fig = build_plan_timeline_chart(plan_history, plan_metrics, dark=dark)
     error_class_fig = build_error_classification_chart(steps, dark=dark)
 
-    # Context growth chart. CodeArts re-emits cumulative context size per step,
-    # so it gets the format-specific builder with compression-event markers.
-    # Other formats (OpenCode, Claude Code) only expose per-step deltas, so we
-    # fall back to the format-agnostic cumulative-input view.
-    context_limit = None
-    is_codearts = any(
-        isinstance(e.get("_codearts_raw"), dict) for e in traj
-    )
-    if is_codearts:
-        context_limit = 192_000
-        context_growth_fig = build_context_growth_ca_chart(
-            steps, traj, context_limit=context_limit, dark=dark)
-    else:
-        # Skip Boot/Steady/Closeout phase overlays here — the heuristic
-        # bands clutter the cumulative-token view without adding signal.
-        context_growth_fig = build_context_growth_chart(
-            message_rows, phases=None, dark=dark)
+    # Context growth chart. Skip Boot/Steady/Closeout phase overlays here —
+    # the heuristic bands clutter the cumulative-token view without adding
+    # signal.
+    context_growth_fig = build_context_growth_chart(
+        message_rows, phases=None, dark=dark)
 
     # New panels
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
@@ -581,7 +559,6 @@ def trajectory_format_label(fmt: str | None) -> str:
     labels = {
         "ccsession": "Claude Code",
         "codearts": "CodeArts",
-        "codearts_v2": "CodeArts V2",
         "opencode": "OpenCode",
     }
     return labels.get(fmt or "", fmt or "Unknown")
@@ -615,7 +592,7 @@ def _build_diagnostics_outputs(
     # Counts are still computed so the summary line stays accurate.
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
-    if trajectory_format in ("opencode", "codearts_v2"):
+    if trajectory_format in ("opencode", "codearts"):
         rootcause_html = ""
     else:
         rootcause_html = build_root_cause_html(clusters)
@@ -833,7 +810,6 @@ def build_ui() -> gr.Blocks:
                     choices=[
                         ("Claude Code", "ccsession"),
                         ("CodeArts", "codearts"),
-                        ("CodeArts V2", "codearts_v2"),
                         ("OpenCode", "opencode"),
                     ],
                     value="ccsession",
@@ -979,7 +955,6 @@ def build_ui() -> gr.Blocks:
                             choices=[
                                 ("Claude Code", "ccsession"),
                                 ("CodeArts", "codearts"),
-                                ("CodeArts V2", "codearts_v2"),
                                 ("OpenCode", "opencode"),
                             ],
                             value="ccsession",
@@ -1496,7 +1471,6 @@ def build_ui() -> gr.Blocks:
 
             # Validate format matches user selection
             _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
-                              "codearts_v2": "CodeArts V2",
                               "opencode": "OpenCode",
                               "unknown": "Unknown"}
             detected = detect_format(raw)

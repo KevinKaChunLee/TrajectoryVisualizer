@@ -143,9 +143,7 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
                 state = {"status": str(state)}
             tool_name = p.get("tool_name", p.get("name", p.get("tool", "?")))
             status = state.get("status", p.get("status", "?"))
-            # Input: OpenCode uses state.input, CodeArts uses p.arguments
             tool_input = state.get("input", p.get("input", p.get("arguments", {})))
-            # Output: OpenCode uses state.output, CodeArts stores output in step-level toolOutput
             tool_output = state.get("output", p.get("output", ""))
             tc = {
                 "type": "tool_call", "tool_name": tool_name,
@@ -227,14 +225,6 @@ def parse_steps(raw: dict) -> list[dict]:
             tokens_info = {}
         metrics_unavailable_fields = _missing_token_metric_fields(tokens_info)
         metrics_source_format = ""
-        if isinstance(msg.get("_codearts_raw"), dict):
-            metrics_source_format = "CodeArts"
-            for field in (
-                "Input Tokens", "Output Tokens", "Reasoning Tokens",
-                "Cache Read", "Cache Write",
-            ):
-                if field not in metrics_unavailable_fields:
-                    metrics_unavailable_fields.append(field)
         tokens = {
             "total": tokens_info.get("total", 0) or 0,
             "input": tokens_info.get("input", 0) or 0,
@@ -272,20 +262,13 @@ def parse_steps(raw: dict) -> list[dict]:
             "mode": safe_get(info, "mode", default=""),
             "message_id": (
                 msg.get("message_id", "")
-                or (info.get("id", "") if raw.get("_codearts_v2_format") else "")
+                or (info.get("id", "") if raw.get("_codearts_format") else "")
             ),
             "id": safe_get(info, "id", default=""),
             "parent_id": safe_get(info, "parentID", default=""),
             "session_id": safe_get(info, "sessionID", default=""),
             "cwd": path_info.get("cwd", ""), "root": path_info.get("root", ""),
-            # CodeArts-specific fields (absent for CC/OpenCode — safe defaults)
-            "round": info.get("round"),
             "is_sub_agent": info.get("isSubAgent", False),
-            "sub_agent_msg_list": info.get("subAgentMsgList", []),
-            "tool_output": info.get("toolOutput"),
-            "output_text": info.get("outputText", ""),
-            "agent_id": info.get("agentId", ""),
-            "question": info.get("question", []),
             "parent_session_id": info.get("parentSessionID", ""),
             "session_depth": info.get("sessionDepth"),
             "session_title": info.get("sessionTitle", ""),

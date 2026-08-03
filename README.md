@@ -4,7 +4,7 @@
 
 TrajectoryVisualizer loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
-Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts (legacy and V2)**, and **Codex CLI** out of the box.
+Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, and **Codex CLI** out of the box.
 
 ---
 
@@ -108,8 +108,7 @@ TrajectoryVisualizer auto-detects and normalizes the following formats on load:
 |---|---|---|
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
-| CodeArts | `format: codearts` | Sub-agent `session_id` threading |
-| CodeArts V2 | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
+| CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
 | Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the OpenCode-style step model (select **OpenCode** in the format dropdown); tool intent (Read / Grep / Glob / Write / Bash) inferred from each `exec_command` shell command |
 
 ---
@@ -182,29 +181,10 @@ exposes an `export` command that writes trajectory JSON to stdout.
 
 ### CodeArts
 
-A CodeArts session is a **folder**, not a single file. Each session directory
-must contain **both** of the following files for the consolidator to pick it
-up:
-
-- `chat_baseInfo.json` — session metadata (title, chatId, timestamp, agent info)
-- `messages_0.json` — the raw message list
-
-TrajectoryVisualizer expects a single consolidated JSON, so use the helper in
-`scripts/` (run from the repo root):
-
-```bash
-# Single session — pick the output path yourself
-python scripts/codearts_consolidator.py path/to/<session-id> --output ca_trajectory.json
-```
-
-The consolidator wraps `chat_baseInfo.json` + `messages_0.json` into a single
-JSON with `"format": "codearts"` at the top level. Upload the consolidated
-file in the dashboard.
-
-CodeArts V2 exports are already consolidated JSON files. They contain an
+CodeArts exports are already consolidated JSON files. They contain an
 `export_metadata` block whose `source_format` is `codearts_opencode_sqlite`,
 plus a `session_manifest` describing parent and sub-agent sessions. Upload the
-V2 JSON directly and select **CodeArts V2**; no consolidator step is needed.
+export JSON directly and select **CodeArts**; no consolidator step is needed.
 
 ### Codex CLI
 
@@ -229,7 +209,6 @@ Helper utilities that live in `scripts/` (run from the repo root):
 
 | File | Purpose |
 |---|---|
-| `codearts_consolidator.py` | Merge a CodeArts session folder (`chat_baseInfo.json` + `messages_0.json`) into a single consolidated JSON. Single-session and `--batch` modes. See the **CodeArts** collection section above. |
 | `opencode_consolidator.py` | Recursively merge an OpenCode parent session and child sub-agent sessions into a single JSON. See the **OpenCode** collection section above. |
 | `step_labeler.py` | LLM-based per-step classifier. Reads a trajectory and emits a sidecar `*_labeled.json` with phase and action tags from the taxonomy. |
 | `TAXONOMY_REFERENCE.md` | Authoritative list of phase and action tags the labeler emits. Auto-loaded by `step_labeler.py` from its own directory. |
@@ -290,7 +269,7 @@ TrajectoryVisualizer/
 │   │   ├── parser.py            # Step model
 │   │   ├── metrics.py           # Per-step & session metrics
 │   │   ├── analytics.py         # Phase detection, behavioral analytics
-│   │   ├── charts.py            # Plotly chart builders (34 figures)
+│   │   ├── charts.py            # Plotly chart builders (33 figures)
 │   │   ├── rendering.py         # HTML rendering (workflow cards, code blocks)
 │   │   ├── diagnostics.py       # Failure chains, root causes
 │   │   ├── patterns.py          # Tool sequences, anti-patterns
@@ -321,7 +300,6 @@ TrajectoryVisualizer/
 │       ├── styles.py            # Comparison report CSS
 │       └── detectors/           # Catalog-aligned divergence detectors
 ├── scripts/                     # Trajectory helpers
-│   ├── codearts_consolidator.py # CodeArts session → single JSON
 │   ├── opencode_consolidator.py # OpenCode parent + sub-agent sessions → single JSON
 │   ├── step_labeler.py          # LLM-based step classifier
 │   └── TAXONOMY_REFERENCE.md    # Phase/action tag catalog

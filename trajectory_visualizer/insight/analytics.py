@@ -266,32 +266,3 @@ def generate_insights(
                 )
 
     return insights if insights else ["Insufficient data for behavioral insights."]
-
-
-def build_sub_agent_tree(steps: list[dict]) -> dict[str, list[int]]:
-    """Build a parent→child step mapping from sub_agent_msg_list fields.
-
-    Returns a dict mapping parent step ``id`` to a list of child step
-    indices (positions in the *steps* list).  Only meaningful for CodeArts
-    trajectories; returns an empty dict for CC/OpenCode.
-    """
-    # Build id → index lookup
-    id_to_idx: dict[str, int] = {}
-    for i, s in enumerate(steps):
-        sid = s.get("id", "")
-        if sid:
-            id_to_idx[sid] = i
-
-    tree: dict[str, list[int]] = {}
-    for s in steps:
-        children_ids = s.get("sub_agent_msg_list", [])
-        if not children_ids:
-            continue
-        parent_id = s.get("id", "")
-        if not parent_id:
-            continue
-        child_indices = [id_to_idx[cid] for cid in children_ids if cid in id_to_idx]
-        if child_indices:
-            tree[parent_id] = child_indices
-
-    return tree

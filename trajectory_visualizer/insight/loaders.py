@@ -18,7 +18,7 @@ def safe_get(d: Any, *keys: Any, default: Any = None) -> Any:
 
 
 def detect_format(raw: dict) -> str:
-    """Detect trajectory format: 'ccsession', 'opencode', 'codearts', 'codearts_v2', or 'unknown'."""
+    """Detect trajectory format: 'ccsession', 'opencode', 'codearts', or 'unknown'."""
     # Post-conversion marker: the Claude Code converter builds a fresh dict and
     # sets this flag. Check it before the raw-format markers below so already-
     # converted trajectories still report as ccsession.
@@ -26,20 +26,18 @@ def detect_format(raw: dict) -> str:
         return "ccsession"
     if raw.get("format") == "ccsession-trajectory":
         return "ccsession"
-    if raw.get("format") == "codearts":
-        return "codearts"
-    # CodeArts V2 exports use an OpenCode-compatible ``info + messages``
+    # CodeArts exports use an OpenCode-compatible ``info + messages``
     # envelope.  Check their explicit export marker before the generic
     # OpenCode shape so the UI does not mislabel the originating product.
     export_metadata = raw.get("export_metadata")
-    if raw.get("_codearts_v2_format") is True or (
+    if raw.get("_codearts_format") is True or (
         isinstance(export_metadata, dict)
         and export_metadata.get("schema_version") == 2
         and export_metadata.get("source_format") == "codearts_opencode_sqlite"
         and isinstance(raw.get("info"), dict)
         and isinstance(raw.get("messages"), list)
     ):
-        return "codearts_v2"
+        return "codearts"
     if isinstance(raw.get("info"), dict) and isinstance(raw.get("messages"), list):
         return "opencode"
     return "unknown"
@@ -773,15 +771,14 @@ def _convert_opencode_metadata(raw: dict) -> dict:
     return raw
 
 
-def _convert_codearts_v2_metadata(raw: dict) -> dict:
-    """Normalize a CodeArts V2 SQLite export without changing message data.
+def _convert_codearts_metadata(raw: dict) -> dict:
+    """Normalize a CodeArts SQLite export without changing message data.
 
-    CodeArts V2 deliberately shares the OpenCode message/part schema, so the
+    CodeArts deliberately shares the OpenCode message/part schema, so the
     existing OpenCode normalization is the correct base.  This adapter keeps
     that behavior while restoring CodeArts product identity, export metadata,
     and the parent/sub-agent counts already present in the consolidated file.
-    Token values are preserved as per-message values; unlike legacy CodeArts,
-    they must not be converted from cumulative totals to deltas.
+    Token values are per-message values, not cumulative totals.
     """
     _convert_opencode_metadata(raw)
 
@@ -829,9 +826,9 @@ def _convert_codearts_v2_metadata(raw: dict) -> dict:
         session_count = len(manifest) or 1
 
     metadata.update({
-        "agent": "codearts-v2",
+        "agent": "codearts",
         "model": model_id,
-        "generator_name": "codearts_v2",
+        "generator_name": "codearts",
         "generator_version": metadata.get("server_version", ""),
         "format_version": str(export.get("schema_version", 2)),
         "sub_agent_count": sub_agent_count,
@@ -885,8 +882,8 @@ def _convert_codearts_v2_metadata(raw: dict) -> dict:
         "cache_read_tokens": token_totals["cache_read"],
         "cache_write_tokens": token_totals["cache_write"],
     }
-    raw["_codearts_v2_format"] = True
-    raw["_source_format"] = "codearts_v2"
+    raw["_codearts_format"] = True
+    raw["_source_format"] = "codearts"
     raw["_capabilities"] = {
         "has_timing": True,
         "has_tool_calls": bool(stats.get("total_tool_calls")),
@@ -895,13 +892,6 @@ def _convert_codearts_v2_metadata(raw: dict) -> dict:
         "has_session_hierarchy": bool(sub_agent_count),
     }
     return raw
-
-
-_CA_SENDER_TO_ROLE = {
-    "User": "user", "user": "user",
-    "AI": "assistant", "ai": "assistant",
-    "DevMate": "assistant", "devmate": "assistant",
-}
 
 
 _TOOL_ERROR_PATTERNS = [
@@ -933,268 +923,6 @@ def _classify_tool_error(output: str) -> str | None:
         if pattern in output:
             return error_type
     return None
-
-
-_ca_parse_timestamp = _iso_to_epoch_ms
-
-
-def _ca_normalize_message(msg: dict, index: int, next_ts_ms: int | None) -> dict:
-    """Convert a raw CodeArts message to OpenCode-like trajectory format.
-
-    Preserves the original message under ``_codearts_raw`` for reference.
-    """
-    sender = msg.get("sender", "unknown")
-    role = _CA_SENDER_TO_ROLE.get(sender, "assistant")
-    ts_ms = _ca_parse_timestamp(msg.get("timestamp"))
-
-    # Parse content blocks into parts
-    parts: list[dict] = []
-    tool_calls: list[dict] = []
-    content = msg.get("content", [])
-    if isinstance(content, list):
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            ctype = block.get("type", "")
-            if ctype == "text":
-                val = block.get("value", {})
-                text = val.get("input", "") if isinstance(val, dict) else str(val)
-                parts.append({"type": "text", "text": text})
-            elif ctype == "output_text":
-                parts.append({"type": "text", "text": block.get("text", "")})
-            elif ctype == "function_call":
-                tc = {
-                    "type": "tool_call",
-                    "tool_name": block.get("name", "unknown"),
-                    "tool_id": block.get("id", ""),
-                    "arguments": block.get("arguments", {}),
-                    "text": block.get("text", ""),
-                }
-                parts.append(tc)
-                tool_calls.append(tc)
-
-    # Use more precise timing from collectionParams if available
-    coll = msg.get("collectionParams", {})
-    if isinstance(coll, dict):
-        resp_start = coll.get("respStartTime")
-        resp_end = coll.get("respEndTime")
-    else:
-        resp_start = resp_end = None
-
-    # Build info block — extract ALL useful fields
-    info: dict = {
-        "role": role,
-        "time": {},
-        "id": msg.get("id", f"msg_{index}"),
-        "sessionID": msg.get("chatId", ""),
-        "responseMessageID": msg.get("responseMessageId", ""),
-    }
-
-    # Timing: prefer collectionParams precision, fall back to ISO timestamp
-    created_ms = resp_start if isinstance(resp_start, (int, float)) else ts_ms
-    completed_ms = resp_end if isinstance(resp_end, (int, float)) and resp_end != resp_start else next_ts_ms
-    if created_ms is not None:
-        info["time"]["created"] = created_ms
-    if completed_ms is not None:
-        info["time"]["completed"] = completed_ms
-
-    # Tokens
-    total_tokens = msg.get("total_tokens", 0)
-    if total_tokens:
-        info["tokens"] = {
-            "total": total_tokens,
-            "input": 0, "output": 0, "reasoning": 0,
-            "cache": {"read": 0, "write": 0},
-        }
-
-    # Model
-    model_id = msg.get("modelId", "")
-    if model_id:
-        info["modelID"] = model_id
-    real_model = msg.get("realModelId", "")
-    if real_model:
-        info["realModelID"] = real_model
-
-    # Finish reason
-    is_completed = msg.get("isCompleted", False)
-    if tool_calls:
-        info["finish"] = "tool_use"
-    elif role == "assistant" and is_completed:
-        info["finish"] = "end_turn"
-    elif role == "assistant":
-        info["finish"] = "end_turn"
-
-    # Round number
-    if "round" in msg:
-        info["round"] = msg["round"]
-
-    # Agent info
-    agent_info = msg.get("agentInfo", {})
-    if isinstance(agent_info, dict) and agent_info:
-        info["agent"] = agent_info.get("en_name", agent_info.get("agent_id", ""))
-    # agentId: prefer top-level field, fall back to agentInfo.real_agent_id
-    info["agentId"] = (
-        msg.get("agentId", "")
-        or (agent_info.get("real_agent_id", "") if isinstance(agent_info, dict) else "")
-    )
-
-    # Sub-agent tracking
-    info["isSubAgent"] = (
-        msg.get("isEmbedSubagent", False)
-        or (isinstance(msg.get("extraParams"), dict)
-            and msg["extraParams"].get("isSubAgent", False))
-    )
-    sub_agents = msg.get("subAgentMsgList", [])
-    if sub_agents:
-        info["subAgentMsgList"] = sub_agents
-
-    # Question / prompt this step is responding to
-    question = msg.get("question", [])
-    if question:
-        info["question"] = question
-
-    # Tool execution output (operateCacheData)
-    operate_cache = msg.get("operateCacheData")
-    if isinstance(operate_cache, dict) and operate_cache:
-        info["toolOutput"] = operate_cache
-        # Classify tool errors from Bash output content
-        bash_output = operate_cache.get("bash", {}).get("content", "") if isinstance(operate_cache.get("bash"), dict) else ""
-        if bash_output and tool_calls:
-            error_type = _classify_tool_error(bash_output)
-            if error_type:
-                for tc in tool_calls:
-                    if tc.get("tool_name") == "Bash":
-                        tc["status"] = "error"
-                        tc["error"] = bash_output[:200]
-                        tc["error_type"] = error_type
-
-    # Output text (cleaner than parsing content blocks)
-    output_text = msg.get("outputText", "")
-    if output_text:
-        info["outputText"] = output_text
-
-    # Context compression — critical signal for context overflow diagnosis
-    compress_msg = msg.get("compressMessage", "")
-    if compress_msg:
-        info["compressMessage"] = compress_msg
-
-    # Task type classification (plan-execute, code-generate, code-fix, etc.)
-    code_op = msg.get("codeOperateData", {})
-    if isinstance(code_op, dict) and code_op.get("menuTask"):
-        info["menuTask"] = code_op["menuTask"]
-
-    # Request metadata from collectionParams (trigger, request type, card type)
-    if isinstance(coll, dict):
-        trigger = coll.get("trigger", "")
-        if trigger:
-            info["trigger"] = trigger
-        req_type = coll.get("requestType", "")
-        if req_type:
-            info["requestType"] = req_type
-        card_type = coll.get("cardType", "")
-        if card_type:
-            info["cardType"] = card_type
-
-    return {"info": info, "parts": parts, "_codearts_raw": msg}
-
-
-def _convert_codearts_metadata(raw: dict) -> dict:
-    """Convert consolidated CodeArts JSON to internal Insight format.
-
-    Parses raw messages into OpenCode-like trajectory entries and normalizes
-    metadata/timing fields.  Original messages are preserved in each entry
-    under ``_codearts_raw``.
-    """
-    md = raw.get("metadata", {})
-    timing = raw.get("timing", {})
-    stats = raw.get("statistics", {})
-    messages = raw.get("messages", [])
-
-    # Pre-compute timestamps for duration approximation
-    ts_list = [_ca_parse_timestamp(m.get("timestamp")) for m in messages]
-
-    # Convert messages to trajectory entries
-    trajectory = []
-    model_id = ""
-    for i, msg in enumerate(messages):
-        next_ts = ts_list[i + 1] if i + 1 < len(ts_list) else None
-        entry = _ca_normalize_message(msg, i, next_ts_ms=next_ts)
-        trajectory.append(entry)
-        if not model_id:
-            model_id = msg.get("modelId", "")
-
-    # Fix cumulative token counts: CodeArts reports total_tokens as the
-    # cumulative total for the conversation at each message, not the
-    # per-message cost.  Convert to per-step deltas by subtracting the
-    # previous assistant message's total.  Resets (where current < prev)
-    # indicate a new context window / sub-task.
-    prev_cumulative = 0
-    for entry in trajectory:
-        info = entry.get("info", {})
-        tokens = info.get("tokens")
-        if tokens and info.get("role") == "assistant":
-            cumulative = tokens["total"]
-            if cumulative >= prev_cumulative:
-                tokens["total"] = cumulative - prev_cumulative
-            # else: reset (new context window) — keep as-is
-            prev_cumulative = cumulative
-        elif info.get("role") == "user":
-            # User messages don't carry tokens; don't reset prev
-            pass
-
-    # Set stop finish on last message
-    if trajectory:
-        last_ts = ts_list[-1] if ts_list else None
-        if last_ts:
-            trajectory[-1]["info"]["time"]["completed"] = last_ts
-        trajectory[-1]["info"]["finish"] = "stop"
-
-    # Compute total duration
-    first_ts = ts_list[0] if ts_list else None
-    last_ts = ts_list[-1] if ts_list else None
-    total_duration = 0
-    if first_ts and last_ts:
-        total_duration = round((last_ts - first_ts) / 1000, 2)
-
-    # Compute wall-clock duration from timing fields (more accurate than
-    # message timestamps which may not cover idle time at start/end).
-    timing_duration = total_duration
-    t_start = _ca_parse_timestamp(timing.get("started_at"))
-    t_end = _ca_parse_timestamp(timing.get("finished_at"))
-    if t_start and t_end:
-        timing_duration = round((t_end - t_start) / 1000, 2)
-
-    # Directory: CodeArts doesn't have a working directory field.
-    # metadata.title contains the full task prompt, not a directory name.
-
-    # Session description from chat_base_info (agent-generated summary)
-    cbi = raw.get("chat_base_info", {})
-    session_desc = ""
-    if isinstance(cbi, dict):
-        session_desc = cbi.get("description", "")
-
-    raw["trajectory"] = trajectory
-    raw.setdefault("metadata", {}).update({
-        "session_id": md.get("session_id", ""),
-        "agent": md.get("agent", "CodeArts"),
-        "agent_id": md.get("agent_id", ""),
-        "model": model_id or md.get("model", ""),
-        "directory_name": "",
-        "description": session_desc,
-        "generator_name": "codearts",
-    })
-    raw.setdefault("timing", {}).update({
-        "started_at": timing.get("started_at", ""),
-        "finished_at": timing.get("finished_at", ""),
-        "total_duration": timing_duration,
-    })
-    raw.setdefault("statistics", {}).update({
-        "total_messages": stats.get("total_messages", len(messages)),
-        "user_messages": stats.get("user_messages", 0),
-        "assistant_messages": stats.get("assistant_messages", 0),
-    })
-
-    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -1464,7 +1192,7 @@ def _build_codex_tool_input(tool_name: str, cmd: str, raw_args: dict) -> dict:
 def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
     """Load trajectory file with error handling.
 
-    Auto-detects format (ccsession / opencode / codearts / codearts_v2 / codex) and
+    Auto-detects format (ccsession / opencode / codearts / codex) and
     normalizes metadata.  Supports ``.json`` and ``.jsonl`` files.
 
     ``format_hint`` is used as a fallback when automatic detection returns
@@ -1498,14 +1226,12 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
         return {"_error": str(exc)}
 
     fmt = detect_format(raw)
-    if fmt == "unknown" and format_hint in ("ccsession", "codearts", "codearts_v2", "opencode"):
+    if fmt == "unknown" and format_hint in ("ccsession", "codearts", "opencode"):
         fmt = format_hint
     if fmt == "ccsession":
         result = _convert_claude_code_to_internal(raw)
     elif fmt == "codearts":
         result = _convert_codearts_metadata(raw)
-    elif fmt == "codearts_v2":
-        result = _convert_codearts_v2_metadata(raw)
     elif fmt == "opencode":
         result = _convert_opencode_metadata(raw)
     else:

@@ -348,38 +348,17 @@ def render_workflow_html(steps: list[dict]) -> str:
 
         orig_idx = step.get("index", i)
 
-        # CodeArts-specific badges (only render when fields are present)
-        round_badge = ""
-        round_num = step.get("round")
-        if round_num is not None:
-            round_badge = f'<span class="wf-badge" style="background:var(--ov-accent);color:white;font-size:10px;">R{round_num}</span>'
-
         sub_agent_badge = ""
         sub_indent = ""
         if step.get("is_sub_agent"):
             sub_agent_badge = '<span class="wf-badge" style="background:var(--wf-border-reasoning);color:white;font-size:10px;">sub-agent</span>'
             sub_indent = "margin-left:24px;"
 
-        # Tool output preview (collapsed, for Bash commands)
-        tool_output_html = ""
-        tool_out = step.get("tool_output")
-        if isinstance(tool_out, dict):
-            bash_out = tool_out.get("bash", {}).get("content", "")
-            if bash_out:
-                escaped = html.escape(bash_out[:200])
-                tool_output_html = (
-                    f'<div class="wf-tool-output" style="font-size:11px;color:var(--ov-muted);'
-                    f'background:var(--ov-code-bg);padding:4px 8px;border-radius:4px;margin-top:4px;'
-                    f'max-height:60px;overflow:hidden;white-space:pre;font-family:monospace;">'
-                    f'{escaped}</div>'
-                )
-
         card = f"""
         <div class="wf-card" id="wf-card-{orig_idx}" data-step-idx="{orig_idx}"
              style="background:{bg};border-color:{border};{agent_left_border}{sub_indent}">
             <div class="wf-header">
                 <span class="wf-badge" style="background:{border};color:white;">#{orig_idx}</span>
-                {round_badge}
                 <span class="wf-badge" style="{role_style}">{role_label}</span>
                 {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{border};border:1px solid {border};">{label}</span>'}
                 {sub_agent_badge}
@@ -392,7 +371,6 @@ def render_workflow_html(steps: list[dict]) -> str:
                 {tc_info}{err_info}
             </div>
             <div class="wf-preview">{preview}</div>
-            {tool_output_html}
         </div>
         """
         cards_html.append(card)
@@ -445,13 +423,8 @@ def _format_step_header(step: dict) -> str:
     if step["error_count"] > 0:
         rows.append(("Errors", str(step["error_count"])))
 
-    # CodeArts-specific metadata
-    if step.get("round") is not None:
-        rows.append(("Round", str(step["round"])))
     if step.get("is_sub_agent"):
         rows.append(("Sub-agent", "Yes"))
-    if step.get("agent_id"):
-        rows.append(("Agent ID", step["agent_id"]))
     if step.get("session_depth") is not None:
         rows.append(("Session depth", str(step["session_depth"])))
     if step.get("session_title"):
@@ -873,35 +846,6 @@ def format_step_detail(step: dict) -> str:
                 f"<div class='dp-section-title'>{html.escape(ptype)}</div>"
                 f"</div>"
             )
-
-    # CodeArts: question/prompt context
-    question = step.get("question", [])
-    if question:
-        q_text = ""
-        for q in question:
-            if isinstance(q, dict):
-                q_text = q.get("content", q.get("value", {}).get("input", ""))
-                break
-        if q_text:
-            content_parts.insert(0,
-                f"<div class='dp-section' style='border-left-color:var(--wf-border-reasoning);'>"
-                f"<div class='dp-section-title'>Question / Prompt</div>"
-                f"<div style='font-size:13px;white-space:pre-wrap;'>{html.escape(str(q_text)[:500])}</div>"
-                f"</div>"
-            )
-
-    # CodeArts: full tool output
-    tool_out = step.get("tool_output")
-    if isinstance(tool_out, dict):
-        for tool_name, tool_data in tool_out.items():
-            out_content = tool_data.get("content", "") if isinstance(tool_data, dict) else str(tool_data)
-            if out_content:
-                escaped = html.escape(str(out_content)[:2000])
-                content_parts.append(
-                    f"<details class='dp-details'><summary>Tool Output ({html.escape(tool_name)})</summary>"
-                    f"<div class='dp-details-body'><pre>{escaped}</pre></div>"
-                    f"</details>"
-                )
 
     content_html = "\n".join(content_parts) if content_parts else "<em>No content</em>"
     metrics_html = _format_metrics_tab(step)

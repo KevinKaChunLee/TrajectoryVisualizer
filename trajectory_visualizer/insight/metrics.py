@@ -455,8 +455,8 @@ def compute_diagnostic_metrics(
     plan_m = _plan_metrics(plan_history)
     sessions = extract_subagent_sessions(steps, trajectory)
     sa_metrics = compute_subagent_metrics(sessions, steps)
-    streaks = detect_fruitless_streaks(steps, trajectory)
-    autonomy = compute_autonomy_ratio(steps, trajectory)
+    streaks = detect_fruitless_streaks(steps)
+    autonomy = compute_autonomy_ratio(steps)
     tool_sel = detect_tool_selection_antipatterns(steps)
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
 
@@ -499,7 +499,7 @@ def compute_diagnostic_metrics(
                 compression_steps.add(i)
     # Token-drop heuristic: only applies when tokens grow cumulatively across
     # steps (e.g., Claude Code context window).  For formats with per-step
-    # deltas (CodeArts) tokens naturally vary, so drops are not compressions.
+    # deltas, tokens naturally vary, so drops are not compressions.
     # Detect cumulative pattern: tokens should generally be non-decreasing.
     asst_tokens = [s.get("tokens", {}).get("total", 0) or 0
                    for s in steps if s.get("role") == "assistant"]
