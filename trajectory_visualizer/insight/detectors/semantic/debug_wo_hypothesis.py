@@ -7,8 +7,10 @@ from typing import Any
 from trajectory_visualizer.core.detection import DetectorContext, PatternDetection
 
 
-_REPRODUCE_LABELS = frozenset({"debug_reproduce", "reproduce_failure", "run_test"})
-_ROOT_CAUSE_LABELS = frozenset({"root_cause_analysis", "diagnose", "hypothesize"})
+# Action labels from the taxonomy (scripts/TAXONOMY_REFERENCE.md), matching the
+# live patterns.py implementation.
+_REPRODUCE_LABELS = frozenset({"debug_reproduction"})
+_ROOT_CAUSE_LABELS = frozenset({"debug_root_cause", "debug_hypothesis_test"})
 
 
 def detect(steps: list[Any], context: DetectorContext) -> list[PatternDetection]:

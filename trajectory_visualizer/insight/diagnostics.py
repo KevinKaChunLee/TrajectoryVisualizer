@@ -141,7 +141,7 @@ def identify_target_files(steps: list[dict]) -> set[str]:
             if part.get("type") == "patch":
                 for f in part.get("files", []):
                     if f:
-                        targets.add(str(f))
+                        targets.add(str(f).replace("\\", "/"))
 
         for tc in step.get("tool_calls", []):
             tool_name = tc.get("tool_name", "")
@@ -152,7 +152,9 @@ def identify_target_files(steps: list[dict]) -> set[str]:
                     # OpenCode uses ``filePath``; Claude Code uses ``file_path``.
                     path = inp.get("file_path") or inp.get("filePath") or ""
                     if path:
-                        targets.add(str(path))
+                        # Match extract_file_interactions, which normalizes
+                        # backslashes; _paths_match/normpath won't on POSIX.
+                        targets.add(str(path).replace("\\", "/"))
 
     return targets
 
@@ -559,7 +561,10 @@ def decompose_hotspot_duration(
                         break
 
     tool_s = min(tool_time_ms / 1000.0, duration)  # cap at step duration
-    inference_s = max(0, duration - tool_s - idle_s)
+    # inference = the step's own duration minus tool time. idle_s is the gap
+    # BEFORE the step (prev completion -> this start) and is disjoint from the
+    # step's duration, so it must not be subtracted here.
+    inference_s = max(0, duration - tool_s)
 
     dominant_tool = None
     if dominant_tool_name:

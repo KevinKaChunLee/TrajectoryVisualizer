@@ -206,14 +206,21 @@ def detect_tool_sequences(
             ngram_indices.setdefault(gram, []).append(i)
 
         for gram, stream_positions in ngram_indices.items():
-            if len(stream_positions) < min_freq:
+            # Count NON-OVERLAPPING occurrences so a single contiguous burst of
+            # one tool (Read×4 -> three overlapping (Read,Read)) is not inflated
+            # into a frequent sequence.
+            occ_positions: list[int] = []
+            last_end = -1
+            for pos in sorted(stream_positions):
+                if pos >= last_end:
+                    occ_positions.append(pos)
+                    last_end = pos + n
+            if len(occ_positions) < min_freq:
                 continue
-            # Map stream positions back to step indices (use the step of the
-            # first tool call in each n-gram occurrence)
-            step_indices = sorted({tool_stream[pos][1] for pos in stream_positions})
+            step_indices = sorted({tool_stream[pos][1] for pos in occ_positions})
             results.append({
                 "sequence": list(gram),
-                "frequency": len(stream_positions),
+                "frequency": len(occ_positions),
                 "step_indices": step_indices,
             })
 
@@ -669,6 +676,27 @@ def compute_subagent_metrics(
 # 6. Fruitless Search & Anti-Pattern Detection
 # ---------------------------------------------------------------------------
 
+_SEARCH_BASH_PREFIXES = ("grep", "rg", "ag", "find", "locate", "fgrep", "egrep", "ripgrep")
+
+
+def _is_search_call(tc: dict) -> bool:
+    """A tool call counts as a search only if it actually searches.
+
+    Bash is in ``_SEARCH_TOOL_NAMES`` because agents run grep/rg/find through
+    it, but ordinary shell commands (mkdir, cp, chmod, git add) that legitimately
+    emit no output must not be mistaken for empty searches.
+    """
+    name = tc.get("tool_name")
+    if name not in _SEARCH_TOOL_NAMES:
+        return False
+    if name in ("Bash", "bash"):
+        inp = tc.get("input", {})
+        cmd = inp.get("command", "") if isinstance(inp, dict) else ""
+        cmd = str(cmd).lstrip().lower()
+        return any(cmd == p or cmd.startswith(p + " ") for p in _SEARCH_BASH_PREFIXES)
+    return True
+
+
 def _is_fruitless_step(step: dict) -> bool:
     """Check if a step's search/grep tool calls all returned empty results.
 
@@ -680,8 +708,7 @@ def _is_fruitless_step(step: dict) -> bool:
     if not tool_calls:
         return False
 
-    search_calls = [tc for tc in tool_calls
-                    if tc.get("tool_name") in _SEARCH_TOOL_NAMES]
+    search_calls = [tc for tc in tool_calls if _is_search_call(tc)]
     if not search_calls:
         return False
 
