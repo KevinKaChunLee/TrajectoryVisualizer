@@ -592,7 +592,7 @@ def _build_diagnostics_outputs(
     # Counts are still computed so the summary line stays accurate.
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
-    if trajectory_format in ("opencode", "codearts"):
+    if trajectory_format in ("opencode", "codearts", "codex"):
         rootcause_html = ""
     else:
         rootcause_html = build_root_cause_html(clusters)
@@ -708,7 +708,7 @@ def build_label_ui_payload(file_path: str) -> dict:
     from .palette import LABEL_PHASE_COLORS
     bar_segments = "".join(
         f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
-        f" title='{phase}: {count}'></span>"
+        f" title='{html.escape(str(phase))}: {count}'></span>"
         for phase, count in phase_counts.items() if count > 0
     )
     phase_bar = (
@@ -719,7 +719,7 @@ def build_label_ui_payload(file_path: str) -> dict:
     phase_chips = "".join(
         f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;"
         f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:white;'>"
-        f"{phase}: {count}</span>"
+        f"{html.escape(str(phase))}: {count}</span>"
         for phase, count in phase_counts.items() if count > 0
     )
 
@@ -811,6 +811,7 @@ def build_ui() -> gr.Blocks:
                         ("Claude Code", "ccsession"),
                         ("CodeArts", "codearts"),
                         ("OpenCode", "opencode"),
+                        ("Codex CLI", "codex"),
                     ],
                     value="ccsession",
                     interactive=True,
@@ -1414,7 +1415,7 @@ def build_ui() -> gr.Blocks:
             f = _empty_fig
             return (
                 gr.update(visible=False),  # main_tabs
-                gr.update(visible=False),  # summary_area
+                gr.update(visible=bool(banner)),  # summary_area (reveal so the error banner shows)
                 gr.update(),               # upload_accordion (no change)
                 [],              # state_steps
                 banner,          # summary_banner
@@ -1453,7 +1454,7 @@ def build_ui() -> gr.Blocks:
                 {},              # state_raw
             )
 
-        def do_load(upload_obj, dark=False, selected_format="ccsession"):
+        def _do_load_inner(upload_obj, dark=False, selected_format="ccsession"):
             """Load trajectory from uploaded file."""
             from .loaders import detect_format
 
@@ -1471,10 +1472,12 @@ def build_ui() -> gr.Blocks:
 
             # Validate format matches user selection
             _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
-                              "opencode": "OpenCode",
+                              "opencode": "OpenCode", "codex": "Codex CLI",
                               "unknown": "Unknown"}
             detected = detect_format(raw)
-            if detected != selected_format and detected != "unknown":
+            # Codex is produced only from an unambiguous .jsonl upload, so accept
+            # it regardless of the dropdown selection.
+            if detected != selected_format and detected not in ("unknown", "codex"):
                 err_msg = (
                     f"Format mismatch: selected "
                     f"<b>{html.escape(_FORMAT_LABELS.get(selected_format, selected_format))}</b>"
@@ -1584,6 +1587,20 @@ def build_ui() -> gr.Blocks:
                 ch["antipattern_html"],       # antipattern_summary_html
                 raw,                          # state_raw
             )
+
+        def do_load(upload_obj, dark=False, selected_format="ccsession"):
+            """Load wrapper: surface any unexpected failure as a visible banner
+            instead of a raw traceback that leaves the UI stale."""
+            try:
+                return _do_load_inner(upload_obj, dark, selected_format)
+            except Exception as exc:  # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                return _empty_result(
+                    banner=(f"<p style='color:#dc2626;'>Error loading trajectory: "
+                            f"{html.escape(str(exc))}</p>"),
+                    detail="*Failed to load — see console for details.*",
+                )
 
         all_outputs = [
             main_tabs,

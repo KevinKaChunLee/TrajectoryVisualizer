@@ -47,7 +47,7 @@ def aggregate_labels(data: dict) -> dict:
     # unclassified assistant work.
     steps = [
         s for s in all_steps
-        if not isinstance(s, dict) or s.get("role", "assistant") == "assistant"
+        if isinstance(s, dict) and s.get("role", "assistant") == "assistant"
     ]
     total = len(steps)
     unknown = sum(
