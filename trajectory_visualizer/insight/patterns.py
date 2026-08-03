@@ -604,38 +604,39 @@ def extract_subagent_sessions(
         sessions.append(current_session)
 
     # OpenCode-style exports record the spawned child session on the parent
-    # task tool part's metadata rather than on the child messages.  Use that
-    # canonical link so consolidated CodeArts/OpenCode exports can identify
-    # the actual delegation step.
+    # task tool part's metadata rather than on the child messages.  Build the
+    # child-session -> delegation-step map in one pass so consolidated
+    # CodeArts/OpenCode exports can identify the actual delegation step.
+    spawn_by_child: dict[str, int] = {}
+    for step in steps[:_MAX_STEPS]:
+        raw_idx = step.get("raw_index")
+        if not isinstance(raw_idx, int) or not (0 <= raw_idx < len(trajectory)):
+            continue
+        entry = trajectory[raw_idx]
+        parts = entry.get("parts", []) if isinstance(entry, dict) else []
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict) or part.get("type") != "tool":
+                continue
+            state = part.get("state", {})
+            metadata = state.get("metadata", {}) if isinstance(state, dict) else {}
+            if not isinstance(metadata, dict):
+                continue
+            child_id = (
+                metadata.get("sessionId")
+                or metadata.get("sessionID")
+                or metadata.get("session_id")
+            )
+            # A session cannot spawn itself: ignore matches on the child's
+            # own steps (nested tool parts inside the delegated session).
+            if (isinstance(child_id, str) and child_id
+                    and step.get("session_id") != child_id):
+                spawn_by_child.setdefault(child_id, step.get("index", 0))
+
     for session in sessions:
         if session["spawn_step"] is None:
-            for step in steps:
-                raw_idx = step.get("raw_index")
-                if not isinstance(raw_idx, int) or not (0 <= raw_idx < len(trajectory)):
-                    continue
-                entry = trajectory[raw_idx]
-                parts = entry.get("parts", []) if isinstance(entry, dict) else []
-                if not isinstance(parts, list):
-                    continue
-                matched = False
-                for part in parts:
-                    if not isinstance(part, dict) or part.get("type") != "tool":
-                        continue
-                    state = part.get("state", {})
-                    metadata = state.get("metadata", {}) if isinstance(state, dict) else {}
-                    if not isinstance(metadata, dict):
-                        continue
-                    child_id = (
-                        metadata.get("sessionId")
-                        or metadata.get("sessionID")
-                        or metadata.get("session_id")
-                    )
-                    if child_id == session["session_id"]:
-                        session["spawn_step"] = step.get("index", 0)
-                        matched = True
-                        break
-                if matched:
-                    break
+            session["spawn_step"] = spawn_by_child.get(session["session_id"])
 
     return sessions
 

@@ -696,7 +696,13 @@ def _convert_opencode_metadata(raw: dict) -> dict:
         if not isinstance(message, dict):
             continue
         message_info = message.get("info", {})
-        if not isinstance(message_info, dict) or not message_info.get("isSubAgent"):
+        if not isinstance(message_info, dict):
+            continue
+        agent_name = message_info.get("agent", "")
+        is_sub_agent = bool(message_info.get("isSubAgent")) or (
+            isinstance(agent_name, str) and agent_name.endswith("(subagent)")
+        )
+        if not is_sub_agent:
             continue
         child_session_id = message_info.get("sessionID")
         if isinstance(child_session_id, str) and child_session_id:
@@ -859,12 +865,11 @@ def _convert_codearts_metadata(raw: dict) -> dict:
             model_id = candidate
             break
 
-    sub_agent_count = exported_stats.get("subagent_sessions")
-    if not isinstance(sub_agent_count, int):
-        sub_agent_count = sum(
-            1 for session in manifest
-            if isinstance(session, dict) and (session.get("depth", 0) or 0) > 0
-        )
+    # sub_agent_count/event_count were already derived by the shared
+    # OpenCode normalization (isSubAgent messages, session_manifest, and
+    # exporter statistics) — reuse them instead of recomputing.
+    sub_agent_count = metadata.get("sub_agent_count", 0)
+    event_count = metadata.get("event_count", 0)
     session_count = exported_stats.get("sessions")
     if not isinstance(session_count, int):
         session_count = len(manifest) or 1
@@ -877,7 +882,7 @@ def _convert_codearts_metadata(raw: dict) -> dict:
         "format_version": str(export.get("schema_version", 2)),
         "sub_agent_count": sub_agent_count,
         "session_count": session_count,
-        "event_count": exported_stats.get("event_rows", 0) or 0,
+        "event_count": event_count,
         "export_generated_at": export.get("generated_at", ""),
         "export_complete": export.get("complete"),
         "export_warnings": export.get("warnings", []),

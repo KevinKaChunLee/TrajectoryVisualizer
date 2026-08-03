@@ -41,9 +41,13 @@ def aggregate_labels(data: dict) -> dict:
         s for s in all_steps
         if isinstance(s, dict) and s.get("role") == "user"
     ]
+    # KPI denominators stay assistant-focused: v1 records carry no role or
+    # role == "assistant"; v2 additionally emits deterministic records for
+    # user and other roles (system/developer/"?"), which must not count as
+    # unclassified assistant work.
     steps = [
         s for s in all_steps
-        if not isinstance(s, dict) or s.get("role") != "user"
+        if not isinstance(s, dict) or s.get("role", "assistant") == "assistant"
     ]
     total = len(steps)
     unknown = sum(
@@ -100,7 +104,9 @@ def aggregate_labels(data: dict) -> dict:
             if os.path.isfile(sibling):
                 traj_path = sibling
     session_end_ms: float | None = None
-    if traj_path and os.path.isfile(traj_path):
+    # v2 sidecars embed their user records (and their own timing), so the
+    # trajectory re-read below is only needed for v1 sidecars.
+    if not embedded_user_steps and traj_path and os.path.isfile(traj_path):
         try:
             from .loaders import load_trajectory
             from .parser import parse_steps

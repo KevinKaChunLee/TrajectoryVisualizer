@@ -475,7 +475,7 @@ def _build_overview_outputs(
                                         message_rows=message_rows)
     metrics_text = format_performance_md(metrics, wfmt)
     from .metrics import compute_diagnostic_metrics
-    traj = raw.get("trajectory", [])
+    traj = raw.get("trajectory") or raw.get("messages") or []
     diag_metrics = compute_diagnostic_metrics(steps, traj) if traj else None
     behavior_text = format_behavioral_md(metrics, diag_metrics=diag_metrics)
     hotspots_text = _build_hotspots_md(message_rows)
@@ -1528,7 +1528,7 @@ def build_ui() -> gr.Blocks:
 
             ch = _build_chart_outputs(steps, message_rows, phases,
                                       step_analytics, agent_summaries, dark=dark,
-                                      trajectory=raw.get("trajectory", []),
+                                      trajectory=raw.get("trajectory") or raw.get("messages") or [],
                                       trajectory_format=detected)
             wf = _build_workflow_outputs(steps)
 
