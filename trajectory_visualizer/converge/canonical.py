@@ -93,13 +93,14 @@ def _normalize_target(path: str) -> str:
 
 
 def _extract_base_command(command: str) -> str:
-    """Extract the base command (first meaningful token) from a shell command."""
-    cmd = command.strip()
-    # Skip env var assignments
-    while "=" in cmd.split()[0] if cmd.split() else False:
-        cmd = cmd.split(None, 1)[1] if " " in cmd else cmd
-        break
-    return cmd.split()[0] if cmd.split() else cmd
+    """Extract the base command (first non-assignment token) from a shell command."""
+    tokens = command.strip().split()
+    for tok in tokens:
+        # Skip any number of leading VAR=value environment assignments.
+        if "=" in tok and not tok.startswith("="):
+            continue
+        return tok
+    return tokens[0] if tokens else command.strip()
 
 
 def _extract_bash_paths(command: str) -> list[str]:
@@ -418,7 +419,12 @@ def assign_effect_labels(
             elif nt in error_files:
                 a.effect_label = "justified"
                 a.effect_detail["reason"] = "error_reference"
-            elif any(nt.endswith(imp) or imp.endswith(nt.split("/")[-1].split(".")[0]) for imp in import_files if imp):
+            elif any(
+                nt.endswith(imp)
+                or (nt.rsplit("/", 1)[-1].split(".")[0]
+                    and imp.endswith(nt.rsplit("/", 1)[-1].split(".")[0]))
+                for imp in import_files if imp
+            ):
                 a.effect_label = "justified"
                 a.effect_detail["reason"] = "imported_by_target"
             else:

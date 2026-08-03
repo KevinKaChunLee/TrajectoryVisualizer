@@ -285,8 +285,15 @@ def detect_guardrail_regressions(
         before_mean = d["before_mean"]
         delta = abs(d["delta"])
 
-        # Check relative threshold
-        relative_regression = delta / abs(before_mean) if before_mean != 0 else 0
+        # Check relative threshold. A regression away from a zero baseline is an
+        # unbounded relative change, so treat any real movement as exceeding it
+        # instead of silently scoring it 0.
+        if before_mean != 0:
+            relative_regression = delta / abs(before_mean)
+        elif delta != 0:
+            relative_regression = 1.0
+        else:
+            relative_regression = 0.0
         exceeds_relative = relative_regression >= relative_threshold
 
         # Check statistical significance
@@ -334,6 +341,9 @@ def generate_recommendation(
     if not improved and not regressed:
         return "No significant changes detected."
     if improved and not guardrails:
+        if regressed:
+            return (f"Intervention improved {', '.join(improved[:2])} with minor "
+                    f"regressions in {', '.join(regressed[:2])} (below guardrail thresholds).")
         return f"Intervention improved {', '.join(improved[:3])} without regressions."
     if improved and guardrails:
         regressed_names = [g["metric"] for g in guardrails]

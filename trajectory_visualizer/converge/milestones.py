@@ -84,12 +84,18 @@ def extract_milestones(
                 else:
                     milestones["first_surviving_edit"] = a.step_index
 
-        # first_passing_validation: earliest COMMAND matching validation pattern with success
-        if milestones["first_passing_validation"] is None:
-            if a.action_type == "COMMAND" and a.effect_label == "survived":
-                base_cmd = a.target.split("/")[-1] if "/" in a.target else a.target
-                if any(vp in base_cmd for vp in validation_patterns):
-                    milestones["first_passing_validation"] = a.step_index
+        # first_passing_validation: earliest recognized validation COMMAND that
+        # completed. assign_effect_labels marks validation commands as
+        # "justified" (reason=validation_command), NOT "survived", so match on
+        # that; fall back to a pattern match for commands labeled "survived".
+        if milestones["first_passing_validation"] is None and a.action_type == "COMMAND":
+            reason = a.effect_detail.get("reason") if isinstance(a.effect_detail, dict) else None
+            base_cmd = a.target.split("/")[-1] if "/" in a.target else a.target
+            if reason == "validation_command" or (
+                a.effect_label in ("justified", "survived")
+                and any(vp in base_cmd for vp in validation_patterns)
+            ):
+                milestones["first_passing_validation"] = a.step_index
 
         # Track last successful write for final_patch
         if a.action_type == "FILE_WRITE" and a.effect_label == "survived":

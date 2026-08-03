@@ -241,20 +241,27 @@ def classify_divergences(
     # belong to different arrays and are not directly comparable.
     if matched_pairs:
         n_compared = len(all_compared_actions)
-        threshold = max(5, int(n_compared * 0.3))
+        n_pairs = len(matched_pairs)
+        threshold = max(3, int(n_pairs * 0.3))
+        # Rank each matched pair by its position in the reference order and in
+        # the compared order; a large rank gap means the action was performed
+        # out of order (raw cross-array indices are not comparable).
+        ref_rank = {k: r for r, k in enumerate(
+            sorted(range(n_pairs), key=lambda k: matched_pairs[k][0]))}
+        cmp_rank = {k: r for r, k in enumerate(
+            sorted(range(n_pairs), key=lambda k: matched_pairs[k][1]))}
         for pair_pos, (ref_idx, cmp_idx) in enumerate(matched_pairs):
             if cmp_idx >= n_compared:
                 continue
-            # Rank = position within the matched_pairs sequence
-            # A large gap between ref rank and cmp rank indicates ordering difference
-            positional_gap = cmp_idx - ref_idx
+            positional_gap = abs(cmp_rank[pair_pos] - ref_rank[pair_pos])
             if positional_gap > threshold:
                 a = all_compared_actions[cmp_idx]
                 aid = _action_id(a, -1 - pair_pos)  # negative index for non-extra actions
                 if aid not in classified:
                     patterns.append(_make_pattern(
                         ptype="ordering_inefficiency",
-                        evidence=[f"{a.action_type}({a.target}) at cmp[{cmp_idx}] vs ref[{ref_idx}]"],
+                        evidence=[f"{a.action_type}({a.target}) reordered — "
+                                  f"reference rank {ref_rank[pair_pos]} vs compared rank {cmp_rank[pair_pos]}"],
                         steps=[a.step_index],
                         tokens=0,
                     ))
