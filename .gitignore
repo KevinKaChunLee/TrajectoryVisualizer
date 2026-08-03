@@ -57,3 +57,4 @@ gradio_cached_examples/
 # Trajectory data (keep small samples, ignore large dumps)
 data/
 *.trajectory.json.gz
+example_data

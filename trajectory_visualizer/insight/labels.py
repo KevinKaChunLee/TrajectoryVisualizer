@@ -32,7 +32,19 @@ def aggregate_labels(data: dict) -> dict:
         phase_counts, action_counts, action_to_phase,
         phase_durations, action_durations, steps
     """
-    steps = data.get("steps", [])
+    all_steps = data.get("steps", [])
+    # v1 sidecars contain assistant labels only and user steps are recovered
+    # from the trajectory below.  v2 sidecars contain every original index,
+    # including deterministic user labels.  Keep classification KPIs
+    # assistant-focused while using embedded user records in the timeline.
+    embedded_user_steps = [
+        s for s in all_steps
+        if isinstance(s, dict) and s.get("role") == "user"
+    ]
+    steps = [
+        s for s in all_steps
+        if not isinstance(s, dict) or s.get("role") != "user"
+    ]
     total = len(steps)
     unknown = sum(
         1 for s in steps
@@ -75,6 +87,7 @@ def aggregate_labels(data: dict) -> dict:
 
     # Load user steps from the original trajectory for the timeline
     timeline_steps = list(classified_steps)
+    timeline_steps.extend(embedded_user_steps)
     traj_path = data.get("trajectory_file", "")
     # If the recorded path is not on this machine (e.g. labeled on Linux,
     # viewed on macOS), fall back to a sibling file in the same directory
@@ -94,13 +107,13 @@ def aggregate_labels(data: dict) -> dict:
 
             raw = load_trajectory(traj_path)
             if "_error" not in raw:
-                all_steps = parse_steps(raw)
+                traj_steps = parse_steps(raw)
                 embedded_user_indices = {
                     s.get("index")
                     for s in timeline_steps
                     if s.get("role") == "user"
                 }
-                for s in all_steps:
+                for s in traj_steps:
                     if (s.get("role") == "user"
                             and s.get("index") not in embedded_user_indices):
                         timeline_steps.append({

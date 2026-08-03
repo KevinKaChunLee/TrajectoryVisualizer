@@ -250,7 +250,7 @@ def parse_steps(raw: dict) -> list[dict]:
         if not isinstance(path_info, dict):
             path_info = {}
         steps.append({
-            "index": idx, "role": role, "tokens": tokens, "duration": duration,
+            "index": idx, "raw_index": idx, "role": role, "tokens": tokens, "duration": duration,
             "parts": parts, "tool_calls": tool_calls,
             "tool_call_count": len(tool_calls), "error_count": errors,
             "has_reasoning": has_reasoning, "text_preview": text_preview,

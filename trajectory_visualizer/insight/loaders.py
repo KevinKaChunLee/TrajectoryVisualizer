@@ -687,6 +687,50 @@ def _convert_opencode_metadata(raw: dict) -> dict:
         if isinstance(first_msg_info, dict):
             model_info = first_msg_info.get("model", {}) if isinstance(first_msg_info.get("model"), dict) else {}
 
+    # Consolidated OpenCode/CodeArts exports flatten child-session messages into
+    # the main messages array.  Count distinct child session IDs instead of
+    # hard-coding zero.  A session_manifest is also accepted so a child with
+    # no persisted messages is still represented accurately.
+    sub_agent_session_ids: set[str] = set()
+    for message in messages if isinstance(messages, list) else []:
+        if not isinstance(message, dict):
+            continue
+        message_info = message.get("info", {})
+        if not isinstance(message_info, dict) or not message_info.get("isSubAgent"):
+            continue
+        child_session_id = message_info.get("sessionID")
+        if isinstance(child_session_id, str) and child_session_id:
+            sub_agent_session_ids.add(child_session_id)
+    manifest = raw.get("session_manifest", [])
+    for entry in manifest if isinstance(manifest, list) else []:
+        if not isinstance(entry, dict) or not entry.get("depth"):
+            continue
+        manifest_info = entry.get("info", {})
+        child_session_id = manifest_info.get("id") if isinstance(manifest_info, dict) else None
+        if isinstance(child_session_id, str) and child_session_id:
+            sub_agent_session_ids.add(child_session_id)
+    exported_stats = raw.get("statistics", {})
+    exported_sub_agent_count = (
+        exported_stats.get("subagent_sessions", 0)
+        if isinstance(exported_stats, dict)
+        else 0
+    )
+    if not isinstance(exported_sub_agent_count, int):
+        exported_sub_agent_count = 0
+    sub_agent_count = max(len(sub_agent_session_ids), exported_sub_agent_count)
+    exported_event_count = (
+        exported_stats.get("event_rows", 0) if isinstance(exported_stats, dict) else 0
+    )
+    if not isinstance(exported_event_count, int):
+        exported_event_count = 0
+    manifest_entries = manifest if isinstance(manifest, list) else []
+    manifest_event_count = sum(
+        len(entry.get("events", []))
+        for entry in manifest_entries if isinstance(entry, dict)
+        if isinstance(entry.get("events", []), list)
+    )
+    event_count = max(exported_event_count, manifest_event_count)
+
     raw["metadata"] = {
         "session_id": info.get("id", ""),
         "slug": info.get("slug", ""),
@@ -708,8 +752,8 @@ def _convert_opencode_metadata(raw: dict) -> dict:
         "generator_name": "opencode",
         "generator_version": info.get("version", ""),
         "format_version": "",
-        "sub_agent_count": 0,
-        "event_count": 0,
+        "sub_agent_count": sub_agent_count,
+        "event_count": event_count,
     }
     raw["timing"] = {
         "total_duration": duration_seconds,
