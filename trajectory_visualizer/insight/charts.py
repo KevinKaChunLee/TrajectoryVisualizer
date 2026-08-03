@@ -270,12 +270,10 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
                       + net_output (output - reasoning) + reasoning = total
 
     Per-format overrides:
-    - ``format == "opencode"``: render all five token fields stacked — Fresh Input,
-      Cache Read, Output, Reasoning, Cache Write — with every trace forced into
-      the legend even when a field is zero across the trajectory. OpenCode's
-      ``tokens.cache.write`` is typically 0 except on cache-creation turns; the
-      5th stacked segment sums cleanly with the others because the sample
-      satisfies ``input + cache.read + output + reasoning == total``.
+    - ``format in ("opencode", "codearts_v2")``: render all five token fields
+      stacked — Fresh Input, Cache Read, Output, Reasoning, Cache Write — with
+      every trace forced into the legend even when a field is zero across the
+      trajectory.  Both formats expose the same complete token schema.
     - No breakdown available (e.g., CodeArts): fall back to a single ``Total``
       bar.
     """
@@ -297,7 +295,9 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
         for s in steps
     ]
     reasoning_t = [s["tokens"]["reasoning"] for s in steps]
-    net_output = [max(0, s["tokens"]["output"] - s["tokens"]["reasoning"]) for s in steps]
+    output_t = [s["tokens"]["output"] for s in steps]
+    net_output = [max(0, output - reasoning)
+                  for output, reasoning in zip(output_t, reasoning_t)]
     cache_w = [s["tokens"].get("cache_write", 0) or 0 for s in steps]
 
     # Detect if token breakdown is available (any non-zero input/output/cache)
@@ -307,10 +307,12 @@ def build_token_chart(steps: list[dict], cumulative: bool = False,
     )
 
     fig = go.Figure()
-    if format == "opencode" and has_breakdown:
-        # OpenCode view: show all five fields explicitly, forcing zero traces
-        # into the legend so the reader can see which fields are tracked.
-        _add_token_bar_traces(fig, indices, fresh_input, cache_r, net_output, reasoning_t,
+    if format in ("opencode", "codearts_v2") and has_breakdown:
+        # OpenCode / CodeArts V2 view: show all five fields explicitly, forcing
+        # zero traces into the legend so no existing legend item disappears.
+        # These formats report output and reasoning as disjoint fields, so use
+        # the raw output value instead of subtracting reasoning a second time.
+        _add_token_bar_traces(fig, indices, fresh_input, cache_r, output_t, reasoning_t,
                               cache_write=cache_w, include_empty=True)
     elif has_breakdown:
         _add_token_bar_traces(fig, indices, fresh_input, cache_r, net_output, reasoning_t)
@@ -1534,15 +1536,9 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
             showlegend=False,
         ))
         for yi in user_indices:
-            preview = steps[yi].get("text_preview", "")
-            # Show a short snippet of the user message
-            snippet = preview[:60].replace("<", "&lt;").replace(">", "&gt;")
-            if len(preview) > 60:
-                snippet += "…"
-            label = f"<i>user prompt</i>: {snippet}" if snippet else "<i>user prompt</i>"
             fig.add_annotation(
                 x=user_bar_width, y=yi,
-                text=label,
+                text="<i>user prompt</i>",
                 showarrow=False, xanchor="left", xshift=6,
                 font=dict(size=10, color="#6b7280"),
             )

@@ -581,6 +581,7 @@ def trajectory_format_label(fmt: str | None) -> str:
     labels = {
         "ccsession": "Claude Code",
         "codearts": "CodeArts",
+        "codearts_v2": "CodeArts V2",
         "opencode": "OpenCode",
     }
     return labels.get(fmt or "", fmt or "Unknown")
@@ -614,7 +615,7 @@ def _build_diagnostics_outputs(
     # Counts are still computed so the summary line stays accurate.
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
-    if trajectory_format == "opencode":
+    if trajectory_format in ("opencode", "codearts_v2"):
         rootcause_html = ""
     else:
         rootcause_html = build_root_cause_html(clusters)
@@ -713,8 +714,6 @@ def _count_bar_chart(counts: dict[str, int], title: str, dark: bool = False) -> 
     return fig
 
 
-
-
 def build_label_ui_payload(file_path: str) -> dict:
     """Build UI-facing label payload for a *_labeled.json label file."""
     data = load_labeled_json(file_path)
@@ -753,7 +752,9 @@ def build_label_ui_payload(file_path: str) -> dict:
         "<span style='background:#059669;color:white;"
         "padding:4px 12px;border-radius:12px;font-size:13px;'>"
         f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
-        "<a href='#' onclick=\"document.querySelector('[class*=per-message-acc]:last-child button')?.click();"
+        "<a href='#' onclick=\"var t=document.querySelectorAll('.tab-nav button');if(t.length)t[0].click();"
+        "var r=document.querySelector(&quot;.overview-section-radio input[value='Labels']&quot;);"
+        "if(r){r.click();r.scrollIntoView({behavior:'smooth',block:'center'});}"
         "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
         "Jump to Labels</a>"
         "</div>"
@@ -832,6 +833,7 @@ def build_ui() -> gr.Blocks:
                     choices=[
                         ("Claude Code", "ccsession"),
                         ("CodeArts", "codearts"),
+                        ("CodeArts V2", "codearts_v2"),
                         ("OpenCode", "opencode"),
                     ],
                     value="ccsession",
@@ -866,89 +868,85 @@ def build_ui() -> gr.Blocks:
         with gr.Tabs(visible=False) as main_tabs:
             # ===== Overview Tab (unified — includes former Analytics content) =====
             with gr.TabItem("Overview"):
-                _toc_js = (
-                    "function(label){"
-                    "var els=document.querySelectorAll('.per-message-acc button span');"
-                    "for(var e of els){if(e.textContent.includes(label)){"
-                    "e.closest('.per-message-acc').scrollIntoView({behavior:'smooth',block:'start'});"
-                    "var btn=e.closest('button');"
-                    "if(btn&&btn.getAttribute('aria-expanded')==='false')btn.click();"
-                    "break;}}}"
-                )
-                _toc_sections = [
-                    "Performance", "Efficiency", "Tools", "Agents",
-                    "Diagnostics", "Deep Dive", "Labels",
-                ]
-                _toc_links = "".join(
-                    f"<a class='toc-link' onclick=\"({_toc_js})('{s.replace('&amp;', '&')}')\">{s}</a>"
-                    for s in _toc_sections
-                )
-                gr.HTML(
-                    f"<nav class='insight-toc'>"
-                    f"<span class='toc-nav-title'>Contents</span>"
-                    f"{_toc_links}"
-                    f"</nav>",
-                    elem_classes=["sidebar-toc"],
-                )
                 session_detail_html = gr.HTML("")
                 overview_kpi_html = gr.HTML("", elem_classes=["overview-kpi-strip"])
 
-                with gr.Accordion("Performance", open=True, elem_classes=["per-message-acc"]):
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>")
-                    metrics_md = gr.Markdown("")
-                    with gr.Row(equal_height=True):
-                        token_chart = gr.Plot(show_label=False, label="Token Usage")
-                        duration_chart = gr.Plot(show_label=False, label="Step Duration")
+                overview_section_names = [
+                    "Performance", "Efficiency", "Tools", "Agents",
+                    "Diagnostics", "Deep Dive", "Labels",
+                ]
+                with gr.Row(elem_classes=["overview-content-layout"]):
+                    with gr.Column(scale=0, min_width=160,
+                                   elem_classes=["overview-section-nav"]):
+                        gr.HTML("<div class='overview-nav-title'>Contents</div>")
+                        overview_section = gr.Radio(
+                            choices=overview_section_names,
+                            value="Performance",
+                            show_label=False,
+                            container=False,
+                            elem_classes=["overview-section-radio"],
+                        )
 
-                with gr.Accordion("Efficiency", open=False, elem_classes=["per-message-acc"]):
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>")
-                    context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
+                    with gr.Column(scale=1, min_width=0,
+                                   elem_classes=["overview-section-content"]):
+                        with gr.Column(visible=True) as performance_section:
+                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>")
+                            metrics_md = gr.Markdown("")
+                            with gr.Row(equal_height=True):
+                                token_chart = gr.Plot(show_label=False, label="Token Usage")
+                                duration_chart = gr.Plot(show_label=False, label="Step Duration")
 
-                with gr.Accordion("Tools", open=False, elem_classes=["per-message-acc"]):
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_tools'])}</div>")
-                    behavior_md = gr.Markdown("")
-                    with gr.Row(equal_height=True):
-                        tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
-                        gr.Column(scale=1)  # reserved for future chart
-                    with gr.Row(equal_height=True):
-                        tool_outcome_chart = gr.Plot(show_label=False, label="Tool Outcome Timeline")
+                        with gr.Column(visible=False) as efficiency_section:
+                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>")
+                            context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
 
-                with gr.Accordion("Agents", open=False, elem_classes=["per-message-acc"]):
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
-                    agent_summary_html = gr.HTML("")
-                    with gr.Row(equal_height=True):
-                        agent_token_chart = gr.Plot(show_label=False, label="Token Breakdown by Agent")
-                        gr.Column(scale=1)  # reserved for future chart
-                    with gr.Row(equal_height=True):
-                        agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
+                        with gr.Column(visible=False) as tools_section:
+                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_tools'])}</div>")
+                            behavior_md = gr.Markdown("")
+                            with gr.Row(equal_height=True):
+                                tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
+                                gr.Column(scale=1)  # reserved for future chart
+                            with gr.Row(equal_height=True):
+                                tool_outcome_chart = gr.Plot(show_label=False, label="Tool Outcome Timeline")
 
-                with gr.Accordion("Diagnostics", open=False, elem_classes=["per-message-acc"]) as diag_accordion:
-                    diag_summary_html = gr.HTML("")
-                    diag_file_chart = gr.Plot(show_label=False, label="File Interaction Timeline",
-                                              elem_classes=["resizable-chart"])
-                    diag_rootcause_html = gr.HTML("")
-                    with gr.Row(equal_height=True):
-                        error_class_chart = gr.Plot(show_label=False, label="Tool Error Classification")
-                        plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
+                        with gr.Column(visible=False) as agents_section:
+                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
+                            agent_summary_html = gr.HTML("")
+                            with gr.Row(equal_height=True):
+                                agent_token_chart = gr.Plot(show_label=False, label="Token Breakdown by Agent")
+                                gr.Column(scale=1)  # reserved for future chart
+                            with gr.Row(equal_height=True):
+                                agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
 
-                with gr.Accordion("Per-Step Deep Dive", open=False, elem_classes=["per-message-acc"]):
-                    hotspots_md = gr.Markdown("")
-                    per_message_md = gr.Markdown("")
+                        with gr.Column(visible=False) as diagnostics_section:
+                            diag_summary_html = gr.HTML("")
+                            diag_file_chart = gr.Plot(show_label=False, label="File Interaction Timeline",
+                                                      elem_classes=["resizable-chart"])
+                            diag_rootcause_html = gr.HTML("")
+                            with gr.Row(equal_height=True):
+                                error_class_chart = gr.Plot(show_label=False, label="Tool Error Classification")
+                                plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
 
-                with gr.Accordion("Labels — Phase and action classification from labeled JSON",
-                                 open=False, elem_classes=["per-message-acc"]) as labels_accordion:
-                    label_status_html = gr.HTML(
-                        "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
-                        "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
-                    )
-                    with gr.Row(equal_height=True, visible=False) as label_charts_row1:
-                        label_phase_count_chart = gr.Plot(show_label=False, label="Phase Count Distribution")
-                        label_action_count_chart = gr.Plot(show_label=False, label="Action Count Distribution")
-                    with gr.Row(equal_height=True, visible=False) as label_charts_row2:
-                        label_phase_dur_chart = gr.Plot(show_label=False, label="Phase Duration Distribution")
-                        label_action_dur_chart = gr.Plot(show_label=False, label="Action Duration Distribution")
-                    with gr.Row(equal_height=True, visible=False) as label_timeline_row:
-                        label_timeline_chart = gr.Plot(show_label=False, label="Step Timeline")
+                        with gr.Column(visible=False) as deep_dive_section:
+                            hotspots_md = gr.Markdown("")
+                            per_message_md = gr.Markdown("")
+
+                        with gr.Column(visible=False) as labels_section:
+                            gr.HTML(
+                                "<div class='section-subtitle'>Phase and action classification from labeled JSON</div>"
+                            )
+                            label_status_html = gr.HTML(
+                                "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                                "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
+                            )
+                            with gr.Row(equal_height=True, visible=False) as label_charts_row1:
+                                label_phase_count_chart = gr.Plot(show_label=False, label="Phase Count Distribution")
+                                label_action_count_chart = gr.Plot(show_label=False, label="Action Count Distribution")
+                            with gr.Row(equal_height=True, visible=False) as label_charts_row2:
+                                label_phase_dur_chart = gr.Plot(show_label=False, label="Phase Duration Distribution")
+                                label_action_dur_chart = gr.Plot(show_label=False, label="Action Duration Distribution")
+                            with gr.Row(equal_height=True, visible=False) as label_timeline_row:
+                                label_timeline_chart = gr.Plot(show_label=False, label="Step Timeline")
 
             # ===== Patterns Tab =====
             with gr.TabItem("Patterns"):
@@ -981,6 +979,7 @@ def build_ui() -> gr.Blocks:
                             choices=[
                                 ("Claude Code", "ccsession"),
                                 ("CodeArts", "codearts"),
+                                ("CodeArts V2", "codearts_v2"),
                                 ("OpenCode", "opencode"),
                             ],
                             value="ccsession",
@@ -1415,6 +1414,23 @@ def build_ui() -> gr.Blocks:
 
         # -- Callbacks --
 
+        overview_sections = (
+            performance_section, efficiency_section, tools_section, agents_section,
+            diagnostics_section, deep_dive_section, labels_section,
+        )
+
+        def show_overview_section(selected):
+            return tuple(
+                gr.update(visible=name == selected)
+                for name in overview_section_names
+            )
+
+        overview_section.change(
+            fn=show_overview_section,
+            inputs=[overview_section],
+            outputs=list(overview_sections),
+        )
+
         _empty_fig = go.Figure()
         _empty_fig.update_layout(template="plotly_white", height=380)
 
@@ -1480,6 +1496,7 @@ def build_ui() -> gr.Blocks:
 
             # Validate format matches user selection
             _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
+                              "codearts_v2": "CodeArts V2",
                               "opencode": "OpenCode",
                               "unknown": "Unknown"}
             detected = detect_format(raw)
@@ -1787,16 +1804,15 @@ def build_ui() -> gr.Blocks:
 
             Returns values matching the output list below:
               0: label_badge_html
-              1: labels_accordion
-              2: label_status_html
-              3: label_charts_row1 (Row visibility)
-              4: label_phase_count_chart (Plot)
-              5: label_action_count_chart (Plot)
-              6: label_charts_row2 (Row visibility)
-              7: label_phase_dur_chart (Plot)
-              8: label_action_dur_chart (Plot)
-             9: label_timeline_row (Row visibility)
-             10: label_timeline_chart (Plot)
+              1: label_status_html
+              2: label_charts_row1 (Row visibility)
+              3: label_phase_count_chart (Plot)
+              4: label_action_count_chart (Plot)
+              5: label_charts_row2 (Row visibility)
+              6: label_phase_dur_chart (Plot)
+              7: label_action_dur_chart (Plot)
+              8: label_timeline_row (Row visibility)
+              9: label_timeline_chart (Plot)
             """
             file_path = None
             if upload_obj is not None:
@@ -1807,7 +1823,6 @@ def build_ui() -> gr.Blocks:
             if not file_path or not os.path.isfile(file_path):
                 return (
                     "",  # label_badge_html
-                    gr.update(),  # labels_accordion (no change)
                     "<div style='padding:1em;color:#9ca3af;text-align:center;'>"
                     "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>",
                     gr.update(visible=False), empty, empty,
@@ -1820,7 +1835,6 @@ def build_ui() -> gr.Blocks:
             except Exception as exc:
                 return (
                     "",  # label_badge_html
-                    gr.update(),  # labels_accordion (no change)
                     f"<div style='padding:1em;color:#dc2626;text-align:center;'>"
                     f"Error: {html.escape(str(exc))}</div>",
                     gr.update(visible=False), empty, empty,
@@ -1830,7 +1844,6 @@ def build_ui() -> gr.Blocks:
 
             return (
                 payload["badge_html"],  # label_badge_html
-                gr.update(open=True),  # labels_accordion (auto-open)
                 payload["status_html"],
                 gr.update(visible=True), payload["phase_count_fig"], payload["action_count_fig"],
                 gr.update(visible=True), payload["phase_duration_fig"], payload["action_duration_fig"],
@@ -1839,7 +1852,6 @@ def build_ui() -> gr.Blocks:
 
         label_outputs = [
             label_badge_html,
-            labels_accordion,
             label_status_html,
             label_charts_row1, label_phase_count_chart,
             label_action_count_chart,
@@ -1861,13 +1873,12 @@ def build_ui() -> gr.Blocks:
         )
 
         # Reset label UI whenever a new trajectory is loaded. Without this, stale
-        # label state from a prior *_labeled.json upload lingers and the Labels
-        # accordion renders data for the wrong trajectory.
+        # label state from a prior *_labeled.json upload would render data for the
+        # wrong trajectory.
         def _reset_labels():
             empty = _empty_label_fig
             return (
                 "",                                       # label_badge_html
-                gr.update(open=False),                    # labels_accordion
                 ("<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
                  "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"),  # label_status_html
                 gr.update(visible=False), empty, empty,   # row1 + two charts

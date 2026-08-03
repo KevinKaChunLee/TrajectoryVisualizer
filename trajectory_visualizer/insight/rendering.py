@@ -452,6 +452,12 @@ def _format_step_header(step: dict) -> str:
         rows.append(("Sub-agent", "Yes"))
     if step.get("agent_id"):
         rows.append(("Agent ID", step["agent_id"]))
+    if step.get("session_depth") is not None:
+        rows.append(("Session depth", str(step["session_depth"])))
+    if step.get("session_title"):
+        rows.append(("Session title", step["session_title"]))
+    if step.get("parent_session_id"):
+        rows.append(("Parent session", step["parent_session_id"]))
 
     _id_fields = [
         ("id", "ID"), ("parent_id", "Parent ID"), ("session_id", "Session"),
@@ -610,6 +616,8 @@ def _format_text_section(p: dict, section_type: str) -> str:
     """Render a text or reasoning part as a styled HTML section card."""
     cls = "dp-section-text" if section_type == "text" else "dp-section-reasoning"
     label = "Text" if section_type == "text" else "Reasoning"
+    if section_type == "text" and p.get("synthetic"):
+        label = "Synthetic context"
     text = p.get("text", "")
     # Use the code-fence-aware HTML renderer for content with code blocks
     rendered = _md_to_html_preview(text) if text else ""

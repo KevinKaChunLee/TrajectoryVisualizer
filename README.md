@@ -4,7 +4,7 @@
 
 TrajectoryVisualizer loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
-Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, and **Codex CLI** out of the box.
+Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts (legacy and V2)**, and **Codex CLI** out of the box.
 
 ---
 
@@ -109,6 +109,7 @@ TrajectoryVisualizer auto-detects and normalizes the following formats on load:
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `format: codearts` | Sub-agent `session_id` threading |
+| CodeArts V2 | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
 | Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the OpenCode-style step model (select **OpenCode** in the format dropdown); tool intent (Read / Grep / Glob / Write / Bash) inferred from each `exec_command` shell command |
 
 ---
@@ -199,6 +200,11 @@ python scripts/codearts_consolidator.py path/to/<session-id> --output ca_traject
 The consolidator wraps `chat_baseInfo.json` + `messages_0.json` into a single
 JSON with `"format": "codearts"` at the top level. Upload the consolidated
 file in the dashboard.
+
+CodeArts V2 exports are already consolidated JSON files. They contain an
+`export_metadata` block whose `source_format` is `codearts_opencode_sqlite`,
+plus a `session_manifest` describing parent and sub-agent sessions. Upload the
+V2 JSON directly and select **CodeArts V2**; no consolidator step is needed.
 
 ### Codex CLI
 

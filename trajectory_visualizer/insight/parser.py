@@ -104,6 +104,7 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
     errors = 0
     has_reasoning = False
     text_preview = ""
+    synthetic_text_preview = ""
 
     for p in parts_raw:
         if not isinstance(p, dict):
@@ -112,11 +113,27 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
 
         if ptype == "text":
             txt = p.get("text", "")
-            parts.append({"type": "text", "text": txt})
-            if not text_preview:
+            parts.append({
+                "type": "text", "text": txt,
+                "synthetic": bool(p.get("synthetic", False)),
+                "metadata": p.get("metadata", {}) if isinstance(p.get("metadata"), dict) else {},
+                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                "part_id": p.get("id", ""),
+                "session_id": p.get("sessionID", ""),
+                "message_id": p.get("messageID", ""),
+            })
+            if p.get("synthetic") and not synthetic_text_preview:
+                synthetic_text_preview = txt
+            elif not p.get("synthetic") and not text_preview:
                 text_preview = txt
         elif ptype == "reasoning":
-            parts.append({"type": "reasoning", "text": p.get("text", "")})
+            parts.append({
+                "type": "reasoning", "text": p.get("text", ""),
+                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                "part_id": p.get("id", ""),
+                "session_id": p.get("sessionID", ""),
+                "message_id": p.get("messageID", ""),
+            })
             has_reasoning = True
             if not text_preview:
                 text_preview = p.get("text", "")
@@ -142,6 +159,9 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
                 "time_end": safe_get(state, "time", "end", default=None),
                 "duration_ms": safe_get(state, "metadata", "totalDurationMs", default=None),
                 "metadata": state.get("metadata", {}),
+                "part_id": p.get("id", ""),
+                "session_id": p.get("sessionID", ""),
+                "message_id": p.get("messageID", ""),
             }
             parts.append(tc)
             tool_calls.append(tc)
@@ -150,9 +170,20 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
             if not text_preview:
                 text_preview = f"[Tool: {tool_name}] {tc['title']}"
         elif ptype in ("step_start", "step-start"):
-            parts.append({"type": "step_start", "name": p.get("name", "")})
+            parts.append({
+                "type": "step_start", "name": p.get("name", ""),
+                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                "part_id": p.get("id", ""),
+            })
         elif ptype in ("step_finish", "step-finish"):
-            parts.append({"type": "step_finish", "name": p.get("name", "")})
+            parts.append({
+                "type": "step_finish", "name": p.get("name", ""),
+                "reason": p.get("reason", ""),
+                "tokens": p.get("tokens", {}) if isinstance(p.get("tokens"), dict) else {},
+                "cost": p.get("cost"),
+                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                "part_id": p.get("id", ""),
+            })
         elif ptype == "snapshot":
             parts.append({"type": "snapshot", "data": p.get("data", p.get("snapshot", {}))})
         elif ptype == "patch":
@@ -169,7 +200,7 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
         else:
             parts.append({"type": ptype, "raw": p})
 
-    return parts, tool_calls, errors, has_reasoning, text_preview
+    return parts, tool_calls, errors, has_reasoning, text_preview or synthetic_text_preview
 
 
 def parse_steps(raw: dict) -> list[dict]:
@@ -239,7 +270,10 @@ def parse_steps(raw: dict) -> list[dict]:
             "time_created_ms": t_created, "time_completed_ms": t_completed,
             "agent": safe_get(info, "agent", default=""),
             "mode": safe_get(info, "mode", default=""),
-            "message_id": msg.get("message_id", ""),
+            "message_id": (
+                msg.get("message_id", "")
+                or (info.get("id", "") if raw.get("_codearts_v2_format") else "")
+            ),
             "id": safe_get(info, "id", default=""),
             "parent_id": safe_get(info, "parentID", default=""),
             "session_id": safe_get(info, "sessionID", default=""),
@@ -252,6 +286,9 @@ def parse_steps(raw: dict) -> list[dict]:
             "output_text": info.get("outputText", ""),
             "agent_id": info.get("agentId", ""),
             "question": info.get("question", []),
+            "parent_session_id": info.get("parentSessionID", ""),
+            "session_depth": info.get("sessionDepth"),
+            "session_title": info.get("sessionTitle", ""),
             "_metrics_unavailable_fields": metrics_unavailable_fields,
             "_metrics_source_format": metrics_source_format,
         })

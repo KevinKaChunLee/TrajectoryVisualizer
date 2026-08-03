@@ -14,6 +14,7 @@ from .canonical import (
 _FORMAT_LABELS = {
     "ccsession": "Claude Code",
     "codearts": "CodeArts",
+    "codearts_v2": "CodeArts V2",
     "opencode": "OpenCode",
     "codex": "Codex",
 }
