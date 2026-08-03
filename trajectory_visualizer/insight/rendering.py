@@ -31,7 +31,7 @@ def _card_style(step: dict) -> tuple[str, str, str]:
 
     Colors are CSS variable references so they adapt to the active theme.
     """
-    role = step["role"]
+    role = str(step.get("role", ""))
     if step["error_count"] > 0:
         return "var(--wf-bg-error)", "var(--wf-border-error)", "Error"
     if step.get("finish") == "stop" or step.get("finish") == "end_turn":
@@ -269,7 +269,7 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
     items: list[str] = []
     for step in steps:
         idx = step.get("index", 0)
-        role = step["role"]
+        role = str(step.get("role", ""))
         role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
         onclick = (
             f"(function(){{"
@@ -342,7 +342,7 @@ def render_workflow_html(steps: list[dict]) -> str:
                 f'border:1px solid {agent_border};font-size:9px;">{html.escape(agent_label)}</span>'
             )
 
-        role = step["role"]
+        role = str(step.get("role", ""))
         role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
         role_label = role.title()
 
@@ -359,8 +359,8 @@ def render_workflow_html(steps: list[dict]) -> str:
              style="background:{bg};border-color:{border};{agent_left_border}{sub_indent}">
             <div class="wf-header">
                 <span class="wf-badge" style="background:{border};color:white;">#{orig_idx}</span>
-                <span class="wf-badge" style="{role_style}">{role_label}</span>
-                {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{border};border:1px solid {border};">{label}</span>'}
+                <span class="wf-badge" style="{role_style}">{html.escape(role_label)}</span>
+                {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{border};border:1px solid {border};">{html.escape(label)}</span>'}
                 {sub_agent_badge}
                 {agent_badge}
                 <span class="wf-icons">{icon_str}</span>
@@ -395,7 +395,7 @@ def _fmt_timestamp(ms):
 def _format_step_header(step: dict) -> str:
     """Build the styled HTML header banner and metadata table for a step detail panel."""
     bg, border, label = _card_style(step)
-    role = step["role"]
+    role = str(step.get("role", ""))
     role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
 
     rows: list[tuple[str, str]] = [("Role", step['role'])]
@@ -1161,6 +1161,11 @@ def build_subagent_summary_html(sessions: list[dict]) -> str:
 
 def _antipattern_card(border_color: str, title: str, detail: str, why: str) -> str:
     """Render a single anti-pattern card with a 'why this matters' line."""
+    # title/detail/why can embed untrusted trajectory text (e.g. TodoWrite
+    # plan-item content); escape so it renders as text in the gr.HTML panel.
+    title = html.escape(str(title))
+    detail = html.escape(str(detail))
+    why = html.escape(str(why))
     return (
         f"<div style='padding:8px 12px;background:var(--ov-card);"
         f"border-left:3px solid {border_color};border-radius:4px;margin-bottom:6px;'>"

@@ -1,5 +1,6 @@
 """Markdown and HTML display string generation."""
 
+import html
 from typing import Any
 
 
@@ -17,6 +18,10 @@ def _metric_chip(label: str, value: str, *, wide: bool = False,
     *verdict* adds a colored left border (good/warn/bad).
     *hint* adds a subtitle line below the value.
     """
+    # label/value can be untrusted (tool, model, agent names); escape for HTML.
+    label = html.escape(str(label))
+    value = html.escape(str(value))
+    hint = html.escape(str(hint)) if hint else ""
     min_w = "140px" if wide else "100px"
     border_left = ""
     bg = "#f8fafc"

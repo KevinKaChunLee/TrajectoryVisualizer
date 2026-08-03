@@ -16,12 +16,16 @@ def effective_agent(s: dict) -> str:
     """
     if s.get("role") == "user":
         return ""
-    # CodeArts: prefer session_id for sub-agents (agent field is often
-    # the same generic name like "Agent" for all messages)
-    if s.get("is_sub_agent") and s.get("session_id"):
-        return s["session_id"]
-    agent = s.get("agent", "")
-    if agent:
+    agent = s.get("agent", "") or ""
+    suffix_sub = isinstance(agent, str) and agent.endswith("(subagent)")
+    # Sub-agent: isSubAgent set, or the OpenCode "(subagent)" name suffix.
+    # CodeArts groups by session_id (agent name is often generic).
+    if s.get("is_sub_agent") or suffix_sub:
+        return s.get("session_id") or agent or ""
+    # Claude Code step (no is_sub_agent key): a non-empty agent id denotes a
+    # sub-agent, the main agent is empty. A named main agent under the
+    # opencode/codearts convention (is_sub_agent present but false) maps to "".
+    if "is_sub_agent" not in s:
         return agent
     return ""
 
