@@ -132,7 +132,8 @@ def _add_token_bar_traces(fig: go.Figure, x_values: list,
                           fresh_input: list, cache_read: list,
                           output: list, reasoning: list,
                           *, cache_write: list | None = None,
-                          include_empty: bool = False) -> None:
+                          include_empty: bool = False,
+                          x_label: str = "Step") -> None:
     """Add token category bar traces to a figure.
 
     By default only adds traces that have non-zero data to avoid misleading legends
@@ -157,7 +158,7 @@ def _add_token_bar_traces(fig: go.Figure, x_values: list,
         if include_empty or any(v > 0 for v in values):
             fig.add_trace(go.Bar(
                 x=x_values, y=values, name=name, marker_color=color,
-                hovertemplate=f"Step %{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
+                hovertemplate=f"{(x_label + ' ') if x_label else ''}%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
             ))
 
 
@@ -354,7 +355,10 @@ def build_duration_chart(steps: list[dict],
     indices = list(range(len(steps)))
     durations = [s["duration"] if s["duration"] is not None else 0 for s in steps]
 
-    avg_d = sum(durations) / len(durations) if durations else 0
+    # Average over steps that actually have a duration; steps with a missing
+    # duration render as 0 bars but must not drag the mean down.
+    real_durations = [s["duration"] for s in steps if s["duration"] is not None]
+    avg_d = sum(real_durations) / len(real_durations) if real_durations else 0
 
     # Split into normal and error traces for legend
     normal_x = [i for i, s in enumerate(steps) if s["error_count"] == 0]
@@ -870,10 +874,10 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
             for a in agent_summaries
         ]
         reasoning = [a["reasoning_tokens"] for a in agent_summaries]
-        _add_token_bar_traces(fig, labels, fresh_input, cache_read, output, reasoning)
+        _add_token_bar_traces(fig, labels, fresh_input, cache_read, output, reasoning, x_label="")
     else:
         # No token breakdown available — show total tokens per agent
-        _SESSION_COLORS = ["#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2"]
+        _SESSION_COLORS = AGENT_COLORS  # shared palette so agent colors match across views
         totals = [a["total_tokens"] for a in agent_summaries]
         colors = [_SESSION_COLORS[i % len(_SESSION_COLORS)] for i in range(len(labels))]
         fig.add_trace(go.Bar(
