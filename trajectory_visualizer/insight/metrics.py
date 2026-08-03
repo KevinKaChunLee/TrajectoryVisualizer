@@ -572,13 +572,19 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
 
     # Cache efficiency
     avg_cache = metrics.get("avg_cache_ratio", 0)
-    if avg_cache >= 60:
-        status, detail = "good", f"Avg cache read {avg_cache}% — strong cache reuse"
+    if not metrics.get("tokens", {}).get("total", 0):
+        # No per-step token data (e.g. a format without token usage): a 0% cache
+        # ratio here means "unknown", not "poor".
+        verdicts.append({"metric": "Cache Efficiency", "status": "good", "label": "N/A", "detail": "No token data"})
+    elif avg_cache >= 60:
+        verdicts.append({"metric": "Cache Efficiency", "status": "good", "label": f"{avg_cache}%",
+                         "detail": f"Avg cache read {avg_cache}% — strong cache reuse"})
     elif avg_cache >= 30:
-        status, detail = "warn", f"Avg cache read {avg_cache}% — moderate cache reuse"
+        verdicts.append({"metric": "Cache Efficiency", "status": "warn", "label": f"{avg_cache}%",
+                         "detail": f"Avg cache read {avg_cache}% — moderate cache reuse"})
     else:
-        status, detail = "bad", f"Avg cache read {avg_cache}% — most input tokens are fresh"
-    verdicts.append({"metric": "Cache Efficiency", "status": status, "label": f"{avg_cache}%", "detail": detail})
+        verdicts.append({"metric": "Cache Efficiency", "status": "bad", "label": f"{avg_cache}%",
+                         "detail": f"Avg cache read {avg_cache}% — most input tokens are fresh"})
 
     # Tool success rate
     tool_rate = metrics.get("tool_success_rate", 0)
@@ -592,25 +598,33 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     else:
         verdicts.append({"metric": "Tool Success", "status": "bad", "label": f"{tool_rate}%", "detail": f"{tool_rate}% success — high failure rate across {tool_count} calls"})
 
-    # Token efficiency (tok/s)
-    tok_per_s = metrics.get("tokens_per_second", 0)
-    if tok_per_s >= 50:
-        status, detail = "good", f"{tok_per_s} tok/s — strong throughput"
-    elif tok_per_s >= 20:
-        status, detail = "warn", f"{tok_per_s} tok/s — moderate throughput"
+    # Generation throughput — output tokens per second of assistant wall time.
+    # NOTE: use output_tokens_per_sec, not tokens_per_second, which divides the
+    # cumulative cache-read context (re-counted every turn) by wall time and is
+    # inflated ~(#turns)x, making the verdict structurally "good".
+    gen_rate = metrics.get("output_tokens_per_sec")
+    if gen_rate is None:
+        verdicts.append({"metric": "Throughput", "status": "good", "label": "N/A", "detail": "No timing/token data"})
+    elif gen_rate >= 50:
+        verdicts.append({"metric": "Throughput", "status": "good", "label": f"{gen_rate} tok/s",
+                         "detail": f"{gen_rate} tok/s — strong throughput"})
+    elif gen_rate >= 20:
+        verdicts.append({"metric": "Throughput", "status": "warn", "label": f"{gen_rate} tok/s",
+                         "detail": f"{gen_rate} tok/s — moderate throughput"})
     else:
-        status, detail = "bad", f"{tok_per_s} tok/s — low throughput"
-    verdicts.append({"metric": "Throughput", "status": status, "label": f"{tok_per_s} tok/s", "detail": detail})
+        verdicts.append({"metric": "Throughput", "status": "bad", "label": f"{gen_rate} tok/s",
+                         "detail": f"{gen_rate} tok/s — low throughput"})
 
-    # Error rate — use metrics directly (step_analytics dicts don't have "parts")
-    error_steps = metrics.get("tool_fail", 0)
-    if error_steps == 0:
-        status, detail = "good", "No error steps detected"
-    elif error_steps <= 2:
-        status, detail = "warn", f"{error_steps} error step(s) detected"
+    # Failed tool calls — tool_fail counts failing tool CALLS (already reflected
+    # in Tool Success); label accordingly rather than as "error steps".
+    failed_calls = metrics.get("tool_fail", 0)
+    if failed_calls == 0:
+        status, detail = "good", "No failed tool calls"
+    elif failed_calls <= 2:
+        status, detail = "warn", f"{failed_calls} failed tool call(s)"
     else:
-        status, detail = "bad", f"{error_steps} error steps — agent may be struggling"
-    verdicts.append({"metric": "Errors", "status": status, "label": str(error_steps), "detail": detail})
+        status, detail = "bad", f"{failed_calls} failed tool calls — agent may be struggling"
+    verdicts.append({"metric": "Errors", "status": status, "label": str(failed_calls), "detail": detail})
 
     return verdicts
 
