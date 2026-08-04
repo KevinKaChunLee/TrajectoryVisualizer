@@ -1,8 +1,8 @@
-# Trajviz
+# TrajViz
 
 **Offline analytics & visualization for LLM agent trajectories.**
 
-trajviz loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
+TrajViz loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
 Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, and **Codex CLI** out of the box.
 
