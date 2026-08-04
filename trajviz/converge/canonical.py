@@ -294,7 +294,7 @@ def assign_effect_labels(
     if anchor_files is not None:
         target_files = {_normalize_target(f) for f in anchor_files}
     else:
-        from trajectory_visualizer.insight.diagnostics import identify_target_files
+        from trajviz.insight.diagnostics import identify_target_files
         target_files = {_normalize_target(f) for f in identify_target_files(steps)}
 
     # Collect test/interface files for justification

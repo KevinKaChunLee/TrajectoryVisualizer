@@ -1277,7 +1277,7 @@ wheels = [
 ]
 
 [[package]]
-name = "trajectory-visualizer"
+name = "trajviz"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

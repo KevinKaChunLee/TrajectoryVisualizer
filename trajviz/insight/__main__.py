@@ -1,4 +1,4 @@
-"""Entry point for `python -m trajectory_visualizer.insight`."""
+"""Entry point for `python -m trajviz.insight`."""
 
 import argparse
 import sys

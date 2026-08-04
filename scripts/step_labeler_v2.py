@@ -96,8 +96,8 @@ def load_all_steps(trajectory_path: str) -> list[dict]:
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-    from trajectory_visualizer.insight.loaders import load_trajectory
-    from trajectory_visualizer.insight.parser import parse_steps
+    from trajviz.insight.loaders import load_trajectory
+    from trajviz.insight.parser import parse_steps
 
     raw = load_trajectory(trajectory_path)
     if "_error" in raw:

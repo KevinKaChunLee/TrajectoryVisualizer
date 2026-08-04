@@ -10,27 +10,27 @@ import traceback
 
 import plotly.graph_objects as go
 
-from trajectory_visualizer.insight.loaders import load_trajectory
-from trajectory_visualizer.insight.parser import parse_steps
-from trajectory_visualizer.insight.charts import _apply_dark
+from trajviz.insight.loaders import load_trajectory
+from trajviz.insight.parser import parse_steps
+from trajviz.insight.charts import _apply_dark
 
-from trajectory_visualizer.converge.canonical import canonicalize_steps, assign_effect_labels
-from trajectory_visualizer.converge.alignment import (
+from trajviz.converge.canonical import canonicalize_steps, assign_effect_labels
+from trajviz.converge.alignment import (
     align_trajectories, compute_alignment_metrics,
     compute_harmful_divergence, DEFAULT_TOKEN_RATE,
 )
-from trajectory_visualizer.converge.milestones import (
+from trajviz.converge.milestones import (
     extract_milestones, compute_milestone_deltas,
     segment_by_milestones, compare_segments,
 )
-from trajectory_visualizer.converge.divergence import classify_divergences, compute_pattern_costs
-from trajectory_visualizer.converge.charts import (
+from trajviz.converge.divergence import classify_divergences, compute_pattern_costs
+from trajviz.converge.charts import (
     build_milestone_timeline_chart,
     build_segment_cost_chart,
     build_divergence_waterfall_chart,
     build_anchor_class_chart,
 )
-from trajectory_visualizer.converge.rendering import build_comparison_report_html
+from trajviz.converge.rendering import build_comparison_report_html
 
 
 def _empty_fig() -> go.Figure:
@@ -127,7 +127,7 @@ def run_comparison(
         cmp_success = _detect_success(cmp_steps)
         ref_tokens = sum(s["tokens"]["total"] for s in ref_steps)
         cmp_tokens = sum(s["tokens"]["total"] for s in cmp_steps)
-        from trajectory_visualizer.converge.alignment import _describe_format, _session_duration_s
+        from trajviz.converge.alignment import _describe_format, _session_duration_s
         ref_path = ref_raw.get("_source_path", "") if isinstance(ref_raw, dict) else ""
         cmp_path = cmp_raw.get("_source_path", "") if isinstance(cmp_raw, dict) else ""
         outcome = {
@@ -153,7 +153,7 @@ def run_comparison(
         metrics = compute_alignment_metrics(alignment, ref_actions, cmp_actions, token_rate)
 
         # Target files for milestones
-        from trajectory_visualizer.insight.diagnostics import identify_target_files
+        from trajviz.insight.diagnostics import identify_target_files
         _norm = lambda p: os.path.normpath(p) if p else p
         if anchor_files:
             milestone_targets = {_norm(f) for f in anchor_files}
@@ -197,11 +197,11 @@ def run_comparison(
         anchor_analysis = None
         anchor_mode = "external" if anchor_files else "self"
         if anchor_mode == "external" and anchor_files:
-            from trajectory_visualizer.converge.anchor import compute_anchor_analysis
+            from trajviz.converge.anchor import compute_anchor_analysis
             anchor_analysis = compute_anchor_analysis(ref_actions, cmp_actions, anchor_files)
 
         # Evaluation layers
-        from trajectory_visualizer.converge.eval_layers import compute_eval_layers
+        from trajviz.converge.eval_layers import compute_eval_layers
         eval_layers = compute_eval_layers(
             {"alignment": {**metrics, **harmful}},
             patterns,

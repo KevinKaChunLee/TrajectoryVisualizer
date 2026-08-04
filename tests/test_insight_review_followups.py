@@ -2,8 +2,8 @@
 
 import unittest
 
-from trajectory_visualizer.insight import patterns
-from trajectory_visualizer.insight.metrics import compute_health_verdict, compute_metrics
+from trajviz.insight import patterns
+from trajviz.insight.metrics import compute_health_verdict, compute_metrics
 
 
 def _assistant_step(index: int, output_tokens: int, duration: float | None) -> dict:
@@ -72,8 +72,8 @@ class OutputThroughputTests(unittest.TestCase):
 
     def test_overview_labels_generation_rate_as_output_throughput(self):
         # Import here because this UI module loads optional Gradio dependencies.
-        from trajectory_visualizer.insight.insight import _build_overview_kpi_html
-        from trajectory_visualizer.insight.formatting import (
+        from trajviz.insight.insight import _build_overview_kpi_html
+        from trajviz.insight.formatting import (
             format_banner_html,
             format_performance_md,
         )

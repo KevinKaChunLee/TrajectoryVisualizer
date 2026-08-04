@@ -21,7 +21,7 @@ _FORMAT_LABELS = {
 
 def _describe_format(raw: dict) -> str:
     """Human-readable format name for a loaded trajectory (best-effort)."""
-    from trajectory_visualizer.insight.loaders import detect_format
+    from trajviz.insight.loaders import detect_format
     fmt = detect_format(raw) if isinstance(raw, dict) else "unknown"
     return _FORMAT_LABELS.get(fmt, fmt or "unknown")
 
@@ -237,8 +237,8 @@ def build_comparison_report(
             labeler. When provided, CanonicalActions carry phase/action labels
             and divergence confidence scoring is phase-aware.
     """
-    from trajectory_visualizer.insight.loaders import load_trajectory
-    from trajectory_visualizer.insight.parser import parse_steps
+    from trajviz.insight.loaders import load_trajectory
+    from trajviz.insight.parser import parse_steps
     from .milestones import (
         extract_milestones, compute_milestone_deltas,
         segment_by_milestones, compare_segments,
@@ -301,7 +301,7 @@ def build_comparison_report(
     metrics = compute_alignment_metrics(alignment, ref_actions, cmp_actions, token_rate)
 
     # Determine target files for milestone grounding
-    from trajectory_visualizer.insight.diagnostics import identify_target_files
+    from trajviz.insight.diagnostics import identify_target_files
     _norm = lambda p: os.path.normpath(p) if p else p
     if anchor_files:
         milestone_targets = {_norm(f) for f in anchor_files}

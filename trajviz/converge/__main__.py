@@ -1,4 +1,4 @@
-"""Launch the Converge Gradio app via `python -m trajectory_visualizer.converge`."""
+"""Launch the Converge Gradio app via `python -m trajviz.converge`."""
 
 from .app import build_ui
 

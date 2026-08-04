@@ -9,14 +9,14 @@ import os
 import tempfile
 import unittest
 
-from trajectory_visualizer.insight.loaders import load_trajectory, detect_format
-from trajectory_visualizer.insight.parser import parse_steps
-from trajectory_visualizer.insight import rendering, formatting
-from trajectory_visualizer.insight.metrics import (
+from trajviz.insight.loaders import load_trajectory, detect_format
+from trajviz.insight.parser import parse_steps
+from trajviz.insight import rendering, formatting
+from trajviz.insight.metrics import (
     compute_metrics, compute_health_verdict, effective_agent,
 )
-from trajectory_visualizer.insight.analytics import compute_step_analytics
-from trajectory_visualizer.insight import patterns, diagnostics
+from trajviz.insight.analytics import compute_step_analytics
+from trajviz.insight import patterns, diagnostics
 
 
 def _codex_event(t, ts, payload):
@@ -415,20 +415,20 @@ class PatternsDiagnosticsTests(unittest.TestCase):
 
 class ConvergeTests(unittest.TestCase):
     def test_extract_base_command_multi_env(self):
-        from trajectory_visualizer.converge.canonical import _extract_base_command
+        from trajviz.converge.canonical import _extract_base_command
         self.assertEqual(_extract_base_command("FOO=1 BAR=2 pytest"), "pytest")
         self.assertEqual(_extract_base_command("make test"), "make")
 
     def test_first_passing_validation_fires_for_validation_command(self):
-        from trajectory_visualizer.converge.canonical import CanonicalAction
-        from trajectory_visualizer.converge.milestones import extract_milestones
+        from trajviz.converge.canonical import CanonicalAction
+        from trajviz.converge.milestones import extract_milestones
         acts = [CanonicalAction(step_index=5, action_type="COMMAND", target="pytest",
                                 effect_label="justified",
                                 effect_detail={"reason": "validation_command"})]
         self.assertEqual(extract_milestones(acts)["first_passing_validation"], 5)
 
     def test_recommendation_reports_minor_regressions(self):
-        from trajectory_visualizer.converge.intervention import generate_recommendation
+        from trajviz.converge.intervention import generate_recommendation
         rec = generate_recommendation(
             {"latency": {"direction": "improved"}, "tokens": {"direction": "regressed"}}, [])
         self.assertNotIn("without regressions", rec)

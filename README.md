@@ -1,8 +1,8 @@
-# TrajectoryVisualizer
+# Trajviz
 
 **Offline analytics & visualization for LLM agent trajectories.**
 
-TrajectoryVisualizer loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
+trajviz loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
 Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, and **Codex CLI** out of the box.
 
@@ -45,14 +45,14 @@ Launch the dashboard:
 
 ```bash
 # uv
-uv run trajectory-visualizer
+uv run trajviz
 # or
-uv run python -m trajectory_visualizer.insight
+uv run python -m trajviz.insight
 
 # pip / activated venv
-python -m trajectory_visualizer.insight
+python -m trajviz.insight
 # or
-trajectory-visualizer
+trajviz
 ```
 
 Default: `http://localhost:7860`. Upload a trajectory JSON via the file picker at the top of the UI.
@@ -61,14 +61,14 @@ Custom port or host (prefix any of these with `uv run` when using uv):
 
 ```bash
 # Different port
-python -m trajectory_visualizer.insight --port 8080
+python -m trajviz.insight --port 8080
 
 # Access from any IP on the network
-python -m trajectory_visualizer.insight --host 0.0.0.0
+python -m trajviz.insight --host 0.0.0.0
 # Then access it via your server's IP address: `http://YOUR_IP:7860`
 
 # Create a public share link
-python -m trajectory_visualizer.insight --share
+python -m trajviz.insight --share
 ```
 
 ---
@@ -95,14 +95,14 @@ set no_proxy=127.0.0.1,localhost;%no_proxy%
 If port 7860 is already in use, specify a different port:
 
 ```bash
-python -m trajectory_visualizer.insight --port 8080
+python -m trajviz.insight --port 8080
 ```
 
 ---
 
 ## Supported trajectory formats
 
-TrajectoryVisualizer auto-detects and normalizes the following formats on load:
+trajviz auto-detects and normalizes the following formats on load:
 
 | Format | Detection | Notes |
 |---|---|---|
@@ -115,7 +115,7 @@ TrajectoryVisualizer auto-detects and normalizes the following formats on load:
 
 ## Collecting trajectories
 
-TrajectoryVisualizer only **reads** trajectory files — producing them is the agent's responsibility. This section shows how to obtain a valid trajectory JSON for each supported agent.
+trajviz only **reads** trajectory files — producing them is the agent's responsibility. This section shows how to obtain a valid trajectory JSON for each supported agent.
 
 ### Claude Code
 
@@ -123,7 +123,7 @@ Claude Code writes one JSONL file per session under
 `~/.claude/projects/<url-encoded-cwd>/<session-id>.jsonl`. The raw JSONL is not
 directly consumable — use the [**ccsession**](https://github.com/rshu/ccsession)
 exporter to convert it into the `ccsession-trajectory` JSON format that
-TrajectoryVisualizer expects.
+trajviz expects.
 
 1. Install `ccsession` (see the tool's README for current instructions).
 2. Run a Claude Code session against your repo as normal (`claude` CLI or VS
@@ -285,7 +285,7 @@ slots to unlock phase-aware analytics and label-phase charts.
 
 ```
 TrajectoryVisualizer/
-├── trajectory_visualizer/       # Python package
+├── trajviz/       # Python package
 │   ├── insight/                 # Single-trajectory dashboard
 │   │   ├── loaders.py           # Format detection & normalization
 │   │   ├── parser.py            # Step model

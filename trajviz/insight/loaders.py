@@ -1005,7 +1005,7 @@ def _classify_tool_error(output: str) -> str | None:
 
 
 def _convert_codex_to_internal(events: list[dict]) -> dict:
-    """Convert Codex CLI JSONL events into the TrajectoryVisualizer internal format.
+    """Convert Codex CLI JSONL events into the trajviz internal format.
 
     Codex emits newline-delimited JSON with event types:
     - session_meta: session ID, cwd, model, version
@@ -1328,7 +1328,7 @@ def _extract_codex_exec_commands(source: str) -> list[str]:
 
 
 def _classify_codex_command(func_name: str, cmd: str) -> str:
-    """Map a Codex exec_command to a TrajectoryVisualizer tool name.
+    """Map a Codex exec_command to a trajviz tool name.
 
     Codex uses exec_command for everything; we infer the intent from the command.
     """

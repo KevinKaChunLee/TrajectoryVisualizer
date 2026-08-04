@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "trajectory-visualizer"
+name = "trajviz"
 version = "0.1.0"
 description = "Offline analytics & visualization for LLM agent trajectories (Claude Code, OpenCode, CodeArts, Codex CLI)"
 readme = "README.md"
@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.scripts]
-trajectory-visualizer = "trajectory_visualizer.insight.__main__:main"
+trajviz = "trajviz.insight.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/rshu/TrajectoryVisualizer"
@@ -39,4 +39,4 @@ Repository = "https://github.com/rshu/TrajectoryVisualizer"
 Issues = "https://github.com/rshu/TrajectoryVisualizer/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["trajectory_visualizer"]
+packages = ["trajviz"]
