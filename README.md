@@ -8,6 +8,14 @@ Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, and **Co
 
 ---
 
+## Architecture
+
+TrajViz ingests raw agent-trajectory JSON, normalizes it into a shared step model, runs single- and cross-trajectory analysis over that model, and renders the results in a Gradio + Plotly dashboard.
+
+![TrajViz architecture](architecture.svg)
+
+---
+
 ## Install
 
 ```bash
@@ -278,58 +286,6 @@ python scripts/step_labeler.py cc_trajectory.json \
 
 Upload the trajectory **and** its labels sidecar in the dashboard's two upload
 slots to unlock phase-aware analytics and label-phase charts.
-
----
-
-## Project layout
-
-```
-TrajectoryVisualizer/
-├── trajviz/       # Python package
-│   ├── insight/                 # Single-trajectory dashboard
-│   │   ├── loaders.py           # Format detection & normalization
-│   │   ├── parser.py            # Step model
-│   │   ├── metrics.py           # Per-step & session metrics
-│   │   ├── analytics.py         # Phase detection, behavioral analytics
-│   │   ├── charts.py            # Plotly chart builders
-│   │   ├── rendering.py         # HTML rendering (workflow cards, code blocks)
-│   │   ├── diagnostics.py       # Failure chains, root causes
-│   │   ├── patterns.py          # Tool sequences, anti-patterns
-│   │   ├── labels.py            # Phase/action label model
-│   │   ├── comparison.py        # Bridge to converge pipeline
-│   │   ├── formatting.py        # Markdown/HTML metric grids
-│   │   ├── palette.py           # Shared chart & phase colors
-│   │   ├── help.py              # Metric tooltip registry
-│   │   ├── styles.py            # CSS (light/dark)
-│   │   ├── insight.py           # Gradio UI builder
-│   │   └── __main__.py          # CLI entry
-│   └── converge/                # Two-trajectory comparison pipeline
-│       ├── canonical.py         # Step canonicalization
-│       ├── alignment.py         # DP alignment algorithm
-│       ├── milestones.py        # Milestone extraction & comparison
-│       ├── divergence.py        # Divergence classification
-│       ├── anchor.py            # Ground-truth patch grounding
-│       ├── eval_layers.py       # Diagnostic evaluation layers
-│       ├── batch.py             # Manifest batch mode & aggregation
-│       ├── intervention.py      # Before/after intervention comparison
-│       ├── charts.py            # Comparison charts
-│       ├── rendering.py         # Comparison HTML report
-│       ├── cli.py               # Pairwise / batch / before-after CLI
-│       ├── app.py               # Standalone Gradio comparison app
-│       └── styles.py            # Comparison report CSS
-├── scripts/                     # Trajectory helpers
-│   ├── codearts_consolidator.py # CodeArts opencode.db → single export JSON
-│   ├── opencode_consolidator.py # OpenCode parent + sub-agent sessions → single JSON
-│   ├── step_labeler.py          # LLM-based step classifier
-│   ├── step_labeler_v2.py       # Every-step labeler (assistant via LLM, user deterministic)
-│   └── TAXONOMY_REFERENCE.md    # Phase/action tag catalog
-├── tests/                       # Workflow UI regression tests
-├── pyproject.toml               # Package metadata & dependencies
-├── requirements.txt             # Mirror of pyproject runtime dependencies
-├── .env.example                 # Sample env for the step labeler
-├── LICENSE
-└── README.md
-```
 
 ---
 
