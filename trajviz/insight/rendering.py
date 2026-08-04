@@ -1018,6 +1018,135 @@ def build_dimension_cards_html(dimensions: dict) -> str:
     return "<div class='score-dim-grid'>" + "".join(cards) + "</div>"
 
 
+# ---------------------------------------------------------------------------
+# DECAF failure attribution (Attribution tab)
+# ---------------------------------------------------------------------------
+
+_STRENGTH_STYLE = {
+    "deductive":      ("#059669", "Deductive"),       # set arithmetic, no model
+    "associational":  ("#d97706", "Associational"),   # objective trajectory fact
+    "model_inferred": ("#6366f1", "Model-inferred"),  # LLM judge
+}
+_ATTR_CAP_LABEL = {
+    "requirement_understanding": "Requirement Understanding",
+    "task_planning": "Task Planning",
+    "code_localization": "Code Localization",
+    "code_editing": "Code Editing",
+    "code_verification": "Code Verification",
+    "self_repair_loop": "Self-Repair Loop",
+    "tool_use": "Tool Use",
+}
+_LINK_ICON = {"observation": "•", "inference": "↳", "conclusion": "⇒"}
+
+
+def _attr_notice(reason: str, warn: bool = True) -> str:
+    color = "var(--ov-warn)" if warn else "var(--ov-muted)"
+    return (f"<div style='padding:1.5em;color:{color};text-align:center;font-size:14px;"
+            f"line-height:1.5;'>{html.escape(reason)}</div>")
+
+
+def _attr_scorecard_html(scorecard: list[dict], primary: dict | None) -> str:
+    """Seven capability cards; blamed capabilities colored by evidence tier."""
+    cards = []
+    prim_cap = (primary or {}).get("capability")
+    for s in scorecard:
+        cap = s["capability"]
+        label = _ATTR_CAP_LABEL.get(cap, cap)
+        if s.get("blamed"):
+            color, tier_label = _STRENGTH_STYLE.get(s.get("tier"), ("#6b7280", "—"))
+            badge = tier_label
+            score = f"{s.get('weight', 0.0):.2f}"
+            metric = (s.get("top_error") or "").replace("_", " ") or "blamed"
+        else:
+            color, badge, score, metric = "#9ca3af", "clean", "—", "no blame"
+        star = " ★" if cap == prim_cap else ""
+        cards.append(
+            f"<div class='score-dim-card'>"
+            f"<div class='score-dim-header'>"
+            f"<span class='score-dim-name'>{html.escape(label)}{star}</span>"
+            f"<span class='score-dim-badge' style='background:{color};'>{html.escape(badge)}</span>"
+            f"</div>"
+            f"<div class='score-dim-score' style='color:{color};'>{score}</div>"
+            f"<div class='score-dim-metric'>{html.escape(metric)}</div>"
+            f"</div>"
+        )
+    return "<div class='score-dim-grid'>" + "".join(cards) + "</div>"
+
+
+def _attr_fault_html(fault: dict) -> str:
+    """One collapsible fault panel: claim + strength badge + evidence chain."""
+    cap, et = fault.get("capability", ""), fault.get("error_type", "")
+    chain = fault.get("evidence_chain") or {}
+    strength = chain.get("strength", "")
+    color, tier_label = _STRENGTH_STYLE.get(strength, ("#6b7280", strength or "—"))
+    weight = fault.get("blame_weight", 0.0)
+    primary_tag = " ★ primary" if fault.get("is_primary") else ""
+    label = f"{_ATTR_CAP_LABEL.get(cap, cap)} → {et}"
+
+    links_html = []
+    for link in chain.get("links", []):
+        icon = _LINK_ICON.get(link.get("kind", ""), "•")
+        src = link.get("source", "")
+        stmt = html.escape(link.get("statement", ""))
+        quotes = ""
+        for q in link.get("quotes", []) or []:
+            quotes += (f"<div class='attr-quote'>step {html.escape(str(q.get('step')))}: "
+                       f"{html.escape(str(q.get('text', '')))}</div>")
+        links_html.append(
+            f"<div class='attr-link'><span class='attr-link-icon'>{icon}</span>"
+            f"<span class='attr-link-body'>{stmt}"
+            f"<span class='attr-link-src'>{html.escape(src)}</span>{quotes}</span></div>")
+
+    audit = (fault.get("audit") or {}).get("verdict", "")
+    audit_html = (f"<div class='attr-audit'>audit: {html.escape(audit)}</div>"
+                  if audit else "")
+    return (
+        f"<details class='judge-panel'{' open' if fault.get('is_primary') else ''}>"
+        f"<summary>"
+        f"<span class='judge-badge' style='background:{color};'>{html.escape(tier_label)}</span>"
+        f" {html.escape(label)} "
+        f"<span style='color:var(--ov-muted);font-size:12px;'>"
+        f"(blame {weight:.2f}{primary_tag})</span>"
+        f"</summary>"
+        f"<div class='judge-reasoning'>{''.join(links_html)}{audit_html}</div>"
+        f"</details>"
+    )
+
+
+def build_attribution_html(data: dict) -> str:
+    """Render the DECAF attribution result: primary banner + capability
+    scorecard + per-fault evidence chains. ``data`` is a plain dict (an
+    AttributionResult serialized) so rendering stays decoupled from ``awe``."""
+    if not data.get("available"):
+        return _attr_notice(data.get("reason") or "Attribution unavailable.")
+
+    status = data.get("blame_status") or "?"
+    primary = data.get("primary")
+    if primary:
+        head = (f"Primary cause: <b>{html.escape(_ATTR_CAP_LABEL.get(primary['capability'], primary['capability']))}</b> "
+                f"→ <code>{html.escape(primary['error_type'])}</code>")
+    else:
+        head = f"No single dominant cause (<code>{html.escape(status)}</code>)"
+    tier_note = ("7-capability (judge cache present)" if data.get("used_judge")
+                 else "5-capability deductive/associational slice")
+    banner = (
+        f"<div class='attr-banner'>"
+        f"<div class='attr-banner-head'>{head}</div>"
+        f"<div class='attr-banner-sub'>blame status: <b>{html.escape(status)}</b>"
+        f" &middot; {html.escape(tier_note)}</div></div>")
+
+    faults = data.get("faults", [])
+    faults_html = "".join(_attr_fault_html(f) for f in faults) or _attr_notice(
+        "No fault candidates — a failed run with no attributable cause "
+        "(coverage gap).", warn=False)
+
+    return (banner
+            + _attr_scorecard_html(data.get("scorecard", []), primary)
+            + "<div style='margin-top:12px;font-weight:600;font-size:13px;'>"
+              "Diagnosed faults (evidence chains)</div>"
+            + faults_html)
+
+
 def build_judge_result_html(judge_result: dict | None) -> str:
     """Render collapsible LLM judge result panel."""
     if not judge_result:

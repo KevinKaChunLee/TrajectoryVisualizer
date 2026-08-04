@@ -160,9 +160,22 @@ def diagnose(*, agent: str | None, instance_id: str | None,
             reason=f"no gold reference (data/requirements/{instance_id}.json) under "
                    f"{config.ARGUS_ROOT} — attribution needs the reference patch + "
                    f"test outcome; showing trajectory-only signals instead")
+    # An uploaded file lands at a temp path, so the corpus agent dir isn't always
+    # recoverable — require a valid agent (blame reads patch/<agent>/ + eval_<agent>).
+    if agent not in config.AGENTS:
+        return AttributionResult(
+            False, mode="corpus", agent=agent, instance_id=instance_id,
+            reason=f"could not determine the agent for '{instance_id}' "
+                   f"(got '{agent}'). Set the agent override to one of: "
+                   f"{', '.join(config.AGENTS)}")
 
     from awe.dossier import case_record
-    rec = case_record(agent, instance_id)
+    try:
+        rec = case_record(agent, instance_id)
+    except Exception as exc:  # never surface a raw traceback to the UI
+        return AttributionResult(
+            False, mode="corpus", agent=agent, instance_id=instance_id,
+            reason=f"diagnosis failed for {agent}/{instance_id}: {type(exc).__name__}: {exc}")
     if rec is None:
         return AttributionResult(
             False, mode="corpus", agent=agent, instance_id=instance_id,

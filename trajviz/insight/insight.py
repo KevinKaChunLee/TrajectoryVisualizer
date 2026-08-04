@@ -956,6 +956,34 @@ def build_ui() -> gr.Blocks:
                         "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>Load a trajectory to detect anti-patterns.</div>"
                     )
 
+            # ===== Attribution Tab (DECAF failure attribution) =====
+            with gr.TabItem("Attribution"):
+                gr.HTML(
+                    "<div class='section-subtitle'>DECAF capability failure attribution "
+                    "&mdash; which of the seven workflow capabilities broke, with tiered "
+                    "evidence (deductive / associational / model-inferred). Gold-grounded: "
+                    "needs the reference patch + test outcome for this task.</div>"
+                )
+                _attr_placeholder = (
+                    "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
+                    "Load a trajectory in the Overview tab, then click <b>Diagnose failure</b>. "
+                    "For a corpus trajectory (…/trajectory/&lt;agent&gt;/&lt;instance&gt;.json) the agent "
+                    "and instance are auto-detected from the path; for an uploaded file, set them below."
+                    "</div>"
+                )
+                attr_status_html = gr.HTML(_attr_placeholder)
+                with gr.Row(equal_height=True):
+                    attr_run_btn = gr.Button("Diagnose failure", variant="primary",
+                                             size="sm", scale=1, min_width=140)
+                with gr.Accordion("Override agent / instance (for uploaded files)",
+                                  open=False, elem_classes=["per-message-acc"]):
+                    with gr.Row(equal_height=True):
+                        attr_agent_override = gr.Textbox(
+                            label="Agent", placeholder="auto-detected from path", scale=1)
+                        attr_inst_override = gr.Textbox(
+                            label="Instance id", placeholder="auto-detected from path", scale=2)
+                attr_result_html = gr.HTML("")
+
             # ===== Comparison Tab (Converge embedded) =====
             with gr.TabItem("Comparison"):
                 _cmp_placeholder = (
@@ -1768,6 +1796,47 @@ def build_ui() -> gr.Blocks:
                     state_raw, state_dark],
             outputs=[cmp_report_html, cmp_phase_count_chart,
                      cmp_phase_duration_chart, cmp_status_html],
+        )
+
+        # -- Attribution callback (DECAF) --
+        # Self-contained (reads state_raw), so it never touches the Overview load
+        # tuple. Derives (agent, instance_id) from the loaded trajectory's source
+        # path for corpus files; the override fields cover uploaded temp paths.
+        def on_diagnose(overview_raw, agent_override, inst_override):
+            from dataclasses import asdict
+            from .rendering import build_attribution_html
+            from . import attribution as _attr
+
+            if not overview_raw:
+                return (build_attribution_html(
+                            {"available": False,
+                             "reason": "Load a trajectory in the Overview tab first."}),
+                        "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>"
+                        "No trajectory loaded.</div>")
+
+            src = overview_raw.get("_source_path", "") if isinstance(overview_raw, dict) else ""
+            agent = (agent_override or "").strip()
+            inst = (inst_override or "").strip()
+            if src:
+                if not inst:
+                    inst = os.path.splitext(os.path.basename(src))[0]
+                if not agent:
+                    agent = os.path.basename(os.path.dirname(src))
+
+            result = _attr.diagnose(agent=agent or None, instance_id=inst or None)
+            html_out = build_attribution_html(asdict(result))
+            status = (
+                "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
+                f"Diagnosis complete &mdash; {result.agent}/{result.instance_id}.</div>"
+                if result.available else
+                "<div style='color:var(--ov-muted);padding:0.5em;font-size:13px;'>"
+                "No gold-grounded attribution &mdash; see the note below.</div>")
+            return html_out, status
+
+        attr_run_btn.click(
+            fn=on_diagnose,
+            inputs=[state_raw, attr_agent_override, attr_inst_override],
+            outputs=[attr_result_html, attr_status_html],
         )
 
         # -- Workflow filter callback --
