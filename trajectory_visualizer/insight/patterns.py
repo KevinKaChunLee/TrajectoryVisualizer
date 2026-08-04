@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from bisect import bisect_right
 from collections import Counter
 
@@ -22,7 +23,7 @@ _PLAN_TOOL_NAMES = {
 }
 _READ_TOOL_NAMES = {"Read", "read", "WebFetch"}
 _SEARCH_TOOL_NAMES = {
-    "Bash", "Grep", "Glob", "grep", "glob", "find", "ToolSearch", "WebSearch",
+    "Bash", "bash", "Grep", "Glob", "grep", "glob", "find", "ToolSearch", "WebSearch",
 }
 _WRITE_TOOL_NAMES = {
     "Edit", "edit", "Write", "write", "NotebookEdit", "patch", "MultiEdit",
@@ -664,6 +665,147 @@ def compute_subagent_metrics(
 # ---------------------------------------------------------------------------
 
 _SEARCH_BASH_PREFIXES = ("grep", "rg", "ag", "find", "locate", "fgrep", "egrep", "ripgrep")
+_SHELL_PUNCTUATION = ";&|()\n"
+_WRAPPER_OPTIONS_WITH_VALUES = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "git": {
+        "-C", "-c", "--git-dir", "--work-tree", "--namespace",
+        "--super-prefix", "--config-env",
+    },
+    "sudo": {
+        "-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt",
+        "-C", "--close-from", "-r", "--role", "-t", "--type", "-T",
+        "--command-timeout", "-D", "--chdir", "-R", "--chroot", "-U",
+        "--other-user",
+    },
+    "time": {"-f", "--format", "-o", "--output"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+    "xargs": {
+        "-a", "--arg-file", "-E", "--eof", "-I", "--replace", "-L",
+        "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-s",
+        "--max-chars",
+    },
+}
+
+
+def _shell_segments(command: str) -> list[list[str]]:
+    """Lex shell command segments without evaluating or executing anything."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
+    # Preserve newlines as command boundaries while still honoring quoted ones.
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        # Be conservative for malformed/unclosed quoting.
+        return []
+
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and all(char in _SHELL_PUNCTUATION for char in token):
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _shell_name(token: str) -> str:
+    """Return a case-insensitive executable basename."""
+    return token.rsplit("/", 1)[-1].lower()
+
+
+def _is_shell_assignment(token: str) -> bool:
+    """Return True for a simple POSIX-style NAME=value assignment."""
+    name, separator, _ = token.partition("=")
+    return bool(
+        separator
+        and name
+        and (name[0].isalpha() or name[0] == "_")
+        and all(char.isalnum() or char == "_" for char in name)
+    )
+
+
+def _skip_wrapper_options(tokens: list[str], index: int, wrapper: str) -> int:
+    """Skip known wrapper flags, including flags whose value is separate."""
+    value_options = _WRAPPER_OPTIONS_WITH_VALUES.get(wrapper, set())
+    while index < len(tokens):
+        option = tokens[index]
+        if option == "--":
+            return index + 1
+        if not option.startswith("-") or option == "-":
+            return index
+        index += 1
+        if option in value_options and index < len(tokens):
+            index += 1
+    return index
+
+
+def _segment_runs_search(tokens: list[str], nesting: int = 0) -> bool:
+    """Recognize a search executable at the head of one shell segment."""
+    index = 0
+    # Bound wrapper traversal even for adversarially repetitive input.
+    for _ in range(12):
+        while index < len(tokens) and _is_shell_assignment(tokens[index]):
+            index += 1
+        if index >= len(tokens):
+            return False
+
+        command = _shell_name(tokens[index])
+        if command in _SEARCH_BASH_PREFIXES:
+            return True
+
+        if command == "git":
+            index = _skip_wrapper_options(tokens, index + 1, "git")
+            return index < len(tokens) and _shell_name(tokens[index]) == "grep"
+
+        if command == "command":
+            index += 1
+            if index < len(tokens) and tokens[index] in ("-v", "-V"):
+                return False
+            index = _skip_wrapper_options(tokens, index, "command")
+            continue
+
+        if command in ("env", "sudo", "time", "nice", "nohup", "xargs"):
+            index = _skip_wrapper_options(tokens, index + 1, command)
+            continue
+
+        if command == "timeout":
+            index = _skip_wrapper_options(tokens, index + 1, command)
+            # timeout's first positional argument is the duration.
+            index += 1
+            continue
+
+        if command == "busybox":
+            index += 1
+            continue
+
+        if command in ("bash", "dash", "ksh", "sh", "zsh") and nesting < 3:
+            # A quoted ``sh -c`` script is data to this process.  Lex it again
+            # with the same non-executing tokenizer instead of invoking a shell.
+            option_index = index + 1
+            while option_index < len(tokens) and tokens[option_index].startswith("-"):
+                flags = tokens[option_index].lstrip("-")
+                if "c" in flags and option_index + 1 < len(tokens):
+                    return any(
+                        _segment_runs_search(segment, nesting + 1)
+                        for segment in _shell_segments(tokens[option_index + 1])
+                    )
+                option_index += 1
+            return False
+
+        if command in ("if", "then", "elif", "while", "until", "do", "!"):
+            index += 1
+            continue
+
+        return False
+    return False
 
 
 def _is_search_call(tc: dict) -> bool:
@@ -679,8 +821,9 @@ def _is_search_call(tc: dict) -> bool:
     if name in ("Bash", "bash"):
         inp = tc.get("input", {})
         cmd = inp.get("command", "") if isinstance(inp, dict) else ""
-        cmd = str(cmd).lstrip().lower()
-        return any(cmd == p or cmd.startswith(p + " ") for p in _SEARCH_BASH_PREFIXES)
+        if not isinstance(cmd, str) or not cmd.strip():
+            return False
+        return any(_segment_runs_search(segment) for segment in _shell_segments(cmd))
     return True
 
 

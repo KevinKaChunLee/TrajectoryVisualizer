@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from .canonical import CanonicalAction, compute_action_cost, DEFAULT_TOKEN_RATE
 
 
@@ -23,6 +25,11 @@ DEFAULT_PATTERN_CONFIDENCE: dict[str, float] = {
 # Step distance threshold: rewrites within this many steps are instability
 _CLOSE_REWRITE_STEPS = 3
 
+# Ordering inefficiency requires enough distinct shared actions to establish an
+# order, and at least this fraction of all possible pairs must be inverted.
+_MIN_ORDERING_SIGNATURES = 3
+_ORDERING_INVERSION_FRACTION = 0.30
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,6 +48,75 @@ def _action_id(action: CanonicalAction, index_in_extras: int) -> tuple[int, str,
     same step (e.g., two FILE_WRITEs) are not suppressed by a shared step_index.
     """
     return (action.step_index, action.target, index_in_extras)
+
+
+def _unique_action_signatures(
+    actions: list[CanonicalAction],
+) -> list[tuple[str, str]]:
+    """Return first-occurrence order for unique canonical action signatures."""
+    signatures: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for action in actions:
+        if action.action_type == "REASON" or not action.action_type or not action.target:
+            continue
+        signature = (action.action_type, action.target)
+        if signature not in seen:
+            seen.add(signature)
+            signatures.append(signature)
+    return signatures
+
+
+def _count_inversions(ranks: list[int]) -> int:
+    """Count pairwise inversions in a short sequence of unique ranks."""
+    return sum(
+        1
+        for i in range(len(ranks))
+        for j in range(i + 1, len(ranks))
+        if ranks[i] > ranks[j]
+    )
+
+
+def _ordering_inefficiency_pattern(
+    reference_actions: list[CanonicalAction],
+    compared_actions: list[CanonicalAction],
+) -> dict | None:
+    """Detect substantial reordering among unique actions shared by both runs."""
+    reference_signatures = _unique_action_signatures(reference_actions)
+    compared_signatures = _unique_action_signatures(compared_actions)
+    common = set(reference_signatures) & set(compared_signatures)
+    if len(common) < _MIN_ORDERING_SIGNATURES:
+        return None
+
+    reference_order = [sig for sig in reference_signatures if sig in common]
+    compared_order = [sig for sig in compared_signatures if sig in common]
+    reference_rank = {signature: rank for rank, signature in enumerate(reference_order)}
+    compared_ranks = [reference_rank[signature] for signature in compared_order]
+    inversions = _count_inversions(compared_ranks)
+    possible_inversions = len(common) * (len(common) - 1) // 2
+    threshold = max(
+        1,
+        math.ceil(possible_inversions * _ORDERING_INVERSION_FRACTION),
+    )
+    if inversions < threshold:
+        return None
+
+    common_steps: dict[tuple[str, str], int] = {}
+    for action in compared_actions:
+        signature = (action.action_type, action.target)
+        if signature in common and signature not in common_steps:
+            common_steps[signature] = action.step_index
+
+    ratio = inversions / possible_inversions if possible_inversions else 0.0
+    return _make_pattern(
+        ptype="ordering_inefficiency",
+        evidence=[
+            f"{inversions} inversions across {len(common)} unique common actions "
+            f"(threshold {threshold})",
+        ],
+        steps=[common_steps[sig] for sig in compared_order if sig in common_steps],
+        tokens=0,
+        confidence=min(0.9, 0.5 + ratio * 0.4),
+    )
 
 
 def _make_pattern(
@@ -76,11 +152,13 @@ def classify_divergences(
     all_compared_actions: list[CanonicalAction],
     matched_pairs: list[tuple[int, int]] | None = None,
     anchor_files: set[str] | None = None,
+    reference_actions: list[CanonicalAction] | None = None,
 ) -> list[dict]:
     """Classify extra (unmatched) compared actions into divergence patterns.
 
     Returns list of pattern dicts with type, evidence, steps, estimated_extra_cost,
-    confidence, and evidence_level.
+    confidence, and evidence_level. ``reference_actions`` is optional for backward
+    compatibility; ordering analysis is skipped when it is not provided.
     """
     patterns: list[dict] = []
     classified: set[tuple[int, str, int]] = set()
@@ -237,35 +315,16 @@ def classify_divergences(
             _mark_classified(a, i)
 
     # ── ordering_inefficiency ──
-    # Compare positional ranks within each sequence, not raw indices which
-    # belong to different arrays and are not directly comparable.
-    if matched_pairs:
-        n_compared = len(all_compared_actions)
-        n_pairs = len(matched_pairs)
-        threshold = max(3, int(n_pairs * 0.3))
-        # Rank each matched pair by its position in the reference order and in
-        # the compared order; a large rank gap means the action was performed
-        # out of order (raw cross-array indices are not comparable).
-        ref_rank = {k: r for r, k in enumerate(
-            sorted(range(n_pairs), key=lambda k: matched_pairs[k][0]))}
-        cmp_rank = {k: r for r, k in enumerate(
-            sorted(range(n_pairs), key=lambda k: matched_pairs[k][1]))}
-        for pair_pos, (ref_idx, cmp_idx) in enumerate(matched_pairs):
-            if cmp_idx >= n_compared:
-                continue
-            positional_gap = abs(cmp_rank[pair_pos] - ref_rank[pair_pos])
-            if positional_gap > threshold:
-                a = all_compared_actions[cmp_idx]
-                aid = _action_id(a, -1 - pair_pos)  # negative index for non-extra actions
-                if aid not in classified:
-                    patterns.append(_make_pattern(
-                        ptype="ordering_inefficiency",
-                        evidence=[f"{a.action_type}({a.target}) reordered — "
-                                  f"reference rank {ref_rank[pair_pos]} vs compared rank {cmp_rank[pair_pos]}"],
-                        steps=[a.step_index],
-                        tokens=0,
-                    ))
-                    classified.add(aid)
+    # LCS matched pairs are monotonic by construction, so reordering must be
+    # measured independently over the unique action signatures shared by the
+    # two complete trajectories.
+    if reference_actions is not None:
+        ordering_pattern = _ordering_inefficiency_pattern(
+            reference_actions,
+            all_compared_actions,
+        )
+        if ordering_pattern is not None:
+            patterns.append(ordering_pattern)
 
     # ── dead_end_branch ──
     dead_end_run: list[tuple[int, CanonicalAction]] = []

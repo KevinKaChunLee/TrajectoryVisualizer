@@ -404,6 +404,21 @@ def _build_overview_kpi_html(metrics: dict, wall_fmt: str,
         "Tool Success": "tool_success",
     }
 
+    output_rate = metrics.get("output_tokens_per_sec")
+    if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
+        throughput_sub = f"{output_rate:,} output tok/s"
+    else:
+        throughput_sub = "Output throughput: N/A"
+    timed_steps = metrics.get("output_throughput_timed_steps")
+    throughput_steps = metrics.get("output_throughput_total_steps")
+    if (
+        metrics.get("output_throughput_incomplete")
+        and isinstance(timed_steps, int)
+        and isinstance(throughput_steps, int)
+        and throughput_steps > 0
+    ):
+        throughput_sub += f" · {timed_steps}/{throughput_steps} timed"
+
     user_steps = metrics.get('user_steps', 0)
     cards = [
         ("Steps", f"{metrics.get('total_steps', 0):,}",
@@ -411,7 +426,7 @@ def _build_overview_kpi_html(metrics: dict, wall_fmt: str,
         ("Wall-Clock", wall_fmt,
          f"P95 {metrics.get('p95_duration', 0)}s"),
         ("Tokens", f"{metrics.get('tokens', {}).get('total', 0):,}",
-         f"{metrics.get('tokens_per_second', 0):,} tok/s"),
+         throughput_sub),
         ("Tool Success", f"{metrics.get('tool_success_rate', 0)}%",
          f"{metrics.get('tool_call_count', 0):,} calls"),
     ]

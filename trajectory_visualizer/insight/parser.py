@@ -293,7 +293,7 @@ def _fill_missing_last_step_duration(steps: list[dict], raw: dict) -> None:
     if not steps:
         return
     last = steps[-1]
-    if last.get("duration") not in (None, 0, 0.0):
+    if last.get("duration") is not None:
         return
     start_ms = last.get("time_created_ms")
     if not isinstance(start_ms, (int, float)):

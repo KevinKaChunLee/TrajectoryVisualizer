@@ -1,5 +1,6 @@
 """Metric computation, health verdicts, and agent summaries."""
 
+import math
 import statistics
 from typing import Any
 
@@ -159,12 +160,20 @@ def _compute_command_metrics(steps: list[dict]) -> dict:
     }
 
 
-def _compute_timing_metrics(steps: list[dict], total_output_tokens: int) -> dict:
-    """Compute throughput timing: TTFT, output tok/s, TTLT."""
+def _compute_timing_metrics(steps: list[dict]) -> dict:
+    """Compute TTFT, output throughput, TTLT, and timing coverage.
+
+    Output throughput uses output tokens and duration from the exact same set
+    of assistant steps.  This prevents untimed output (which is common for
+    some sub-agent final messages) from inflating the measured rate.
+    """
     first_user_created = None
     first_asst_completed = None
     last_asst_completed = None
-    total_asst_duration = 0.0
+    timed_asst_duration = 0.0
+    timed_output_tokens = 0.0
+    assistant_step_count = 0
+    timed_assistant_step_count = 0
 
     for s in steps:
         role = s.get("role", "")
@@ -173,13 +182,30 @@ def _compute_timing_metrics(steps: list[dict], total_output_tokens: int) -> dict
         if role == "user" and first_user_created is None and isinstance(t_created, (int, float)):
             first_user_created = t_created
         if role == "assistant":
+            assistant_step_count += 1
             if isinstance(t_completed, (int, float)):
                 if first_asst_completed is None:
                     first_asst_completed = t_completed
                 last_asst_completed = t_completed
-            d = s.get("duration")
-            if d is not None:
-                total_asst_duration += d
+
+            duration = s.get("duration")
+            output_tokens = s.get("tokens", {}).get("output")
+            has_duration = (
+                isinstance(duration, (int, float))
+                and not isinstance(duration, bool)
+                and math.isfinite(duration)
+                and duration > 0
+            )
+            has_output_tokens = (
+                isinstance(output_tokens, (int, float))
+                and not isinstance(output_tokens, bool)
+                and math.isfinite(output_tokens)
+                and output_tokens >= 0
+            )
+            if has_duration and has_output_tokens:
+                timed_assistant_step_count += 1
+                timed_asst_duration += duration
+                timed_output_tokens += output_tokens
 
     result: dict = {}
     if first_user_created is not None and first_asst_completed is not None:
@@ -188,9 +214,20 @@ def _compute_timing_metrics(steps: list[dict], total_output_tokens: int) -> dict
         result["time_to_first_token"] = None
 
     result["output_tokens_per_sec"] = (
-        round(total_output_tokens / total_asst_duration, 1)
-        if total_asst_duration > 0 and total_output_tokens > 0 else None
+        round(timed_output_tokens / timed_asst_duration, 1)
+        if timed_asst_duration > 0 and timed_output_tokens > 0 else None
     )
+    result["output_throughput_timed_steps"] = timed_assistant_step_count
+    result["output_throughput_total_steps"] = assistant_step_count
+    result["output_throughput_coverage_pct"] = (
+        round(timed_assistant_step_count / assistant_step_count * 100, 1)
+        if assistant_step_count else None
+    )
+    result["output_throughput_incomplete"] = (
+        timed_assistant_step_count < assistant_step_count
+    )
+    result["output_throughput_timed_tokens"] = timed_output_tokens
+    result["output_throughput_timed_seconds"] = round(timed_asst_duration, 3)
 
     if first_user_created is not None and last_asst_completed is not None:
         result["time_to_last_token"] = round((last_asst_completed - first_user_created) / 1000, 3)
@@ -423,7 +460,7 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
         **_compute_tool_stats(steps, total_tokens["total"], total_duration, message_rows),
         **_compute_efficiency_stats(steps, message_rows, raw),
         **_compute_command_metrics(steps),
-        **_compute_timing_metrics(steps, total_tokens["output"]),
+        **_compute_timing_metrics(steps),
         **_compute_plan_metrics(steps),
     }
 
@@ -586,17 +623,31 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     # cumulative cache-read context (re-counted every turn) by wall time and is
     # inflated ~(#turns)x, making the verdict structurally "good".
     gen_rate = metrics.get("output_tokens_per_sec")
+    timed_steps = metrics.get("output_throughput_timed_steps")
+    throughput_steps = metrics.get("output_throughput_total_steps")
+    incomplete_timing = metrics.get("output_throughput_incomplete", False)
+    coverage_note = ""
+    if (
+        incomplete_timing
+        and isinstance(timed_steps, int)
+        and isinstance(throughput_steps, int)
+        and throughput_steps > 0
+    ):
+        coverage_note = f"; based on {timed_steps}/{throughput_steps} assistant steps with timing"
     if gen_rate is None:
-        verdicts.append({"metric": "Throughput", "status": "good", "label": "N/A", "detail": "No timing/token data"})
+        detail = "No timing/output-token data"
+        if coverage_note:
+            detail += coverage_note
+        verdicts.append({"metric": "Throughput", "status": "good", "label": "N/A", "detail": detail})
     elif gen_rate >= 50:
-        verdicts.append({"metric": "Throughput", "status": "good", "label": f"{gen_rate} tok/s",
-                         "detail": f"{gen_rate} tok/s — strong throughput"})
+        verdicts.append({"metric": "Throughput", "status": "good", "label": f"{gen_rate} output tok/s",
+                         "detail": f"{gen_rate} output tok/s — strong throughput{coverage_note}"})
     elif gen_rate >= 20:
-        verdicts.append({"metric": "Throughput", "status": "warn", "label": f"{gen_rate} tok/s",
-                         "detail": f"{gen_rate} tok/s — moderate throughput"})
+        verdicts.append({"metric": "Throughput", "status": "warn", "label": f"{gen_rate} output tok/s",
+                         "detail": f"{gen_rate} output tok/s — moderate throughput{coverage_note}"})
     else:
-        verdicts.append({"metric": "Throughput", "status": "bad", "label": f"{gen_rate} tok/s",
-                         "detail": f"{gen_rate} tok/s — low throughput"})
+        verdicts.append({"metric": "Throughput", "status": "bad", "label": f"{gen_rate} output tok/s",
+                         "detail": f"{gen_rate} output tok/s — low throughput{coverage_note}"})
 
     # Failed tool calls — tool_fail counts failing tool CALLS (already reflected
     # in Tool Success); label accordingly rather than as "error steps".

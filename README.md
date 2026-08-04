@@ -109,7 +109,7 @@ TrajectoryVisualizer auto-detects and normalizes the following formats on load:
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
-| Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the OpenCode-style step model (select **OpenCode** in the format dropdown); tool intent (Read / Grep / Glob / Write / Bash) inferred from each `exec_command` shell command |
+| Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the shared step model (select **Codex** in the format dropdown); tool intent (Read / Grep / Glob / Write / Bash) inferred from classic `exec_command` calls and modern `exec` / `apply_patch` records |
 
 ---
 
@@ -216,11 +216,11 @@ files) — no exporter needed.
 1. Run a Codex session as normal.
 2. Locate the rollout file for the session — the most recent
    `rollout-*.jsonl` under `~/.codex/sessions/`.
-3. Upload the `.jsonl` file and select **OpenCode** as the format. The loader
+3. Upload the `.jsonl` file and select **Codex** as the format. The loader
    detects the leading `session_meta` event and threads the rollout into the
-   OpenCode-style step model. Codex exposes a single `exec_command` tool, so
-   per-step tool intent (Read / Grep / Glob / Write / Bash) is inferred from
-   the shell command text.
+   shared step model. Per-step tool intent (Read / Grep / Glob / Write / Bash)
+   is inferred from classic `exec_command` calls and modern `exec` /
+   `apply_patch` records.
 
 ---
 
@@ -277,7 +277,7 @@ python scripts/step_labeler.py cc_trajectory.json \
 ```
 
 Upload the trajectory **and** its labels sidecar in the dashboard's two upload
-slots to unlock the semantic pattern detectors and label-phase charts.
+slots to unlock phase-aware analytics and label-phase charts.
 
 ---
 

@@ -41,7 +41,7 @@ import json
 import sqlite3
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Set, Optional
+from typing import Dict, List, Any, Set, Optional, Iterable
 
 
 def get_db_path() -> Path:
@@ -314,6 +314,28 @@ def print_usage():
     print(f"  OPENCODE_DATABASE=/custom/opencode.db {sys.argv[0]} ses_123abc456", file=sys.stderr)
 
 
+def ensure_output_is_not_source(
+    output_path: str | Path, source_paths: Iterable[str | Path]
+) -> None:
+    """Refuse to replace the live database or one of its SQLite sidecars."""
+    if str(output_path) == "-":
+        return
+
+    destination = Path(output_path).expanduser().resolve()
+    for source_path in source_paths:
+        source = Path(source_path).expanduser().resolve()
+        same_file = destination == source
+        if not same_file and destination.exists() and source.exists():
+            try:
+                same_file = os.path.samefile(destination, source)
+            except OSError:
+                # The resolved-path comparison above still protects the common
+                # case when a locked database cannot be inspected further.
+                same_file = False
+        if same_file:
+            raise ValueError(f"Output path would overwrite input source: {source}")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print_usage()
@@ -334,6 +356,15 @@ def main():
         print(f"Error: Database not found at {db_path}", file=sys.stderr)
         sys.exit(1)
 
+    try:
+        ensure_output_is_not_source(
+            output_file,
+            [db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")],
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     print(f"Reading from database: {db_path}", file=sys.stderr)
 
     conn = None
@@ -352,76 +383,12 @@ def main():
         if result.get("messages"):
             result["messages"].sort(key=lambda m: m.get("info", {}).get("time", {}).get("created", 0))
 
-            # Convert cumulative session tokens to per-step tokens
-            # The database stores cumulative totals per session, we want per-step deltas
-            from collections import defaultdict
-            
-            def get_token_total(tokens: dict) -> int:
-                """Calculate total tokens from a token dict, handling missing fields."""
-                total = tokens.get("total", 0)
-                if total == 0:
-                    # Calculate total from components if total is 0
-                    total = (tokens.get("input", 0) or 0) + (tokens.get("output", 0) or 0)
-                    total += tokens.get("reasoning", 0) or 0
-                    cache = tokens.get("cache", {})
-                    if isinstance(cache, dict):
-                        total += (cache.get("read", 0) or 0) + (cache.get("write", 0) or 0)
-                return total
-
-            # Track previous cumulative values per session
-            prev_tokens = {}
-            
-            for msg in result["messages"]:
-                if msg["info"].get("role") != "assistant":
-                    continue
-                
-                sid = msg["info"].get("sessionID")
-                tokens = msg["info"].get("tokens", {})
-                if not tokens:
-                    continue
-                
-                # Calculate tokens for this message
-                current_total = get_token_total(tokens)
-                current_input = tokens.get("input", 0) or 0
-                current_output = tokens.get("output", 0) or 0
-                current_reasoning = tokens.get("reasoning", 0) or 0
-                current_cache = tokens.get("cache", {}) if isinstance(tokens.get("cache"), dict) else {}
-                current_cache_read = current_cache.get("read", 0) or 0
-                current_cache_write = current_cache.get("write", 0) or 0
-
-                if sid in prev_tokens:
-                    prev = prev_tokens[sid]
-                    # Per-step deltas. Cache read/write are cumulative too and
-                    # must be delta'd alongside the rest, otherwise they stay
-                    # cumulative and over-count on every message after the first.
-                    tokens["total"] = max(0, current_total - prev["total"])
-                    tokens["input"] = max(0, current_input - prev["input"])
-                    tokens["output"] = max(0, current_output - prev["output"])
-                    tokens["reasoning"] = max(0, current_reasoning - prev["reasoning"])
-                    if isinstance(tokens.get("cache"), dict):
-                        tokens["cache"]["read"] = max(0, current_cache_read - prev["cache_read"])
-                        tokens["cache"]["write"] = max(0, current_cache_write - prev["cache_write"])
-                else:
-                    # First message - all tokens are the initial consumption
-                    # Keep as-is since it represents tokens used in that first step
-                    pass
-
-                # Update previous tracking (cumulative values seen for this session)
-                prev_tokens[sid] = {
-                    "total": current_total,
-                    "input": current_input,
-                    "output": current_output,
-                    "reasoning": current_reasoning,
-                    "cache_read": current_cache_read,
-                    "cache_write": current_cache_write,
-                }
-
         output = json.dumps(result, indent=2, ensure_ascii=False)
 
         if output_file == "-":
             print(output)
         else:
-            output_path = Path(output_file)
+            output_path = Path(output_file).expanduser()
             output_path.write_text(output, encoding="utf-8")
             print(f"Exported to {output_path}", file=sys.stderr)
 

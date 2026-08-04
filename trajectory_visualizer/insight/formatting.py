@@ -238,8 +238,8 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
     ]
     eff_chips = [
         _metric_chip("Avg tok/step", f"{metrics['avg_tokens_per_step']:,}"),
-        _metric_chip("Tok/sec", f"{metrics['tokens_per_second']:,}"),
-        _metric_chip("Med tok/sec", f"{metrics['median_tokens_per_second']:,}"),
+        _metric_chip("Total processed tok/sec", f"{metrics['tokens_per_second']:,}"),
+        _metric_chip("Median processed tok/sec", f"{metrics['median_tokens_per_second']:,}"),
         _metric_chip("Out/In ratio", str(metrics["output_input_ratio"]) if has_breakdown else "N/A"),
         _metric_chip("Tok/tool call", f"{metrics['tokens_per_tool']:,}"),
     ]
@@ -372,7 +372,11 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
     total_tokens = metrics.get("tokens", {}).get("total", 0)
     if total_tokens > 0:
         parts.append(f"{total_tokens:,} tokens &middot; ")
-        parts.append(f"{metrics['tokens_per_second']} tok/s &middot; ")
+        output_rate = metrics.get("output_tokens_per_sec")
+        if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
+            parts.append(f"{output_rate} output tok/s &middot; ")
+        else:
+            parts.append(f"{metrics['tokens_per_second']} total processed tok/s &middot; ")
     parts.append(f"{wall_fmt} wall-clock")
     if metrics.get("reasoning_parts", 0) > 0:
         parts.append(f" &middot; {metrics['reasoning_parts']} reasoning")

@@ -181,6 +181,7 @@ def run_comparison(
             extra_actions, matched_actions, cmp_actions,
             matched_pairs=alignment["matched_pairs"],
             anchor_files=anchor_files,
+            reference_actions=ref_actions,
         )
         compute_pattern_costs(patterns, token_rate)
 

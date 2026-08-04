@@ -327,7 +327,8 @@ def build_comparison_report(
     matched_actions = [cmp_actions[j] for _, j in alignment["matched_pairs"] if j < len(cmp_actions)]
     patterns = classify_divergences(extra_actions, matched_actions, cmp_actions,
                                      matched_pairs=alignment["matched_pairs"],
-                                     anchor_files=anchor_files)
+                                     anchor_files=anchor_files,
+                                     reference_actions=ref_actions)
     compute_pattern_costs(patterns, token_rate)
 
     # Collect dead_end_branch steps for harmful divergence

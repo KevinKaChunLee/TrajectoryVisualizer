@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,56 @@ except ImportError:  # Direct execution from scripts/.
 
 USER_DEFAULT_LABEL = {"phase": "user", "action": "user_prompt"}
 OTHER_DEFAULT_LABEL = {"phase": "unknown", "action": "unknown"}
+
+
+class OutputSafetyError(ValueError):
+    """Raised when label output would replace the source trajectory."""
+
+
+def _ensure_output_is_not_input(
+    trajectory_path: str | Path, output_path: str | Path
+) -> None:
+    source = Path(trajectory_path).expanduser().resolve()
+    destination = Path(output_path).expanduser().resolve()
+    same_file = source == destination
+    if not same_file and source.exists() and destination.exists():
+        try:
+            same_file = os.path.samefile(source, destination)
+        except OSError:
+            same_file = False
+    if same_file:
+        raise OutputSafetyError(
+            f"Output path would overwrite input trajectory: {source}"
+        )
+
+
+def _write_json_atomic(output_path: str | Path, data: dict[str, Any]) -> None:
+    """Replace a label sidecar only after its complete JSON is durable."""
+    path = Path(output_path).expanduser().resolve()
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_name = handle.name
+            json.dump(data, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+        temporary_name = None
+    finally:
+        if temporary_name is not None:
+            try:
+                Path(temporary_name).unlink()
+            except OSError:
+                pass
 
 
 def load_all_steps(trajectory_path: str) -> list[dict]:
@@ -125,6 +176,7 @@ def label_trajectory(
     user_action: str = USER_DEFAULT_LABEL["action"],
 ) -> None:
     """Label assistants and emit labels for every parsed source index."""
+    _ensure_output_is_not_input(trajectory_path, output_path)
     if taxonomy_path is None:
         taxonomy_path = str(Path(__file__).resolve().parent / "TAXONOMY_REFERENCE.md")
     taxonomy_mapping, taxonomy_version = v1.load_taxonomy(taxonomy_path)
@@ -269,8 +321,7 @@ def label_trajectory(
         "steps": labeled_steps,
     }
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+    _write_json_atomic(output_path, output)
 
     assistant_classified = assistant_count - assistant_unknown
     print(
@@ -331,21 +382,24 @@ def main() -> None:
         inp = Path(args.input)
         output_path = str(inp.parent / f"{inp.stem}_labeled_v2.json")
 
-    label_trajectory(
-        trajectory_path=args.input,
-        output_path=output_path,
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        provider=provider,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        max_content_chars=args.max_content_chars,
-        delay=args.delay,
-        taxonomy_path=args.taxonomy,
-        user_phase=args.user_phase,
-        user_action=args.user_action,
-    )
+    try:
+        label_trajectory(
+            trajectory_path=args.input,
+            output_path=output_path,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            provider=provider,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_content_chars=args.max_content_chars,
+            delay=args.delay,
+            taxonomy_path=args.taxonomy,
+            user_phase=args.user_phase,
+            user_action=args.user_action,
+        )
+    except OutputSafetyError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

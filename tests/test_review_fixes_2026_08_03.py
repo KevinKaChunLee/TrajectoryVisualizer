@@ -53,10 +53,15 @@ class CodexLoaderTests(unittest.TestCase):
             _codex_event("response_item", "2026-01-05T12:00:05.000Z",
                          {"type": "custom_tool_call_output", "call_id": "c1", "output": "done"}),
             _codex_event("event_msg", "2026-01-05T12:00:06.000Z",
-                         {"type": "token_count", "info": {"last_token_usage":
-                          {"input_tokens": 1000, "cached_input_tokens": 800,
-                           "output_tokens": 50, "reasoning_output_tokens": 20,
-                           "total_tokens": 1070}}}),
+                         {"type": "token_count", "info": {
+                          "last_token_usage":
+                              {"input_tokens": 1000, "cached_input_tokens": 800,
+                               "output_tokens": 50, "reasoning_output_tokens": 20,
+                               "total_tokens": 1070},
+                          "total_token_usage":
+                              {"input_tokens": 1000, "cached_input_tokens": 800,
+                               "output_tokens": 50, "reasoning_output_tokens": 20,
+                               "total_tokens": 1070}}}),
             _codex_event("event_msg", "2026-01-05T12:00:07.000Z", {"type": "task_complete"}),
         ]
 
@@ -78,10 +83,108 @@ class CodexLoaderTests(unittest.TestCase):
         self.assertEqual(m["tokens"]["total"], 1070)
         self.assertGreater(m["total_duration"], 0)
 
+    def test_multiple_token_counts_are_accumulated_and_duplicates_ignored(self):
+        extra_usage = _codex_event(
+            "event_msg", "2026-01-05T12:00:06.500Z",
+            {"type": "token_count", "info": {
+                "last_token_usage": {
+                    "input_tokens": 200, "cached_input_tokens": 150,
+                    "output_tokens": 5, "reasoning_output_tokens": 2,
+                    "total_tokens": 205,
+                },
+                "total_token_usage": {
+                    "input_tokens": 1200, "cached_input_tokens": 950,
+                    "output_tokens": 55, "reasoning_output_tokens": 22,
+                    "total_tokens": 1275,
+                },
+            }},
+        )
+        duplicate_usage = _codex_event(
+            "event_msg", "2026-01-05T12:00:06.750Z", extra_usage["payload"],
+        )
+        events = self.events[:-1] + [extra_usage, duplicate_usage, self.events[-1]]
+        raw = load_trajectory(_write(self.tmp, "multi-usage.jsonl", events, jsonl=True))
+        tokens = parse_steps(raw)[-1]["tokens"]
+
+        self.assertEqual(tokens["total"], 1275)
+        self.assertEqual(tokens["input"], 1200)
+        self.assertEqual(tokens["output"], 55)
+        self.assertEqual(tokens["reasoning"], 22)
+        self.assertEqual(tokens["cache_read"], 950)
+
+    def test_same_cumulative_with_different_last_usage_is_not_a_duplicate(self):
+        parallel_usage = _codex_event(
+            "event_msg", "2026-01-05T12:00:06.500Z",
+            {"type": "token_count", "info": {
+                "last_token_usage": {
+                    "input_tokens": 9, "cached_input_tokens": 8,
+                    "output_tokens": 1, "reasoning_output_tokens": 0,
+                    "total_tokens": 10,
+                },
+                "total_token_usage": self.events[-2]["payload"]["info"]["total_token_usage"],
+            }},
+        )
+        events = self.events[:-1] + [parallel_usage, self.events[-1]]
+        raw = load_trajectory(_write(self.tmp, "parallel-usage.jsonl", events, jsonl=True))
+        self.assertEqual(parse_steps(raw)[-1]["tokens"]["total"], 1080)
+
     def test_custom_tool_call_captured(self):
         steps = parse_steps(self._load())
         tools = [t["tool_name"] for s in steps for t in s["tool_calls"]]
         self.assertIn("Write", tools)  # sed -i classified as Write
+
+    def test_modern_exec_input_preserves_and_classifies_command(self):
+        modern_call = _codex_event(
+            "response_item", "2026-01-05T12:00:05.100Z",
+            {"type": "custom_tool_call", "call_id": "c2", "name": "exec",
+             "input": 'const r = await tools.exec_command({"cmd":"rg -n needle src"});'},
+        )
+        modern_output = _codex_event(
+            "response_item", "2026-01-05T12:00:05.200Z",
+            {"type": "custom_tool_call_output", "call_id": "c2", "output": "match"},
+        )
+        events = self.events[:-2] + [modern_call, modern_output] + self.events[-2:]
+        steps = parse_steps(load_trajectory(
+            _write(self.tmp, "modern-exec.jsonl", events, jsonl=True)))
+        tool = next(t for s in steps for t in s["tool_calls"] if t["tool_id"] == "c2")
+        self.assertEqual(tool["tool_name"], "Grep")
+        self.assertEqual(tool["input"]["command"], "rg -n needle src")
+
+    def test_modern_apply_patch_is_a_write_with_target(self):
+        patch = "*** Begin Patch\n*** Update File: src/app.py\n@@\n-old\n+new\n*** End Patch"
+        modern_call = _codex_event(
+            "response_item", "2026-01-05T12:00:05.100Z",
+            {"type": "custom_tool_call", "call_id": "c2", "name": "apply_patch",
+             "input": patch},
+        )
+        modern_output = _codex_event(
+            "response_item", "2026-01-05T12:00:05.200Z",
+            {"type": "custom_tool_call_output", "call_id": "c2", "output": "Done!"},
+        )
+        events = self.events[:-2] + [modern_call, modern_output] + self.events[-2:]
+        steps = parse_steps(load_trajectory(
+            _write(self.tmp, "modern-patch.jsonl", events, jsonl=True)))
+        tool = next(t for s in steps for t in s["tool_calls"] if t["tool_id"] == "c2")
+        self.assertEqual(tool["tool_name"], "Write")
+        self.assertEqual(tool["input"]["file_path"], "src/app.py")
+        self.assertEqual(tool["input"]["patch"], patch)
+
+    def test_non_shell_function_call_preserves_name_and_arguments(self):
+        spawn = _codex_event(
+            "response_item", "2026-01-05T12:00:05.100Z",
+            {"type": "function_call", "call_id": "c2", "name": "spawn_agent",
+             "arguments": json.dumps({"task_name": "review", "message": "inspect"})},
+        )
+        spawn_output = _codex_event(
+            "response_item", "2026-01-05T12:00:05.200Z",
+            {"type": "function_call_output", "call_id": "c2", "output": "queued"},
+        )
+        events = self.events[:-2] + [spawn, spawn_output] + self.events[-2:]
+        steps = parse_steps(load_trajectory(
+            _write(self.tmp, "spawn.jsonl", events, jsonl=True)))
+        tool = next(t for s in steps for t in s["tool_calls"] if t["tool_id"] == "c2")
+        self.assertEqual(tool["tool_name"], "spawn_agent")
+        self.assertEqual(tool["input"]["task_name"], "review")
 
     def test_metadata_normalized(self):
         md = self._load()["metadata"]
@@ -98,11 +201,32 @@ class CodexLoaderTests(unittest.TestCase):
         raw = load_trajectory(p)
         self.assertNotIn("_error", raw)
 
+    def test_malformed_interior_jsonl_is_rejected(self):
+        p = os.path.join(self.tmp, "corrupt.jsonl")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(json.dumps(self.events[0]) + "\n")
+            f.write('{"type": definitely-not-json}\n')
+            f.write(json.dumps(self.events[1]) + "\n")
+        raw = load_trajectory(p)
+        self.assertIn("_error", raw)
+        self.assertIn("line 2", raw["_error"])
+
     def test_non_dict_first_line_errors_gracefully(self):
         p = os.path.join(self.tmp, "weird.jsonl")
         with open(p, "w", encoding="utf-8") as f:
             f.write('"just a string"\n')
         self.assertIn("_error", load_trajectory(p))
+
+    def test_malformed_metadata_and_reasoning_entries_do_not_crash(self):
+        events = [
+            _codex_event("session_meta", "2026-01-05T12:00:00Z", None),
+            _codex_event("response_item", "2026-01-05T12:00:01Z",
+                         {"type": "reasoning", "summary": [None, {"text": "ok"}]}),
+            _codex_event("event_msg", "2026-01-05T12:00:02Z", {"type": "task_complete"}),
+        ]
+        raw = load_trajectory(_write(self.tmp, "malformed-fields.jsonl", events, jsonl=True))
+        self.assertNotIn("_error", raw)
+        self.assertEqual(parse_steps(raw)[0]["text_preview"], "ok")
 
 
 class ClaudeCodeLoaderTests(unittest.TestCase):
@@ -169,6 +293,18 @@ class RobustnessTests(unittest.TestCase):
         rendering.render_workflow_html(steps)
         rendering.render_toc_sidebar(steps)
         rendering._format_step_header(steps[0])
+
+    def test_explicit_zero_duration_is_not_backfilled(self):
+        raw = {
+            "messages": [{
+                "info": {"role": "assistant", "time": {"created": 1000, "completed": 1000}},
+                "parts": [{"type": "text", "text": "instant"}],
+            }],
+            "timing": {"finished_at": "1970-01-01T00:00:10Z"},
+        }
+        step = parse_steps(raw)[0]
+        self.assertEqual(step["duration"], 0.0)
+        self.assertEqual(step["time_completed_ms"], 1000)
 
 
 class XssTests(unittest.TestCase):
