@@ -1687,13 +1687,13 @@ def build_ui() -> gr.Blocks:
             state_raw,
         ]
 
-        load_btn.click(
+        _load_ev = load_btn.click(
             fn=do_load,
             inputs=[file_upload, state_dark, format_selector],
             outputs=all_outputs,
         )
         # Auto-load when file is uploaded (no separate click needed)
-        file_upload.change(
+        _upload_ev = file_upload.change(
             fn=do_load,
             inputs=[file_upload, state_dark, format_selector],
             outputs=all_outputs,
@@ -1838,6 +1838,15 @@ def build_ui() -> gr.Blocks:
             inputs=[state_raw, attr_agent_override, attr_inst_override],
             outputs=[attr_result_html, attr_status_html],
         )
+        # Auto-populate the Attribution tab after a trajectory loads (corpus files
+        # attribute immediately; off-corpus uploads show the degradation notice).
+        # Chained via .then() so state_raw is already refreshed by do_load.
+        for _ev in (_load_ev, _upload_ev):
+            _ev.then(
+                fn=on_diagnose,
+                inputs=[state_raw, attr_agent_override, attr_inst_override],
+                outputs=[attr_result_html, attr_status_html],
+            )
 
         # -- Workflow filter callback --
         def do_filter_workflow(steps, filter_csv, keyword, current_toc):

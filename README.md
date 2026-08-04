@@ -121,6 +121,36 @@ trajviz auto-detects and normalizes the following formats on load:
 
 ---
 
+## Failure attribution (DECAF)
+
+The **Attribution** tab explains *why* a failed run failed: it diagnoses which of
+seven workflow capabilities broke — Requirement Understanding, Task Planning,
+Code Localization, Code Editing, Code Verification, Self-Repair Loop, Tool Use —
+and grounds each fault in tiered evidence (**deductive** set-arithmetic /
+**associational** trajectory fact / **model-inferred** LLM judge). It shows a
+primary-cause banner, a per-capability scorecard, and a collapsible evidence
+chain (observation → inference → conclusion, with verbatim trajectory quotes and
+a tamper-evidence audit verdict) for each fault.
+
+The attribution is powered by the [DECAF](../DECAF) (`awe`) method, imported as a
+library through `trajviz/insight/attribution.py`. It is **gold-grounded** — it
+needs the task's reference patch and test outcome — so it works on trajectories
+from a corpus laid out as `.../trajectory/<agent>/<instance_id>.json` alongside
+DECAF's `requirements/`, `patch/`, and `eval_<agent>.json` data. When a
+trajectory is loaded from such a path, its `(agent, instance_id)` are
+auto-detected and the tab populates on load; for an uploaded file, set them in
+the tab's override fields. Without a reference patch the tab degrades honestly
+(trajectory-only signals) rather than guessing.
+
+The deductive/associational slice (five capabilities) runs fully **offline with
+no API key**; the two judge capabilities are read back from cached verdicts when
+present. DECAF is stdlib-only and located at runtime via `AWE_DECAF_PATH`
+(default: a sibling `../DECAF` checkout). See
+[`docs/decaf-integration-plan.md`](docs/decaf-integration-plan.md) for the
+architecture and rollout.
+
+---
+
 ## Collecting trajectories
 
 trajviz only **reads** trajectory files — producing them is the agent's responsibility. This section shows how to obtain a valid trajectory JSON for each supported agent.
