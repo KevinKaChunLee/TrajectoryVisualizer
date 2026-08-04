@@ -684,8 +684,8 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
 def _convert_opencode_metadata(raw: dict) -> dict:
     """Populate metadata, timing, and output keys from OpenCode info structure.
 
-    Mutates *raw* in place so that compute_metrics() and format_session_md()
-    can read the standard fields.  Returns the same dict for convenience.
+    Mutates *raw* in place so that compute_metrics() and the session-detail
+    renderer can read the standard fields.  Returns the same dict for convenience.
     """
     info = raw.get("info", {})
     if not isinstance(info, dict):

@@ -268,10 +268,6 @@ def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw)
         "input_tokens": total_tokens["input"],
         "output_tokens": total_tokens["output"],
         "cache_read_tokens": total_tokens["cache_read"],
-        "cache_utilization_ratio": (
-            round(total_tokens["cache_read"] / (total_tokens["cache_read"] + total_tokens["input"]), 4)
-            if (total_tokens["cache_read"] + total_tokens["input"]) > 0 and total_tokens["cache_read"] > 0 else None
-        ),
         "tokens_per_patch_line": round(total_io / output.get("patch_lines", 0), 1) if output.get("patch_lines", 0) > 0 else None,
         "tokens_per_churn_line": round(total_io / churn, 1) if churn > 0 else None,
     }
@@ -482,18 +478,6 @@ def compute_diagnostic_metrics(
     search_count = sum(1 for s in steps for tc in s.get("tool_calls", [])
                        if tc.get("tool_name") in search_tools)
 
-    # Retry rate: same tool+target called multiple times (excess calls only)
-    tool_targets: dict[str, int] = {}
-    for s in steps:
-        for tc in s.get("tool_calls", []):
-            name = tc.get("tool_name", "")
-            inp = tc.get("input", {})
-            target = inp.get("file_path", inp.get("command", inp.get("pattern", ""))) if isinstance(inp, dict) else ""
-            key = f"{name}:{str(target)[:80]}"
-            tool_targets[key] = tool_targets.get(key, 0) + 1
-    retry_calls = sum(v - 1 for v in tool_targets.values() if v > 1)
-    total_calls = sum(tool_targets.values()) or 1
-
     # Context compression events — deduplicate between part scan and token drop
     compression_steps: set[int] = set()
     for i, s in enumerate(steps):
@@ -545,7 +529,6 @@ def compute_diagnostic_metrics(
         "edit_success": edit_success,
         "edit_precision": round(edit_success / edit_total * 100, 1) if edit_total else None,
         "search_to_action": round(search_count / edit_total, 1) if edit_total else None,
-        "retry_rate": round(retry_calls / total_calls * 100, 1),
         "compression_count": compression_count,
         "structural_phase_count": len(structural_phases),
         "structural_phase_regression_count": len(structural_regressions),

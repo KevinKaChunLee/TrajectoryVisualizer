@@ -80,30 +80,6 @@ def _neutralize_orphan_fences(text: str) -> str:
     )
 
 
-def _escape_html_outside_fences(text: str) -> str:
-    """Escape HTML tags in *text* but leave fenced-code blocks untouched.
-
-    This prevents HTML-like fragments in assistant output (e.g. ``<thinking>``,
-    ``<result>``) from being treated as real DOM when the markdown is later
-    rendered with ``html=True`` (needed for ``<details>`` tags elsewhere).
-    Content inside code fences is left as-is so markdown-it can handle it.
-
-    Any unbalanced/orphaned backtick fences (3+) in non-fence segments are
-    neutralized so they cannot open a spurious code block that swallows
-    subsequent HTML (``<details>`` etc.).
-    """
-    parts: list[str] = []
-    last_end = 0
-    for m in _CODE_FENCE_RE.finditer(text):
-        segment = html.escape(text[last_end:m.start()])
-        parts.append(_neutralize_orphan_fences(segment))
-        parts.append(m.group(0))          # fence untouched
-        last_end = m.end()
-    segment = html.escape(text[last_end:])
-    parts.append(_neutralize_orphan_fences(segment))
-    return "".join(parts)
-
-
 def _md_to_html_preview(text: str) -> str:
     """Convert text with markdown fenced code blocks to HTML.
 
@@ -463,20 +439,6 @@ def _format_step_header(step: dict) -> str:
 
     table = f"<table class='dp-meta-table'>{''.join(tr_parts)}</table>"
     return banner + table
-
-
-def _safe_fence(text: str, lang: str = "") -> str:
-    """Wrap *text* in a fenced code block whose delimiter is longer than any backtick run inside.
-
-    CommonMark allows opening fences of 3+ backticks; the closing fence must be
-    at least as long.  By choosing a delimiter longer than any run in *text* we
-    guarantee the fence is never prematurely closed.
-    """
-    longest = 2                              # minimum fence is 3
-    for m in re.finditer(r"`+", text):
-        longest = max(longest, len(m.group()))
-    fence = "`" * (longest + 1)
-    return f"{fence}{lang}\n{text}\n{fence}"
 
 
 def _format_tool_call_detail(p: dict) -> str:

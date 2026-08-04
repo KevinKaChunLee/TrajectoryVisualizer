@@ -286,18 +286,15 @@ slots to unlock the semantic pattern detectors and label-phase charts.
 ```
 TrajectoryVisualizer/
 ├── trajectory_visualizer/       # Python package
-│   ├── core/                    # Detector framework (DetectorContext, PatternDetection, catalog)
 │   ├── insight/                 # Single-trajectory dashboard
 │   │   ├── loaders.py           # Format detection & normalization
 │   │   ├── parser.py            # Step model
 │   │   ├── metrics.py           # Per-step & session metrics
 │   │   ├── analytics.py         # Phase detection, behavioral analytics
-│   │   ├── charts.py            # Plotly chart builders (33 figures)
+│   │   ├── charts.py            # Plotly chart builders
 │   │   ├── rendering.py         # HTML rendering (workflow cards, code blocks)
 │   │   ├── diagnostics.py       # Failure chains, root causes
 │   │   ├── patterns.py          # Tool sequences, anti-patterns
-│   │   ├── scoring.py           # Quality scoring
-│   │   ├── scoring_config.py    # Scoring profiles & thresholds
 │   │   ├── labels.py            # Phase/action label model
 │   │   ├── comparison.py        # Bridge to converge pipeline
 │   │   ├── formatting.py        # Markdown/HTML metric grids
@@ -305,8 +302,7 @@ TrajectoryVisualizer/
 │   │   ├── help.py              # Metric tooltip registry
 │   │   ├── styles.py            # CSS (light/dark)
 │   │   ├── insight.py           # Gradio UI builder
-│   │   ├── __main__.py          # CLI entry
-│   │   └── detectors/           # Anti-pattern detector modules
+│   │   └── __main__.py          # CLI entry
 │   └── converge/                # Two-trajectory comparison pipeline
 │       ├── canonical.py         # Step canonicalization
 │       ├── alignment.py         # DP alignment algorithm
@@ -320,8 +316,7 @@ TrajectoryVisualizer/
 │       ├── rendering.py         # Comparison HTML report
 │       ├── cli.py               # Pairwise / batch / before-after CLI
 │       ├── app.py               # Standalone Gradio comparison app
-│       ├── styles.py            # Comparison report CSS
-│       └── detectors/           # Catalog-aligned divergence detectors
+│       └── styles.py            # Comparison report CSS
 ├── scripts/                     # Trajectory helpers
 │   ├── codearts_consolidator.py # CodeArts opencode.db → single export JSON
 │   ├── opencode_consolidator.py # OpenCode parent + sub-agent sessions → single JSON

@@ -21,10 +21,8 @@ from .metrics import (  # noqa: F401
 
 # Re-export formatting functions for backward compatibility
 from .formatting import (  # noqa: F401
-    format_session_md,
     format_performance_md,
     format_behavioral_md,
-    format_output_md,
     format_banner_html,
     wall_clock_fmt,
     build_analytics_dataframe,

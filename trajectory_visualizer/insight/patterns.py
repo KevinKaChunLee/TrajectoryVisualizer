@@ -540,19 +540,6 @@ def compute_plan_metrics(plan_history: list[dict]) -> dict:
 # 5. Sub-Agent Delegation Analysis
 # ---------------------------------------------------------------------------
 
-def _build_trajectory_info_map(trajectory: list[dict]) -> dict[int, dict]:
-    """Build a mapping from trajectory entry index to its 'info' dict.
-
-    Used to safely look up metadata from raw trajectory entries by their
-    position, avoiding index aliasing when steps and trajectory differ in length.
-    """
-    info_map: dict[int, dict] = {}
-    for idx, entry in enumerate(trajectory):
-        info = entry.get("info", {}) if isinstance(entry, dict) else {}
-        info_map[idx] = info if isinstance(info, dict) else {}
-    return info_map
-
-
 def _get_step_info(step: dict, trajectory: list[dict], info_map: dict[int, dict] | None = None) -> dict:
     """Retrieve the trajectory 'info' dict corresponding to a parsed step.
 

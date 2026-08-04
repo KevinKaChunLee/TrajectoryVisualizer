@@ -13,8 +13,8 @@ from .parser import (
     load_trajectory, parse_steps, build_message_metrics, compute_metrics,
     _build_hotspots_md,
     _build_per_message_md, compute_health_verdict, validate_token_integrity,
-    format_session_md, format_performance_md,
-    format_behavioral_md, format_output_md,
+    format_performance_md,
+    format_behavioral_md,
     extract_agent_info,
     wall_clock_fmt, format_banner_html,
     compute_agent_summary,
@@ -325,7 +325,7 @@ def _build_session_detail_html(
 ) -> str:
     """Build Session Details panel as a chip grid of session environment fields.
 
-    Uses the same inline chip style as ``format_session_md`` — small cards
+    Uses the same inline chip style as the performance metric grid — small cards
     with uppercase label and value, wrapped in a flex grid.
     """
     md = metadata
