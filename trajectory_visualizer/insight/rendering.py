@@ -1056,20 +1056,6 @@ def build_dimension_cards_html(dimensions: dict) -> str:
     return "<div class='score-dim-grid'>" + "".join(cards) + "</div>"
 
 
-def build_score_banner_badge_html(composite_score: float | None, verdict: str) -> str:
-    """Render a compact score badge for the summary banner."""
-    if composite_score is None:
-        return ""
-    color = _VERDICT_COLORS.get(verdict, "#9ca3af")
-    label = _VERDICT_LABELS.get(verdict, verdict)
-    return (
-        f"<span class='score-banner-badge'>"
-        f"<span class='score-banner-dot' style='background:{color};'></span>"
-        f"Quality: {composite_score:.0f}/100 &middot; {html.escape(label)}"
-        f"</span>"
-    )
-
-
 def build_judge_result_html(judge_result: dict | None) -> str:
     """Render collapsible LLM judge result panel."""
     if not judge_result:

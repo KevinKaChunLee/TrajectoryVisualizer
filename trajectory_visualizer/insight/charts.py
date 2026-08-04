@@ -1700,53 +1700,6 @@ def build_file_interaction_chart(
 
 # -- Score Gauge Chart -------------------------------------------------------
 
-def build_score_gauge_chart(
-    composite_score: float | None,
-    verdict: str = "n/a",
-    dark: bool = False,
-) -> go.Figure:
-    """Build a Plotly gauge (indicator) for the composite trajectory quality score."""
-    fig = go.Figure()
-
-    if composite_score is None:
-        fig.add_annotation(
-            text="N/A", xref="paper", yref="paper",
-            x=0.5, y=0.5, showarrow=False,
-            font=dict(size=28, color="#9ca3af"),
-        )
-        fig.update_layout(template=_TPL, height=220, margin=dict(t=30, b=10, l=30, r=30))
-        _apply_dark(fig, dark)
-        return fig
-
-    fig.add_trace(go.Indicator(
-        mode="gauge+number",
-        value=composite_score,
-        number={"suffix": "/100", "font": {"size": 28}},
-        gauge={
-            "axis": {"range": [0, 100], "tickwidth": 1},
-            "bar": {"color": "#1d4ed8"},
-            "steps": [
-                {"range": [0, 40], "color": "#fee2e2"},
-                {"range": [40, 70], "color": "#fef3c7"},
-                {"range": [70, 100], "color": "#dcfce7"},
-            ],
-            "threshold": {
-                "line": {"color": "#0f172a", "width": 3},
-                "thickness": 0.8,
-                "value": composite_score,
-            },
-        },
-    ))
-
-    fig.update_layout(
-        template=_TPL,
-        height=220,
-        margin=dict(t=30, b=10, l=30, r=30),
-    )
-    _apply_dark(fig, dark)
-    return fig
-
-
 # -- Additional chart builders -----------------------------------------------
 
 
