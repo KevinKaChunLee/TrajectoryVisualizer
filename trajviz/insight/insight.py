@@ -1,4 +1,4 @@
-"""Gradio UI for Insight."""
+"""Gradio UI for TrajViz."""
 
 import base64
 import html
@@ -804,7 +804,7 @@ def _render_failure_patterns_html(patterns: list[dict]) -> str:
 def build_ui() -> gr.Blocks:
     """Build the full Gradio Blocks UI."""
 
-    with gr.Blocks(title="Insight", elem_classes=["trajectory-viz"]) as app:
+    with gr.Blocks(title="TrajViz", elem_classes=["trajectory-viz"]) as app:
         # Per-session state via gr.State
         state_steps = gr.State([])
         state_dark = gr.State(False)
@@ -812,8 +812,8 @@ def build_ui() -> gr.Blocks:
 
         gr.HTML(
             "<div style='display:flex;align-items:baseline;gap:12px;margin-bottom:4px;'>"
-            "<span style='font-size:20px;font-weight:700;letter-spacing:-0.02em;'>Insight</span>"
-            "<span style='font-size:12px;color:var(--ov-muted);'>Trajectory analysis dashboard</span>"
+            "<span style='font-size:20px;font-weight:700;letter-spacing:-0.02em;'>TrajViz</span>"
+            "<span style='font-size:12px;color:var(--ov-muted);'>Coding Agent Trajectory Analysis Dashboard</span>"
             "</div>"
         )
 
