@@ -146,27 +146,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     margin-top: 4px;
 }
 
-/* Insight callouts */
-.insight-callout {
-    display: inline-flex;
-    align-items: flex-start;
-    gap: 6px;
-    background: var(--ov-insight-bg);
-    border: 1px solid var(--ov-insight-border);
-    border-radius: 8px;
-    padding: 6px 12px;
-    margin: 0 8px 8px 0;
-    font-size: 12px;
-    color: var(--ov-accent);
-    line-height: 1.4;
-}
-.insight-icon {
-    font-size: 14px;
-    flex-shrink: 0;
-}
-.insight-text {
-    color: var(--ov-insight-text);
-}
 .insight-step-link {
     color: var(--ov-accent);
     text-decoration: underline;
@@ -186,13 +165,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     color: var(--ov-muted);
     padding: 4px 0 8px 0;
     font-weight: 600;
-}
-.chart-control {
-    background: var(--ov-chart-ctrl-bg);
-    border: 1px solid var(--ov-insight-border);
-    border-radius: 10px;
-    padding: 10px 12px 0;
-    margin: 2px 0 8px;
 }
 .per-message-acc {
     border: 1px solid var(--ov-border);
@@ -619,26 +591,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     .wf-container { max-width: 100% !important; }
 }
 
-/* Filter pill styling for workflow checkbox group */
-.gradio-container .checkbox-group label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--ov-insight-bg);
-    border: 1px solid var(--ov-insight-border);
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ov-body-text);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-}
-.gradio-container .checkbox-group label:hover {
-    background: var(--ov-link-hover-bg);
-    border-color: var(--ov-accent);
-}
-
 /* ===== Tooltip styles (pure CSS via data-help attribute) ===== */
 [data-help] {
     position: relative;
@@ -694,34 +646,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     font-weight: 400;
     margin: -8px 0 12px 0;
     font-style: italic;
-}
-
-/* ===== Onboarding hint callout ===== */
-.onboarding-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 12px;
-    color: #1e40af;
-    margin: 4px 0 8px 0;
-    animation: hintFadeIn 0.3s ease-in;
-}
-.onboarding-hint .hint-dismiss {
-    cursor: pointer;
-    font-size: 14px;
-    color: #93c5fd;
-    margin-left: 4px;
-}
-.onboarding-hint .hint-dismiss:hover {
-    color: #1e40af;
-}
-@keyframes hintFadeIn {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: translateY(0); }
 }
 
 /* ===== Detail panel tabs ===== */
@@ -849,38 +773,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     text-decoration: underline;
 }
 
-/* ===== Compact step cards ===== */
-.wf-card.wf-compact .wf-meta,
-.wf-card.wf-compact .wf-preview {
-    display: none;
-}
-.wf-card.wf-compact {
-    padding: 6px 12px;
-}
-
-/* ===== Density toggle ===== */
-.density-toggle {
-    display: inline-flex;
-    gap: 4px;
-    margin-left: 8px;
-}
-.density-btn {
-    padding: 3px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    border: 1px solid var(--ov-border);
-    border-radius: 6px;
-    background: var(--ov-card);
-    color: var(--ov-muted);
-    transition: background 0.15s, color 0.15s;
-}
-.density-btn.density-active {
-    background: var(--ov-accent);
-    color: white;
-    border-color: var(--ov-accent);
-}
-
 /* ===== KPI sparkline ===== */
 .ov-kpi-sparkline {
     margin-top: 4px;
@@ -889,42 +781,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 .ov-kpi-sparkline svg {
     display: block;
 }
-
-/* ===== Diagnostics ===== */
-.diag-chain-strip {
-    display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0;
-}
-.diag-chain-badge {
-    display: inline-block; padding: 4px 10px; border-radius: 8px;
-    font-size: 12px; font-weight: 600; letter-spacing: 0.3px;
-    background: var(--ov-anomaly-bg); border: 1px solid var(--ov-anomaly-border);
-    color: var(--ov-anomaly-text); transition: background 0.15s;
-}
-.diag-chain-badge:hover { background: var(--ov-anomaly-hover); }
-
-.diag-bottleneck-grid {
-    display: flex; flex-direction: column; gap: 8px; margin: 8px 0;
-}
-.diag-bottleneck-card {
-    background: var(--ov-card); border: 1px solid var(--ov-border);
-    border-radius: 8px; padding: 10px 14px; transition: box-shadow 0.15s;
-}
-.diag-bottleneck-card:hover { box-shadow: 0 2px 8px var(--ov-card-shadow); }
-.diag-bottleneck-header {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 6px;
-}
-.diag-bottleneck-step { font-weight: 700; font-size: 13px; color: var(--ov-text); }
-.diag-bottleneck-dur { font-size: 12px; color: var(--ov-muted); font-weight: 600; }
-.diag-bar {
-    display: flex; height: 8px; border-radius: 4px; overflow: hidden;
-    background: #e5e7eb; margin-bottom: 6px;
-}
-.diag-bar-seg { height: 100%; min-width: 2px; }
-.diag-bar-tool { background: #3b82f6; }
-.diag-bar-inference { background: #f59e0b; }
-.diag-bar-idle { background: #d1d5db; }
-.diag-bottleneck-text { font-size: 12px; color: var(--ov-muted); line-height: 1.4; }
 
 .diag-rc-panel {
     display: flex; flex-direction: column; gap: 6px; margin: 8px 0;
@@ -1000,13 +856,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
         --wf-connector-to: #2d2f45;
         --wf-scroll-thumb: #4b5563;
     }
-    /* Diagnostic overrides */
-    .diag-chain-badge {
-        background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.3);
-        color: #fbbf24;
-    }
-    .diag-chain-badge:hover { background: rgba(245,158,11,0.25); }
-    .diag-bar { background: #374151; }
     .diag-rc-primary {
         background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3);
         color: #fca5a5;
@@ -1019,15 +868,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     .filter-chip.chip-active { background: var(--ov-accent); color: #0f172a; }
 }
 
-/* ===== Diagnostics legend ===== */
-.diag-legend {
-    display: flex; gap: 12px; margin: 4px 0 8px; font-size: 11px; color: var(--ov-muted);
-}
-.diag-legend-item { display: flex; align-items: center; gap: 4px; }
-.diag-legend-dot {
-    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
-}
-
 /* ===== Trajectory Quality Score ===== */
 .score-section {
     margin: 12px 0 16px; padding: 0;
@@ -1036,16 +876,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     font-size: 14px; font-weight: 700; color: var(--ov-text);
     margin-bottom: 8px;
 }
-.score-gauge-row {
-    display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
-}
-.score-gauge-col {
-    flex: 0 0 240px; min-width: 200px;
-}
-.score-dims-col {
-    flex: 1 1 400px; min-width: 300px;
-}
-
 .score-dim-grid {
     display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
 }
@@ -1065,16 +895,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 }
 .score-dim-score { font-size: 24px; font-weight: 800; line-height: 1.2; }
 .score-dim-metric { font-size: 11px; color: var(--ov-muted); margin-top: 2px; }
-
-.score-banner-badge {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: 12px; font-weight: 600; padding: 3px 10px;
-    border-radius: 6px; background: var(--ov-card);
-    border: 1px solid var(--ov-border);
-}
-.score-banner-dot {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-}
 
 .judge-panel {
     margin: 8px 0; border: 1px solid var(--ov-border); border-radius: 8px;
@@ -1119,13 +939,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     font-size: 11px; color: var(--ov-muted); margin-top: 6px;
     padding-top: 6px; border-top: 1px dashed var(--ov-border);
 }
-
-.score-copy-btn {
-    font-size: 11px; padding: 4px 10px; border-radius: 5px;
-    border: 1px solid var(--ov-border); background: var(--ov-card);
-    color: var(--ov-muted); cursor: pointer; transition: background 0.15s;
-}
-.score-copy-btn:hover { background: var(--ov-link-hover-bg); }
 
 /* ===== Overview section navigation ===== */
 .overview-content-layout {

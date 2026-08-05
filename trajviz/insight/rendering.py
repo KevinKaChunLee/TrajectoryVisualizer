@@ -125,11 +125,8 @@ def _render_one_agent_card(a: dict, agent_hex: str) -> str:
         sidx = a["spawned_by_step"]
         spawn_html = (
             f"<div class='agent-card-spawn'>"
-            f"<span class='insight-step-link' onclick=\""
-            f"(function(){{{_JS_GOTO_WORKFLOW}"
-            f"setTimeout(function(){{var c=document.getElementById('wf-card-{sidx}');"
-            f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
-            f"}},200);}})()\">Spawned at step #{sidx}</span>"
+            f"<span class='insight-step-link' onclick=\"{_diag_jump_onclick(sidx)}\">"
+            f"Spawned at step #{sidx}</span>"
             f"</div>"
         )
 

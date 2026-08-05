@@ -4,7 +4,6 @@ import base64
 import html
 import json
 import os
-import re
 
 import gradio as gr
 import plotly.graph_objects as go
@@ -24,7 +23,6 @@ from .analytics import compute_step_analytics
 from .diagnostics import (
     extract_file_interactions,
     identify_target_files,
-    compute_file_targeting_metrics,
     detect_failure_chains,
     classify_chain_steps,
     link_chains_to_agents,
@@ -54,17 +52,18 @@ from .comparison import run_comparison
 from .patterns import (
     detect_tool_sequences, detect_failure_patterns,
     extract_plan_history, compute_plan_metrics,
-    extract_subagent_sessions, compute_subagent_metrics,
     detect_fruitless_streaks, compute_autonomy_ratio,
     detect_tool_selection_antipatterns,
 )
 from .help import HELP_TEXT
+from .loaders import detect_format, FORMAT_LABELS
 from .parser import load_labeled_json, aggregate_labels
 from .rendering import (
     render_workflow_html, render_toc_sidebar, render_filter_chips,
     format_step_detail, render_agent_summary_cards,
     build_root_cause_html,
     build_antipattern_summary_html,
+    _diag_jump_onclick,
 )
 from .styles import APP_CSS
 
@@ -205,8 +204,8 @@ def _build_filtered_workflow_outputs(
     return workflow_html, count_html, render_toc_sidebar(filtered_steps, collapsed=collapsed)
 
 
-def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
-    """Return a list of anomaly dicts (type, step_idx, value_str) from metrics."""
+def _compute_anomalies(message_rows: list[dict]) -> list[dict]:
+    """Return a list of anomaly dicts (type, step_idx, value_str) from message rows."""
     anomalies: list[dict] = []
     if not message_rows:
         return anomalies
@@ -264,24 +263,6 @@ def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
     return anomalies[:5]
 
 
-_JS_GOTO_WORKFLOW = ("var tabs=document.querySelectorAll('button[role=tab]');"
-    "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}")
-
-
-def _build_card_jump_onclick(idx) -> str:
-    """Return a JS onclick string that switches to the Workflow tab,
-    scrolls step card *idx* into view, and clicks it."""
-    return (
-        f"(function(){{"
-        f"{_JS_GOTO_WORKFLOW}"
-        f"setTimeout(function(){{"
-        f"var c=document.getElementById('wf-card-{idx}');"
-        f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
-        f"}},200);"
-        f"}})()"
-    )
-
-
 def _build_anomaly_strip_html(anomalies: list[dict]) -> str:
     """Render clickable anomaly badges with data-step-idx attributes."""
     if not anomalies:
@@ -289,7 +270,7 @@ def _build_anomaly_strip_html(anomalies: list[dict]) -> str:
     badges = []
     for a in anomalies:
         idx = a["step_idx"]
-        onclick = _build_card_jump_onclick(idx)
+        onclick = _diag_jump_onclick(idx)
         badges.append(
             f"<span class='anomaly-badge' data-step-idx='{idx}'"
             f" onclick=\"{onclick}\" style='cursor:pointer;'>"
@@ -322,8 +303,7 @@ def _build_sparkline_svg(values: list[float], width: int = 100, height: int = 20
 
 
 def _build_session_detail_html(
-    metrics: dict, wall_fmt: str, timing: dict, metadata: dict,
-    raw: dict,
+    timing: dict, metadata: dict,
     *, model_id: str = "", agent_id: str = "",
 ) -> str:
     """Build Session Details panel as a chip grid of session environment fields.
@@ -482,11 +462,6 @@ def _build_overview_outputs(
     trajectory_format: str | None = None,
 ) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
-    _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
-    md, timing, outp = _d("metadata"), _d("timing"), _d("output")
-    session_raw, retry = _d("session_raw"), _d("retry")
-    model_id, provider_id, agent_id = extract_agent_info(steps)
-
     banner = format_banner_html(os.path.basename(file_path), metrics, wfmt,
                                 trajectory_format=trajectory_format)
     kpi_html = _build_overview_kpi_html(metrics, wfmt, verdicts=verdicts,
@@ -499,7 +474,7 @@ def _build_overview_outputs(
     hotspots_text = _build_hotspots_md(message_rows)
     per_message_text = _build_per_message_md(message_rows)
 
-    anomalies = _compute_anomalies(metrics, message_rows)
+    anomalies = _compute_anomalies(message_rows)
     anomaly_html = _build_anomaly_strip_html(anomalies)
 
     return {
@@ -515,7 +490,7 @@ def _build_overview_outputs(
 
 def _build_chart_outputs(
     steps: list[dict], message_rows: list[dict],
-    step_analytics: list[dict], agent_summaries: list[dict],
+    agent_summaries: list[dict],
     dark: bool = False,
     trajectory: list[dict] | None = None,
     trajectory_format: str | None = None,
@@ -526,8 +501,6 @@ def _build_chart_outputs(
     # Compute diagnostic data for charts
     plan_history = extract_plan_history(steps)
     plan_metrics = compute_plan_metrics(plan_history)
-    subagent_sessions = extract_subagent_sessions(steps, traj)
-    subagent_metrics = compute_subagent_metrics(subagent_sessions, steps)
     fruitless_streaks = detect_fruitless_streaks(steps)
     tool_selection = detect_tool_selection_antipatterns(steps)
 
@@ -570,12 +543,7 @@ def _build_chart_outputs(
 
 def trajectory_format_label(fmt: str | None) -> str:
     """Return a human-readable trajectory format label."""
-    labels = {
-        "ccsession": "Claude Code",
-        "codearts": "CodeArts",
-        "opencode": "OpenCode",
-    }
-    return labels.get(fmt or "", fmt or "Unknown")
+    return FORMAT_LABELS.get(fmt or "", fmt or "Unknown")
 
 
 def _build_diagnostics_outputs(
@@ -590,8 +558,6 @@ def _build_diagnostics_outputs(
     # File interaction analysis
     interactions = extract_file_interactions(steps)
     target_files = identify_target_files(steps)
-    file_targeting = compute_file_targeting_metrics(
-        interactions, target_files, len(steps))
     file_chart = build_file_interaction_chart(interactions, target_files, dark=dark) if interactions else _empty_fig
 
     # Failure chain analysis (metrics feed the summary line; UI strip removed)
@@ -616,7 +582,6 @@ def _build_diagnostics_outputs(
     bottleneck_explanations = compute_bottleneck_explanations(steps, step_analytics)
 
     # Summary line
-    issue_count = chain_metrics["total_chains"] + len(bottleneck_explanations)
     parts = []
     if chain_metrics["total_chains"]:
         parts.append(f"{chain_metrics['total_chains']} failure chain(s)")
@@ -634,11 +599,6 @@ def _build_diagnostics_outputs(
     )
 
     return {
-        "file_targeting": file_targeting,
-        "chain_metrics": chain_metrics,
-        "error_clusters": clusters,
-        "failure_chains": chains,
-        "bottleneck_explanations": bottleneck_explanations,
         "diag_summary_html": summary_html,
         "diag_file_chart": file_chart,
         "diag_rootcause_html": rootcause_html,
@@ -1453,7 +1413,6 @@ def build_ui() -> gr.Blocks:
 
         def _do_load_inner(upload_obj, dark=False, selected_format="ccsession"):
             """Load trajectory from uploaded file."""
-            from .loaders import detect_format
 
             file_path = None
             if upload_obj is not None:
@@ -1468,18 +1427,15 @@ def build_ui() -> gr.Blocks:
                 return _empty_result(banner=err_banner, detail="*Error loading file.*")
 
             # Validate format matches user selection
-            _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
-                              "opencode": "OpenCode", "codex": "Codex CLI",
-                              "unknown": "Unknown"}
             detected = detect_format(raw)
             # Codex is produced only from an unambiguous .jsonl upload, so accept
             # it regardless of the dropdown selection.
             if detected != selected_format and detected not in ("unknown", "codex"):
                 err_msg = (
                     f"Format mismatch: selected "
-                    f"<b>{html.escape(_FORMAT_LABELS.get(selected_format, selected_format))}</b>"
+                    f"<b>{html.escape(FORMAT_LABELS.get(selected_format, selected_format))}</b>"
                     f" but file detected as "
-                    f"<b>{html.escape(_FORMAT_LABELS.get(detected, detected))}</b>."
+                    f"<b>{html.escape(FORMAT_LABELS.get(detected, detected))}</b>."
                 )
                 return _empty_result(
                     banner=f"<p style='color:#dc2626;'>{err_msg}</p>",
@@ -1521,12 +1477,11 @@ def build_ui() -> gr.Blocks:
             _md, _timing = _d("metadata"), _d("timing")
             _model_id, _, _agent_id = extract_agent_info(steps)
             session_detail = _build_session_detail_html(
-                metrics, wfmt, _timing, _md, raw,
-                model_id=_model_id, agent_id=_agent_id,
+                _timing, _md, model_id=_model_id, agent_id=_agent_id,
             )
 
             ch = _build_chart_outputs(steps, message_rows,
-                                      step_analytics, agent_summaries, dark=dark,
+                                      agent_summaries, dark=dark,
                                       trajectory=raw.get("trajectory") or raw.get("messages") or [],
                                       trajectory_format=detected)
             wf = _build_workflow_outputs(steps)
