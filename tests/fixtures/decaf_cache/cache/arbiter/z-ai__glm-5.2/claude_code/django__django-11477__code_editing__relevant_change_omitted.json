@@ -1,0 +1,43 @@
+{
+  "instance_id": "django__django-11477",
+  "agent": "claude_code",
+  "claim": "code_editing::relevant_change_omitted",
+  "model": "z-ai/glm-5.2",
+  "verdict": {
+    "support": "refute",
+    "confidence": "medium",
+    "evidence_steps": [
+      35,
+      49,
+      57,
+      59
+    ],
+    "rationale": "Agent explicitly applied fix in translate_url() (step 35), ran tests passing (step 49), and verified final state (step 57). No evidence a relevant file was left unedited; the omitted steps likely contain the edit. Claim of omitted change is"
+  },
+  "usage": {
+    "prompt_tokens": 1457,
+    "completion_tokens": 525,
+    "total_tokens": 1982,
+    "cost": 0.0043498,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0043498,
+      "upstream_inference_prompt_cost": 0.0020398,
+      "upstream_inference_completions_cost": 0.00231
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 457,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "finish_reason": "stop",
+  "prompt_version": "f7f11661e443",
+  "evidence_schema": 11
+}

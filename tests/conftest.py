@@ -1,0 +1,63 @@
+"""Pytest configuration for TrajViz.
+
+Points DECAF failure-attribution at the vendored fixture (tests/fixtures/corpus +
+tests/fixtures/decaf_cache) so the integration tests run **hermetically** — no
+dependency on a developer's local TraceProbe corpus or gitignored DECAF caches,
+so they also run in CI. Locates DECAF via AWE_DECAF_PATH (default: a sibling
+../DECAF checkout).
+
+`TRAJVIZ_REQUIRE_ATTRIBUTION=1` (set in CI) turns a missing integration
+environment into a hard failure instead of a silent skip — so the suite can never
+be green merely because the attribution tests were skipped.
+"""
+import os
+import sys
+from pathlib import Path
+
+_TESTS = Path(__file__).resolve().parent
+_FIX = _TESTS / "fixtures"
+_CORPUS = _FIX / "corpus"
+_CACHE = _FIX / "decaf_cache" / "cache"
+
+# 1. Corpus root -> the vendored fixture, BEFORE awe/attribution import (awe.config
+#    freezes ARGUS_ROOT at import; attribution.py's setdefault then no-ops).
+if (_CORPUS / "data" / "requirements").is_dir():
+    os.environ["AWE_ARGUS_ROOT"] = str(_CORPUS)
+os.environ.setdefault("AWE_JUDGE_MODEL", "z-ai/glm-5.2")
+
+
+def _decaf_root():
+    env = os.environ.get("AWE_DECAF_PATH")
+    for c in ([Path(env)] if env else []) + [_TESTS.parents[1] / "DECAF"]:
+        if (c / "awe" / "__init__.py").is_file():
+            return c
+    return None
+
+
+_DECAF = _decaf_root()
+if _DECAF and str(_DECAF) not in sys.path:
+    sys.path.insert(0, str(_DECAF))
+
+# 2. Redirect DECAF's judge/arbiter caches to the vendored fixture caches, so the
+#    arbiter-dependent tests need no developer-local (gitignored) caches.
+_DECAF_OK = False
+try:
+    from awe import config as _cfg
+    import awe.arbiter as _arb
+    if (_CACHE / "judge").is_dir():
+        _cfg.JUDGE_CACHE_DIR = _CACHE / "judge"
+        _arb.ARBITER_CACHE_DIR = _CACHE / "arbiter"
+    _DECAF_OK = True
+except Exception:
+    _DECAF_OK = False
+
+
+def pytest_collection_finish(session):
+    # No silent green: if CI demands the integration tests, the environment must
+    # be ready (DECAF importable + fixture corpus present) or the run fails here.
+    if os.environ.get("TRAJVIZ_REQUIRE_ATTRIBUTION"):
+        assert _DECAF_OK, ("TRAJVIZ_REQUIRE_ATTRIBUTION set but DECAF (awe) is not "
+                           "importable — set AWE_DECAF_PATH to a DECAF checkout")
+        assert (_CORPUS / "data" / "requirements"
+                / "astropy__astropy-13033.json").is_file(), \
+            "TRAJVIZ_REQUIRE_ATTRIBUTION set but the fixture corpus is missing"
