@@ -48,7 +48,10 @@ _ALWAYS_ASSESSED = frozenset({"code_localization", "code_editing"})
 # A safe instance id: a single filename stem (no separators, no leading dot).
 _VALID_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-_LOCK = threading.Lock()
+# RLock: diagnose() holds it end-to-end, and the public configure() acquires the
+# SAME lock so no caller can rewrite DECAF's process-global root/caches while a
+# diagnosis is in flight (reentrancy lets diagnose call configure internally).
+_LOCK = threading.RLock()
 
 
 # --------------------------------------------------------------------------- #
@@ -97,13 +100,20 @@ except Exception as exc:  # pragma: no cover - environment-dependent
 def configure(argus_root: str | os.PathLike) -> None:
     """Point DECAF at a corpus root and clear its root-dependent memory caches.
 
-    Called by diagnose() under the module lock on EVERY request (explicit root
-    or the immutable default) — configuration is per-call, never inherited.
+    Acquires the SAME module lock as diagnose(), so an external caller cannot
+    rewrite DECAF's process-global root/caches while a diagnosis is in flight.
+    diagnose() itself re-configures per request (explicit root or the immutable
+    default) — configuration is never inherited across callers.
     The outcome lru_cache lives on load_outcomes (resolved() is an uncached
     wrapper); clearing must fail loudly on DECAF API drift, not except-pass.
     """
     if not DECAF_AVAILABLE:
         return
+    with _LOCK:
+        _configure_unlocked(argus_root)
+
+
+def _configure_unlocked(argus_root: str | os.PathLike) -> None:
     root = Path(argus_root).resolve()
     os.environ["AWE_ARGUS_ROOT"] = str(root)
     _cfg.ARGUS_ROOT = root
@@ -159,43 +169,67 @@ def _sha256(p: Path) -> str | None:
         return None
 
 
+def _verdict_verifies(rec: dict, *, canon_sha: str, req_sha: str | None,
+                      prompt_version: str, schema: int) -> bool:
+    """A cached LLM verdict is trusted only when its FULL prompt provenance is
+    verifiable: the trajectory it judged, the gold reference whose task
+    statement its prompt embedded, the prompt version, and the evidence schema
+    all match the current inputs. Legacy/unstamped records fail (cannot verify)."""
+    return (rec.get("trajectory_sha256") == canon_sha
+            and rec.get("requirements_sha256") == req_sha
+            and rec.get("prompt_version") == prompt_version
+            and rec.get("evidence_schema") == schema)
+
+
 def _llm_layer_policy(agent: str, instance_id: str, canon_sha: str):
     """Decide whether cached judge/arbiter verdicts may shape this diagnosis.
 
-    A verdict is trusted only when its stamped trajectory_sha256 equals the
-    canonical trajectory's hash. Legacy/unstamped or mismatched verdicts are
-    provenance-unverifiable -> the corresponding layer is disabled (a stale
-    verdict must never refute or judge a different trajectory).
+    Validates the complete prompt fingerprint (trajectory + requirements +
+    prompt_version + evidence_schema; the arbiter's claim is already part of
+    its cache key). Any unverifiable record disables the corresponding layer —
+    a stale verdict must never judge a different trajectory OR a different task.
 
     Returns (use_judge, adjudicate, notes): use_judge False disables the judge;
     adjudicate None disables the arbiter; _AUTO keeps DECAF's default.
     """
-    from awe.judge import verdict_cached as judge_cached
+    import hashlib
+    import json as _json
     import awe.arbiter as _arb
+    import awe.judge as _judge
+    from awe.adapters import requirements_source_sha256
     from awe.dossier import _AUTO
+    from awe.trajectory import SCHEMA_VERSION
+
     notes: list[str] = []
+    req_sha = requirements_source_sha256(instance_id)
+    j_prompt = hashlib.sha256(_judge.SYSTEM_PROMPT.encode()).hexdigest()[:12]
+    a_prompt = hashlib.sha256(_arb.SYSTEM_PROMPT.encode()).hexdigest()[:12]
 
     use_judge: bool | None = None      # DECAF auto
-    jrec = judge_cached(agent, instance_id)
-    if jrec is not None and jrec.get("trajectory_sha256") != canon_sha:
+    jrec = _judge.verdict_cached(agent, instance_id)
+    if jrec is not None and not _verdict_verifies(
+            jrec, canon_sha=canon_sha, req_sha=req_sha,
+            prompt_version=j_prompt, schema=SCHEMA_VERSION):
         use_judge = False
-        notes.append("judge verdict ignored: its recorded trajectory hash does "
-                     "not match this trajectory (provenance unverifiable)")
+        notes.append("judge verdict ignored: its recorded provenance "
+                     "(trajectory/task/prompt/schema) does not match the current "
+                     "inputs (unverifiable)")
 
     adjudicate = _AUTO
     adir = _arb.ARBITER_CACHE_DIR / _cfg.model_slug() / agent
     if adir.is_dir():
-        import json as _json
         for f in adir.glob(f"{instance_id}*.json"):
             try:
                 rec = _json.loads(f.read_text())
             except Exception:
                 continue
-            if rec.get("trajectory_sha256") != canon_sha:
+            if not _verdict_verifies(rec, canon_sha=canon_sha, req_sha=req_sha,
+                                     prompt_version=a_prompt,
+                                     schema=SCHEMA_VERSION):
                 adjudicate = None
-                notes.append("arbiter verdict ignored: its recorded trajectory "
-                             "hash does not match this trajectory (provenance "
-                             "unverifiable)")
+                notes.append("arbiter verdict ignored: its recorded provenance "
+                             "(trajectory/task/prompt/schema) does not match "
+                             "the current inputs (unverifiable)")
                 break
     return use_judge, adjudicate, notes
 
@@ -205,21 +239,30 @@ def _llm_layer_policy(agent: str, instance_id: str, canon_sha: str):
 # --------------------------------------------------------------------------- #
 def diagnose(*, agent: str | None, instance_id: str | None,
              source_path: str | os.PathLike | None = None, fmt: str | None = None,
+             expected_sha: str | None = None,
              argus_root: str | os.PathLike | None = None) -> AttributionResult:
     """Diagnose the failure of the *displayed* trajectory. Never raises; never
     fabricates; degrades with an explicit reason. See the module docstring for
-    the integrity model."""
+    the integrity model.
+
+    ``expected_sha`` — the sha256 captured when the UI LOADED the trajectory
+    (the immutable identity of the displayed content). Diagnosis requires the
+    canonical file's CURRENT bytes to equal it, so a corpus file mutated between
+    load and diagnosis is refused rather than diagnosed while the UI still
+    shows the old state.
+    """
     if not DECAF_AVAILABLE:
         return AttributionResult(False, reason=f"DECAF unavailable ({_IMPORT_ERROR})")
     with _LOCK:
         return _diagnose_locked(agent=agent, instance_id=instance_id,
                                 source_path=source_path, fmt=fmt,
-                                argus_root=argus_root)
+                                expected_sha=expected_sha, argus_root=argus_root)
 
 
-def _diagnose_locked(*, agent, instance_id, source_path, fmt, argus_root):
+def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
+                     argus_root):
     # per-call, explicit configuration — never inherited from a previous caller
-    configure(argus_root if argus_root else _DEFAULT_ROOT)
+    _configure_unlocked(argus_root if argus_root else _DEFAULT_ROOT)
 
     if not (agent and instance_id):
         return AttributionResult(
@@ -258,17 +301,21 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, argus_root):
                    f"{config.ARGUS_ROOT} — cannot verify the displayed trajectory "
                    f"belongs to this run")
     canon_sha = _sha256(canon)
-    if source_path is not None:
-        sp = Path(source_path)
-        if not (sp.resolve() == canon.resolve() or _sha256(sp) == canon_sha):
-            return AttributionResult(
-                False, mode="gold_free", agent=agent, instance_id=instance_id,
-                reason=f"the displayed trajectory does not match the canonical "
-                       f"{agent}/{instance_id} run — its patch and test outcome "
-                       f"belong to a different execution, so a gold-grounded "
-                       f"verdict would mix run provenance. Attribution of "
-                       f"arbitrary uploads needs their own patch + outcome "
-                       f"(not yet supported)")
+    # Identity is CONTENT identity, never path identity: the displayed bytes'
+    # hash (captured at load) — or, failing that, the current source file's
+    # bytes — must equal the canonical file's CURRENT bytes. A path match alone
+    # says nothing if the file changed after the UI parsed it (TOCTOU).
+    displayed_sha = expected_sha or (
+        _sha256(Path(source_path)) if source_path is not None else None)
+    if displayed_sha is not None and displayed_sha != canon_sha:
+        return AttributionResult(
+            False, mode="gold_free", agent=agent, instance_id=instance_id,
+            reason=f"the displayed trajectory does not match the canonical "
+                   f"{agent}/{instance_id} run's current content — either it "
+                   f"belongs to a different execution, or the corpus file "
+                   f"changed after it was loaded (reload to re-sync). A "
+                   f"gold-grounded verdict would otherwise describe different "
+                   f"bytes than the ones shown")
 
     # LLM layers only when their cached verdicts verifiably belong to THIS
     # trajectory content.

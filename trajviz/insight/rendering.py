@@ -1163,8 +1163,10 @@ def build_attribution_html(data: dict) -> str:
                 f"→ <code>{html.escape(primary['error_type'])}</code>")
     else:
         head = f"No single dominant cause (<code>{html.escape(status)}</code>)"
-    tier_note = ("7-capability (judge verdict for this case)" if data.get("used_judge")
-                 else "5-capability deductive/associational slice")
+    n_assessed = sum(1 for s in data.get("scorecard", []) if s.get("assessed"))
+    tier_note = (f"{n_assessed}-capability assessment"
+                 + (" (incl. judge verdict for this case)" if data.get("used_judge")
+                    else " (deductive/associational slice)"))
     banner = (
         f"<div class='attr-banner'>"
         f"<div class='attr-banner-head'>{head}</div>"

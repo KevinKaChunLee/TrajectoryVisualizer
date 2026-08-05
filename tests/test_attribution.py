@@ -134,6 +134,52 @@ def test_unverifiable_llm_verdicts_are_disabled(tmp_path, monkeypatch):
     assert res.used_judge is False
 
 
+@requires_corpus
+def test_changed_gold_invalidates_llm_verdicts(tmp_path):
+    """Verdict provenance covers ALL prompt inputs: a byte-identical trajectory
+    with a CHANGED task/gold must not reuse the old judge/arbiter verdicts."""
+    from awe import config as _cfg
+    # clone the fixture corpus, then mutate ONLY the requirements (task) file
+    root = tmp_path / "corpus"
+    shutil.copytree(_cfg.ARGUS_ROOT / "data", root / "data")
+    rp = root / "data" / "requirements" / f"{ARB_INST}.json"
+    req = json.loads(rp.read_text())
+    req["problem_statement"] = "A COMPLETELY DIFFERENT TASK STATEMENT."
+    rp.write_text(json.dumps(req))
+
+    res = attribution.diagnose(agent=ARB_AGENT, instance_id=ARB_INST,
+                               argus_root=root)
+    assert res.available
+    # old verdicts unverifiable for the changed task -> LLM layers disabled,
+    # the rule-elected primary stands, and the mismatch is noted
+    assert res.notes and any("provenance" in n for n in res.notes)
+    assert res.blame_status == "primary"
+    assert res.used_judge is False
+
+
+@requires_corpus
+def test_toctou_mutated_canonical_file_is_refused(tmp_path):
+    """Content identity, not path identity: if the corpus file changes AFTER the
+    UI captured the displayed bytes' hash, diagnosis must refuse (the verdict
+    would describe different bytes than the ones shown)."""
+    from awe import config as _cfg
+    root = tmp_path / "corpus"
+    shutil.copytree(_cfg.ARGUS_ROOT / "data", root / "data")
+    tpath = root / "data" / "trajectory" / "claude_code" / f"{GOLD_INST}.json"
+    import hashlib
+    loaded_sha = hashlib.sha256(tpath.read_bytes()).hexdigest()  # captured at "load"
+    # the canonical file mutates after load
+    raw = json.loads(tpath.read_text())
+    raw["_mutated_after_load"] = True
+    tpath.write_text(json.dumps(raw))
+
+    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
+                               expected_sha=loaded_sha, argus_root=root)
+    assert res.available is False
+    assert "changed after it was loaded" in (res.reason or "") or \
+           "does not match the canonical" in (res.reason or "")
+
+
 def test_path_traversal_instance_id_is_rejected():
     """instance_id must never reach filesystem path construction: traversal is
     rejected up front with a uniform message (no file-existence oracle)."""

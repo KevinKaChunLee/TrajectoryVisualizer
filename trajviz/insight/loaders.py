@@ -1497,6 +1497,7 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
         if events and isinstance(events[0], dict) and events[0].get("type") == "session_meta":
             result = _convert_codex_to_internal(events)
             result["_source_path"] = file_path
+            result["_source_sha256"] = _file_sha256(file_path)
             return result
         return {"_error": "Unsupported JSONL input; expected Codex JSONL format (leading session_meta event)."}
 
@@ -1518,4 +1519,17 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
     else:
         result = raw
     result["_source_path"] = file_path
+    # The displayed content's immutable identity, captured AT LOAD: attribution
+    # requires the canonical corpus file to still have exactly these bytes at
+    # diagnosis time (TOCTOU guard — never diagnose bytes the UI isn't showing).
+    result["_source_sha256"] = _file_sha256(file_path)
     return result
+
+
+def _file_sha256(file_path: str) -> str | None:
+    import hashlib
+    try:
+        with open(file_path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None

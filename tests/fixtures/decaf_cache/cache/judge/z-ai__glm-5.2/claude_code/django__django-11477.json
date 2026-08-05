@@ -53,5 +53,6 @@
   "finish_reason": "stop",
   "prompt_version": "6511d1a70c39",
   "evidence_schema": 11,
-  "trajectory_sha256": "16f22cc8cb7b97654a0686494e6595745d14a8c6052eab2e08b7ab11c6612809"
+  "trajectory_sha256": "60d11fc23b231fe93d5c8ac6ba7cde340819c5007524519dd1f7971ccde0f61e",
+  "requirements_sha256": "68188191ed96472c43e458f096276fb72297709bf580b6976b8206270ce0570c"
 }

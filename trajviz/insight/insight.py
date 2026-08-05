@@ -1819,6 +1819,7 @@ def build_ui() -> gr.Blocks:
                         "No trajectory loaded.</div>")
 
             src = overview_raw.get("_source_path", "") if isinstance(overview_raw, dict) else ""
+            src_sha = overview_raw.get("_source_sha256") if isinstance(overview_raw, dict) else None
             agent = (agent_override or "").strip()
             inst = (inst_override or "").strip()
             root = (root_override or "").strip()
@@ -1833,6 +1834,7 @@ def build_ui() -> gr.Blocks:
 
             result = _attr.diagnose(agent=agent or None, instance_id=inst or None,
                                     source_path=src or None, fmt=fmt,
+                                    expected_sha=src_sha,
                                     argus_root=root or None)
             html_out = build_attribution_html(asdict(result))
             import html as _html
@@ -1863,10 +1865,15 @@ def build_ui() -> gr.Blocks:
             return ("<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
                     "Diagnosing the loaded trajectory&hellip;</div>",
                     "")
+        # Same concurrency queue as the diagnose callbacks: total ordering means
+        # an in-flight (old) diagnosis always completes BEFORE this clear runs,
+        # so a stale result can never overwrite the new-load placeholder.
         load_btn.click(fn=_clear_attribution,
-                       outputs=[attr_result_html, attr_status_html])
+                       outputs=[attr_result_html, attr_status_html],
+                       concurrency_id="attribution")
         file_upload.change(fn=_clear_attribution,
-                           outputs=[attr_result_html, attr_status_html])
+                           outputs=[attr_result_html, attr_status_html],
+                           concurrency_id="attribution")
 
         # Auto-populate on load, and IGNORE + clear the agent/instance override
         # fields so a previous case's identity can never attribute a newly loaded
