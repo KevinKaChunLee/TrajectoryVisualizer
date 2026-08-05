@@ -21,8 +21,14 @@ local absolute paths are rewritten to `/home/user`. The golden tests verify the
 sanitized trajectories produce the exact same diagnosis (the stripped fields are
 not consumed by the adapters). Fixtures are additionally **checked for
 credential-shaped strings** by `tests/test_fixture_hygiene.py` (redacted
-reporting). Do not add fixture content from non-public runs, and re-run the
-sanitizer + verdict restamping for any new fixture case.
+reporting). Do not add fixture content from non-public runs. For any new
+fixture case, sanitize it manually with the same three transformations listed
+above (deterministic placeholder UUIDs/request ids, emptied signature blobs,
+paths rewritten to `/home/user`), then restamp provenance: recompute
+`trajectory_sha256` over the sanitized canonical trajectory (and
+`requirements_sha256` over its requirements file) and update those fields in
+every vendored verdict record under `decaf_cache/` so the provenance check in
+`attribution.py` still passes.
 
 Fixture contents must stay byte-stable: the golden tests pin the expected
 diagnosis as literals, and the identity check in `attribution.diagnose()`
