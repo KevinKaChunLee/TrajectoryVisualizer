@@ -445,12 +445,17 @@ def _format_tool_call_detail(p: dict) -> str:
     inp = p.get("input", {})
     out = p.get("output", "")
     inp_str = json.dumps(inp, indent=2, ensure_ascii=False) if isinstance(inp, dict) else str(inp)
-    if isinstance(out, str) and len(out) > 2000:
+    if not isinstance(out, str):
+        if isinstance(out, list) and all(isinstance(b, dict) and b.get("type") == "text" for b in out):
+            # unwrap content-block lists to readable text
+            out = "\n".join(str(b.get("text", "")) for b in out)
+        else:
+            try:
+                out = json.dumps(out, indent=2, ensure_ascii=False)
+            except (TypeError, ValueError):
+                out = str(out)
+    if len(out) > 2000:
         out = out[:2000] + "\n... (truncated)"
-    elif isinstance(out, dict):
-        out = json.dumps(out, indent=2, ensure_ascii=False)
-        if len(out) > 2000:
-            out = out[:2000] + "\n... (truncated)"
 
     tc_dur = ""
     if p.get("time_start") and p.get("time_end"):
@@ -508,7 +513,7 @@ def _format_tool_call_detail(p: dict) -> str:
             if v:
                 raw_title = str(v)[:80]
                 break
-    title = html.escape(raw_title or tool_name)
+    title = html.escape(raw_title) if raw_title else tool_name
 
     # Input/Output details
     inp_detail = (
@@ -1085,8 +1090,8 @@ def _attr_fault_html(fault: dict) -> str:
     cap, et = fault.get("capability", ""), fault.get("error_type", "")
     chain = fault.get("evidence_chain") or {}
     strength = chain.get("strength", "")
-    weight = fault.get("blame_weight", 0.0)
-    if float(weight or 0) == 0:
+    weight = float(fault.get("blame_weight") or 0.0)
+    if weight == 0:
         # arbiter-refuted candidate: neutral badge, never a tier color that
         # could read as an attributed fault
         color, tier_label = "#9ca3af", "refuted"

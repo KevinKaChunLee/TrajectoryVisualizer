@@ -5,7 +5,7 @@ from typing import Any
 
 
 _VERDICT_STYLES = {
-    "good": ("var(--ov-good, #16a34a)", "#f0fdf4", "#bbf7d0"),
+    "good": ("var(--ov-success, #16a34a)", "#f0fdf4", "#bbf7d0"),
     "warn": ("var(--ov-warn, #d97706)", "#fffbeb", "#fde68a"),
     "bad":  ("var(--ov-bad, #dc2626)",  "#fef2f2", "#fecaca"),
 }
