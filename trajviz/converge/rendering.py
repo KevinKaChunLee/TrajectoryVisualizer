@@ -12,33 +12,6 @@ def _esc(value: object) -> str:
     return html.escape(str(value))
 
 
-def _success_badge(success: bool) -> str:
-    cls = "cvg-badge-success" if success else "cvg-badge-fail"
-    label = "Success" if success else "Failure"
-    return f'<span class="cvg-badge {cls}">{label}</span>'
-
-
-def _delta_span(value: int | None) -> str:
-    """Render a milestone delta as a colored span."""
-    if value is None:
-        return '<span style="color:var(--cvg-muted);">N/A</span>'
-    if value > 0:
-        return f'<span class="cvg-delta-neg">+{value}</span>'
-    if value < 0:
-        return f'<span class="cvg-delta-pos">{value}</span>'
-    return f'<span style="color:var(--cvg-muted);">0</span>'
-
-
-def _fmt_pct(value: float) -> str:
-    """Format a 0-1 ratio as a percentage string."""
-    return f"{value * 100:.1f}%"
-
-
-def _fmt_ratio(value: float) -> str:
-    """Format a ratio with 2 decimal places."""
-    return f"{value:.2f}"
-
-
 def build_anchor_analysis_html(anchor_analysis: dict) -> str:
     """Render anchor analysis data as an HTML section.
 
@@ -144,11 +117,8 @@ def build_comparison_report_html(report: dict) -> str:
     The report dict is the output of alignment.build_comparison_report().
     """
     outcome = report.get("outcome", {})
-    alignment = report.get("alignment", {})
-    milestones = report.get("milestones", {})
     patterns = report.get("patterns", [])
-    anchor_mode = report.get("anchor_mode", "self")
-    notes = report.get("notes", [])
+    anchor_analysis = report.get("anchor_analysis")
     ref_agent = _esc(report.get("reference_agent", "reference"))
     cmp_agent = _esc(report.get("compared_agent", "compared"))
     task_id = _esc(report.get("task_id", ""))
@@ -293,6 +263,11 @@ def build_comparison_report_html(report: dict) -> str:
                 f"<td>{tokens:,}</td><td>{_esc(evidence)}</td></tr>"
             )
         parts.append("</tbody></table>")
+
+    # ── Anchor analysis (external anchor mode only) ──────────
+    # R22: brings the HTML report to parity with the CLI's anchor section.
+    if anchor_analysis:
+        parts.append(build_anchor_analysis_html(anchor_analysis))
 
     # Wrapper close
     parts.append("</div>")

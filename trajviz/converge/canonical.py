@@ -54,6 +54,12 @@ class CanonicalAction:
 
 _READ_TOOLS = {"Read", "read"}
 from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOLS
+# Shared single-source helpers (C8/C9): validation-command detection lives in
+# insight/patterns.py and bash path extraction in insight/diagnostics.py (the
+# quoted + Windows-drive-aware implementation). Both modules import only
+# stdlib/tool_vocab at module level, so there is no import cycle.
+from trajviz.insight.diagnostics import _extract_bash_paths
+from trajviz.insight.patterns import _is_validation_command
 _SEARCH_TOOLS = {"Glob", "glob", "Grep", "grep", "find", "ToolSearch"}
 _BASH_TOOLS = {"Bash", "bash", "BashCommand"}
 _SPAWN_TOOLS = {"Agent", "agent"}
@@ -61,20 +67,30 @@ _PLANNING_TOOLS = {"todowrite", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskLi
 # Navigation/utility commands excluded from alignment (like REASON)
 _NAVIGATION_COMMANDS = {"cd", "pwd", "ls", "echo", "export", "set", "source"}
 
+# sed/awk read by default (B22): `sed -n '1,50p' file` is a view, not a write.
+# Only explicit in-place flags (see _is_in_place_edit) make them writes,
+# mirroring the Codex mapping in insight/loaders.py.
 _FUZZY_KEYWORDS: dict[str, str] = {
     "grep": "SEARCH", "rg": "SEARCH", "ag": "SEARCH", "find": "SEARCH",
     "cat": "FILE_READ", "head": "FILE_READ", "tail": "FILE_READ", "less": "FILE_READ",
-    "sed": "FILE_WRITE", "tee": "FILE_WRITE", "awk": "FILE_WRITE",
+    "sed": "FILE_READ", "awk": "FILE_READ", "tee": "FILE_WRITE",
 }
 
-_VALIDATION_COMMAND_PATTERNS = (
-    "pytest", "python -m pytest", "unittest", "tox", "nox", "go test",
-    "cargo test", "npm test", "pnpm test", "yarn test", "jest", "vitest",
-    "mvn test", "gradle test", "bazel test", "make test", "ctest", "ruff",
-    "flake8", "pylint", "mypy", "eslint", "lint", "check", "verify",
-)
+_SED_IN_PLACE_RE = re.compile(r"(?:^|\s)(?:-i\S*|--in-place\b)")
+_AWK_IN_PLACE_RE = re.compile(r"(?:^|\s)(?:-i\s+inplace\b|--in-place\b)")
 
-_PATH_RE = re.compile(r"""(?:^|[\s=;|&(])(/[^\s;|&)'"]+|\.\.?/[^\s;|&)'"]+)""")
+
+def _is_in_place_edit(base_cmd: str, command: str) -> bool:
+    """True when a sed/awk invocation edits files in place (B22).
+
+    sed: ``-i`` / ``-i.bak`` / ``--in-place``; awk: only gawk's
+    ``-i inplace`` / ``--in-place`` forms (plain ``awk -i`` loads a library).
+    """
+    if base_cmd == "sed":
+        return bool(_SED_IN_PLACE_RE.search(command))
+    if base_cmd in ("awk", "gawk"):
+        return bool(_AWK_IN_PLACE_RE.search(command))
+    return False
 
 
 def _normalize_target(path: str) -> str:
@@ -101,25 +117,6 @@ def _extract_base_command(command: str) -> str:
             continue
         return tok
     return tokens[0] if tokens else command.strip()
-
-
-def _extract_bash_paths(command: str) -> list[str]:
-    """Extract file-path-like tokens from a bash command."""
-    paths = []
-    for m in _PATH_RE.finditer(command):
-        p = m.group(1).rstrip(",:")
-        if len(p) >= 2 and p not in ("/", "./", "../"):
-            if "/" in p and any(c.isalnum() for c in p.split("/")[-1]):
-                paths.append(p)
-    return paths
-
-
-def _is_validation_command(command: str) -> bool:
-    """Return True when a shell command appears to run validation."""
-    lowered = " ".join(str(command).lower().split())
-    if not lowered:
-        return False
-    return any(pattern in lowered for pattern in _VALIDATION_COMMAND_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +204,8 @@ def canonicalize_steps(
                     target = ""
                 elif "|" not in command and base_cmd in _FUZZY_KEYWORDS:
                     action_type = _FUZZY_KEYWORDS[base_cmd]
+                    if action_type == "FILE_READ" and _is_in_place_edit(base_cmd, command):
+                        action_type = "FILE_WRITE"  # sed -i / gawk -i inplace (B22)
                     paths = _extract_bash_paths(command)
                     if action_type in ("FILE_READ", "FILE_WRITE") and paths:
                         target = _normalize_target(paths[0])
@@ -282,15 +281,58 @@ def canonicalize_steps(
 # Effect labeling
 # ---------------------------------------------------------------------------
 
+def _find_own_tool_call(
+    a: CanonicalAction,
+    step: dict,
+    actions: list[CanonicalAction],
+    action_index: int,
+) -> dict | None:
+    """Locate the tool call that produced action ``a`` within its step.
+
+    Prefers exact ``tool_call_id`` matching. When ids are unavailable, falls
+    back to POSITIONAL pairing (B23): canonicalize_steps emits exactly one
+    action per tool call, in order, so the k-th action of this step carrying
+    tool name T corresponds to the k-th tool call named T. This prevents a
+    failing sibling call from being cross-attributed to a different same-named
+    action (the old fallback name-scanned until it found any failure).
+
+    Note: navigation-command Bash calls canonicalize to REASON actions but
+    still occupy a tool_call slot, so the ordinal counts every prior action
+    with the same tool name regardless of action_type (part-derived REASONs
+    have tool 'text'/'reasoning' and never collide with real tool names).
+    """
+    tool_calls = step.get("tool_calls", [])
+    if a.tool_call_id:
+        for tc in tool_calls:
+            tc_id = tc.get("tool_id", "") or tc.get("id", "") or ""
+            if tc_id == a.tool_call_id:
+                return tc
+    ordinal = sum(
+        1 for prev in actions[:action_index]
+        if prev.step_index == a.step_index and prev.tool == a.tool
+    )
+    seen = 0
+    for tc in tool_calls:
+        if tc.get("tool_name") != a.tool:
+            continue
+        if seen == ordinal:
+            return tc
+        seen += 1
+    return None
+
+
 def assign_effect_labels(
     actions: list[CanonicalAction],
     steps: list[dict],
     anchor_files: set[str] | None = None,
 ) -> None:
     """Assign effect_label to each action based on full trajectory context. Mutates in place."""
-    # Determine target files (patch footprint)
+    # Determine target files (patch footprint). Truthiness check (B25): an
+    # EMPTY anchor set (e.g. a patch whose headers matched no `a/ b/` prefixes)
+    # must not suppress the identify_target_files fallback — downstream
+    # consumers already treat an empty set as "un-anchored".
     target_files: set[str] = set()
-    if anchor_files is not None:
+    if anchor_files:
         target_files = {_normalize_target(f) for f in anchor_files}
     else:
         from trajviz.insight.diagnostics import identify_target_files
@@ -356,26 +398,17 @@ def assign_effect_labels(
             a.effect_label = "failed"
             a.effect_detail["reason"] = "tool_status_error"
             continue
-        # Check exit code from original tool call metadata
-        _found_failed = False
+        # Check exit code from the action's OWN tool call only (B23): id match
+        # when available, positional pairing otherwise — never a name-scan that
+        # picks up a failing sibling call.
         step = step_by_index.get(a.step_index)
-        if step is not None:
-            for tc in step.get("tool_calls", []):
-                tc_id = tc.get("tool_id", "") or tc.get("id", "") or ""
-                if a.tool_call_id and tc_id:
-                    if tc_id != a.tool_call_id:
-                        continue
-                else:
-                    if tc.get("tool_name") != a.tool:
-                        continue
-                m = tc.get("metadata", {})
-                if isinstance(m, dict) and m.get("exit") not in (None, 0):
-                    a.effect_label = "failed"
-                    a.effect_detail["reason"] = f"exit_code_{m['exit']}"
-                    _found_failed = True
-                    break
-        if _found_failed:
-            continue
+        own_tc = _find_own_tool_call(a, step, actions, i) if step is not None else None
+        if own_tc is not None:
+            m = own_tc.get("metadata", {})
+            if isinstance(m, dict) and m.get("exit") not in (None, 0):
+                a.effect_label = "failed"
+                a.effect_detail["reason"] = f"exit_code_{m['exit']}"
+                continue
 
         if a.action_type == "FILE_WRITE":
             if a.target in last_write_per_target and last_write_per_target[a.target] != i:
@@ -388,18 +421,13 @@ def assign_effect_labels(
                 a.effect_detail["reason"] = "survived_within_run"
 
         elif a.action_type == "COMMAND":
+            # Read the command text from the action's OWN call (B23), not the
+            # first same-named sibling.
             command = ""
-            if step is not None:
-                for tc in step.get("tool_calls", []):
-                    tc_id = tc.get("tool_id", "") or tc.get("id", "") or ""
-                    if a.tool_call_id and tc_id and tc_id != a.tool_call_id:
-                        continue
-                    if not a.tool_call_id and tc.get("tool_name") != a.tool:
-                        continue
-                    inp = tc.get("input", {})
-                    if isinstance(inp, dict):
-                        command = inp.get("command", "")
-                    break
+            if own_tc is not None:
+                inp = own_tc.get("input", {})
+                if isinstance(inp, dict):
+                    command = inp.get("command", "")
             if command and _is_validation_command(command):
                 a.effect_label = "justified"
                 a.effect_detail["reason"] = "validation_command"
@@ -499,6 +527,23 @@ def _targets_match(a: str, b: str) -> bool:
     return common >= 2
 
 
+def _search_targets_match(a_target: str, b_target: str) -> bool:
+    """Compare SEARCH targets ('pattern@scope' or bare 'pattern') (B27).
+
+    Patterns must be equal; scopes get the same cross-root suffix matching as
+    FILE_READ/FILE_WRITE targets (_targets_match), so identical searches run
+    from different workspace roots still align. A missing scope on either side
+    is treated as a wildcard.
+    """
+    pa, sep_a, sa = a_target.rpartition("@")
+    if not sep_a:
+        pa, sa = sa, ""
+    pb, sep_b, sb = b_target.rpartition("@")
+    if not sep_b:
+        pb, sb = sb, ""
+    return pa == pb and (not sa or not sb or _targets_match(sa, sb))
+
+
 def semantic_equivalent(
     a: CanonicalAction,
     b: CanonicalAction,
@@ -516,7 +561,7 @@ def semantic_equivalent(
         if a.action_type == "COMMAND":
             return _extract_base_command(a.target) == _extract_base_command(b.target)
         if a.action_type == "SEARCH":
-            return a.target == b.target
+            return _search_targets_match(a.target, b.target)
         if a.action_type in ("FILE_READ", "FILE_WRITE"):
             return _targets_match(a.target, b.target)
         if a.action_type == "AGENT_SPAWN":
@@ -534,7 +579,7 @@ def semantic_equivalent(
             if other.action_type in ("FILE_READ", "FILE_WRITE"):
                 return _targets_match(reduced.target, other.target)
             if other.action_type == "SEARCH":
-                return reduced.target == other.target
+                return _search_targets_match(reduced.target, other.target)
     return False
 
 
@@ -563,13 +608,29 @@ def reduce_composite_command(action: CanonicalAction) -> CanonicalAction | None:
     reduced_type = _FUZZY_KEYWORDS.get(first_token)
     if not reduced_type:
         return None
+    if reduced_type == "FILE_READ" and _is_in_place_edit(first_token, last_stage):
+        reduced_type = "FILE_WRITE"  # keep classification consistent with B22
 
-    # Extract target path
-    paths = _extract_bash_paths(command)
-    if not paths:
-        return None
-
-    target = _normalize_target(paths[0])
+    # Build the target from the LAST pipe stage (the stage that determines the
+    # reduced type), not the whole command, so an earlier stage's path cannot
+    # leak into the target.
+    if reduced_type == "SEARCH":
+        # Native SEARCH targets are 'pattern@scope' (or bare 'pattern');
+        # emit the same format so strict equality in semantic_equivalent's
+        # fuzzy branch can actually match (B26).
+        parts = last_stage.split()
+        non_flag_args = [p for p in parts[1:] if not p.startswith("-")]
+        pattern = non_flag_args[0] if non_flag_args else ""
+        if not pattern:
+            return None
+        stage_paths = _extract_bash_paths(last_stage)
+        scope = _normalize_target(stage_paths[0]) if stage_paths else ""
+        target = f"{pattern}@{scope}" if scope else pattern
+    else:
+        paths = _extract_bash_paths(last_stage)
+        if not paths:
+            return None
+        target = _normalize_target(paths[0])
 
     return CanonicalAction(
         step_index=action.step_index,

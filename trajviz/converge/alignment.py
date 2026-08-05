@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from .canonical import (
@@ -11,19 +12,11 @@ from .canonical import (
 )
 
 
-_FORMAT_LABELS = {
-    "ccsession": "Claude Code",
-    "codearts": "CodeArts",
-    "opencode": "OpenCode",
-    "codex": "Codex",
-}
-
-
 def _describe_format(raw: dict) -> str:
     """Human-readable format name for a loaded trajectory (best-effort)."""
-    from trajviz.insight.loaders import detect_format
+    from trajviz.insight.loaders import detect_format, FORMAT_LABELS
     fmt = detect_format(raw) if isinstance(raw, dict) else "unknown"
-    return _FORMAT_LABELS.get(fmt, fmt or "unknown")
+    return FORMAT_LABELS.get(fmt, fmt or "unknown")
 
 
 def _session_duration_s(raw: dict) -> float | None:
@@ -153,15 +146,18 @@ def compute_alignment_metrics(
     )
 
     # Fall back to count-based metrics when token weights are 0
-    # (e.g., Codex trajectories which lack per-action token data)
-    if reference_weight == 0 and ref_non_reason:
+    # (e.g., Codex trajectories which lack per-action token data).
+    # The fallback is JOINT (B24): if either side lacks cost data, BOTH sides
+    # switch to counts, so overhead_ratio and P/R/F1 never divide an action
+    # count by a token weight (mixed units made them meaningless).
+    if ((reference_weight == 0 and ref_non_reason)
+            or (compared_weight == 0 and cmp_non_reason)):
         reference_weight = len(ref_non_reason)
+        compared_weight = len(cmp_non_reason)
         matched_ref_weight = sum(1 for i, _ in alignment["matched_pairs"]
                                  if reference[i].action_type != "REASON")
-    if compared_weight == 0 and cmp_non_reason:
-        compared_weight = len(cmp_non_reason)
         matched_cmp_weight = sum(1 for _, j in alignment["matched_pairs"]
-                                  if compared[j].action_type != "REASON")
+                                 if compared[j].action_type != "REASON")
 
     recall = matched_ref_weight / reference_weight if reference_weight > 0 else 0.0
     precision = matched_cmp_weight / compared_weight if compared_weight > 0 else 0.0
@@ -220,6 +216,27 @@ def compute_harmful_divergence(
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
+def _parse_anchor_files(patch_path: str | None) -> set[str] | None:
+    """Extract anchor file paths from a unified diff's ``a/``/``b/`` headers.
+
+    Returns ``None`` (un-anchored) when the patch is missing/unreadable — and
+    also when it contains no recognizable ``a/ b/`` headers (B25): an empty
+    set would silently empty the target-file grounding in assign_effect_labels
+    while every downstream ``if anchor_files:`` check still reported
+    anchor_mode='self'. Shared by build_comparison_report and the Insight UI's
+    run_comparison so the two entry points cannot drift.
+    """
+    if not patch_path:
+        return None
+    try:
+        with open(patch_path) as f:
+            content = f.read()
+    except Exception:
+        return None
+    anchor_files = set(re.findall(r'^[+-]{3}\s+[ab]/(.+)$', content, re.MULTILINE))
+    return anchor_files or None
+
+
 def build_comparison_report(
     ref_file: str,
     cmp_file: str,
@@ -232,6 +249,10 @@ def build_comparison_report(
 ) -> dict:
     """Load, canonicalize, align, and produce the full comparison report.
 
+    Thin file-path entry point: loads/parses both trajectories and the anchor
+    patch, then delegates to :func:`build_comparison_report_from_steps` (which
+    the Insight UI's run_comparison also calls with pre-loaded data).
+
     Args:
         ref_labels, cmp_labels: Optional step-label mappings from the step
             labeler. When provided, CanonicalActions carry phase/action labels
@@ -239,30 +260,50 @@ def build_comparison_report(
     """
     from trajviz.insight.loaders import load_trajectory
     from trajviz.insight.parser import parse_steps
-    from .milestones import (
-        extract_milestones, compute_milestone_deltas,
-        segment_by_milestones, compare_segments,
-    )
-    from .divergence import classify_divergences, compute_pattern_costs
 
-    # Load and parse
     ref_raw = load_trajectory(ref_file)
     cmp_raw = load_trajectory(cmp_file)
     ref_steps = parse_steps(ref_raw)
     cmp_steps = parse_steps(cmp_raw)
 
-    # Determine anchor files
-    anchor_files = None
-    if anchor_patch:
-        # Read anchor patch file to extract file list
-        try:
-            with open(anchor_patch) as f:
-                content = f.read()
-            # Extract file paths from diff headers
-            import re
-            anchor_files = set(re.findall(r'^[+-]{3}\s+[ab]/(.+)$', content, re.MULTILINE))
-        except Exception:
-            anchor_files = None
+    return build_comparison_report_from_steps(
+        ref_raw, cmp_raw, ref_steps, cmp_steps,
+        token_rate=token_rate,
+        fuzzy_commands=fuzzy_commands,
+        anchor_files=_parse_anchor_files(anchor_patch),
+        ref_path=ref_file,
+        cmp_path=cmp_file,
+        task_id=task_id,
+        ref_labels=ref_labels,
+        cmp_labels=cmp_labels,
+    )
+
+
+def build_comparison_report_from_steps(
+    ref_raw: dict,
+    cmp_raw: dict,
+    ref_steps: list[dict],
+    cmp_steps: list[dict],
+    *,
+    token_rate: float = DEFAULT_TOKEN_RATE,
+    fuzzy_commands: bool = False,
+    anchor_files: set[str] | None = None,
+    ref_path: str = "",
+    cmp_path: str = "",
+    task_id: str = "",
+    ref_labels: dict[int, dict[str, str]] | None = None,
+    cmp_labels: dict[int, dict[str, str]] | None = None,
+) -> dict:
+    """Core comparison pipeline over already-loaded trajectories (R21).
+
+    Single implementation shared by build_comparison_report (file paths) and
+    trajviz.insight.comparison.run_comparison (pre-loaded dicts).
+    """
+    from .milestones import (
+        extract_milestones, compute_milestone_deltas,
+        segment_by_milestones, compare_segments,
+    )
+    from .divergence import classify_divergences, compute_pattern_costs
 
     # Canonicalize (attach phase/action labels when available)
     ref_actions = canonicalize_steps(ref_steps, step_labels=ref_labels)
@@ -285,8 +326,8 @@ def build_comparison_report(
         "compared_steps": len(cmp_steps),
         "reference_tokens": ref_tokens,
         "compared_tokens": cmp_tokens,
-        "reference_filename": os.path.basename(ref_file) if ref_file else "",
-        "compared_filename": os.path.basename(cmp_file) if cmp_file else "",
+        "reference_filename": os.path.basename(ref_path) if ref_path else "",
+        "compared_filename": os.path.basename(cmp_path) if cmp_path else "",
         "reference_format": _describe_format(ref_raw),
         "compared_format": _describe_format(cmp_raw),
         "reference_duration_s": _session_duration_s(ref_raw),
@@ -375,13 +416,10 @@ def build_comparison_report(
         anchor_analysis = compute_anchor_analysis(
             ref_actions, cmp_actions, anchor_files)
 
-    # Evaluation layers
+    # Evaluation layers (R25: compute_eval_layers reads only patterns and
+    # anchor_analysis; the old throwaway alignment dict was never consumed)
     from .eval_layers import compute_eval_layers
-    eval_layers = compute_eval_layers(
-        {"alignment": {**metrics, **harmful}},
-        patterns,
-        anchor_analysis,
-    )
+    eval_layers = compute_eval_layers(patterns, anchor_analysis)
 
     # Confidence badges
     confidence = {
