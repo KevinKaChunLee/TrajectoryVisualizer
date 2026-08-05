@@ -12,55 +12,20 @@ jobs:
   # Proves TrajViz works WITHOUT DECAF (standalone): core suite + the
   # attribution degradation/render/construction tests that need no corpus.
   # The DECAF integration tests skip here by design (no `awe` on the path).
+  #
+  # This is the ONLY workflow that runs on pull_request: the DECAF integration
+  # needs a private-monorepo checkout, which must never coexist with
+  # PR-controlled code (see integration.yml — trusted contexts only).
   standalone:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install
-        run: pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@v5
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
       - name: Test (standalone — DECAF absent)
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: python -m pytest -q
-
-  # Runs the DECAF failure-attribution integration tests against the vendored
-  # fixture. TRAJVIZ_REQUIRE_ATTRIBUTION=1 makes a missing environment a hard
-  # failure, so the suite can never be green merely by skipping them.
-  #
-  # Credential hygiene: the DECAF checkout uses a read-only PAT
-  # (secrets.ARGUS_PAT) with persist-credentials disabled on BOTH checkouts, so
-  # no token is on disk while the PR-controlled install/tests execute, and the
-  # DECAF ref is PINNED to an immutable commit so PR code cannot influence which
-  # DECAF is used. Bump the pin deliberately when DECAF's API changes.
-  integration:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Check out DECAF (pinned, from the ARGUS monorepo)
-        uses: actions/checkout@v4
-        with:
-          repository: rshu/ARGUS
-          token: ${{ secrets.ARGUS_PAT }}   # read-only PAT for the private monorepo
-          path: _argus
-          sparse-checkout: DECAF
-          persist-credentials: false
-          # rshu/ARGUS main @ merge of PR #11 (case_record trajectory_override)
-          ref: fe20e68afba5ca0baebcb0b02b99267975bb1827
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install
-        run: pip install -e ".[dev]"
-      - name: Test (integration — DECAF present, no silent skips)
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          AWE_DECAF_PATH: ${{ github.workspace }}/_argus/DECAF
-          TRAJVIZ_REQUIRE_ATTRIBUTION: "1"
-        run: python -m pytest -q
+        run: uv run python -m pytest -q

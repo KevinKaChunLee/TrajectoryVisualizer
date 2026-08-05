@@ -132,8 +132,13 @@ primary-cause banner, a per-capability scorecard, and a collapsible evidence
 chain (observation → inference → conclusion, with verbatim trajectory quotes and
 a tamper-evidence audit verdict) for each fault.
 
-The attribution is powered by the [DECAF](../DECAF) (`awe`) method, imported as a
-library through `trajviz/insight/attribution.py`. It is **gold-grounded** — it
+The attribution is powered by the DECAF (`awe`) method, imported as a library
+through `trajviz/insight/attribution.py`. DECAF is currently part of a private
+research monorepo (a public artifact release is planned with the accompanying
+paper) — so this feature is usable today only if you have a DECAF checkout:
+clone it and point `AWE_DECAF_PATH` at it (default: a sibling `../DECAF`
+directory). Without DECAF, TrajViz runs fully standalone and the Attribution
+tab degrades to an informative notice. It is **gold-grounded** — it
 needs the task's reference patch and test outcome — so it works on trajectories
 from a corpus laid out as `.../trajectory/<agent>/<instance_id>.json` alongside
 DECAF's `requirements/`, `patch/`, and `eval_<agent>.json` data. When a

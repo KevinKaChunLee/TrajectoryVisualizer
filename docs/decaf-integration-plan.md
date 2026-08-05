@@ -144,3 +144,36 @@ TrajViz's existing error clusters / failure chains (`diagnostics.py`) become sup
 - Unify the two trajectory normalizers into one shared model (kills the duplicated adapters).
 - Wire DECAF's `counterfactual.status` (currently `not_tested`) into an actual interventional re-run driven from the UI.
 - Batch/corpus mode in TrajViz (diagnose a whole agent's run, not one trajectory) — reuses `scoring.agent_capability_scores`.
+
+---
+
+## Design update (2026-08-05) — supersedes §4–§5's adapter-override seam
+
+Review rounds 2–3 on PR #10 hardened the design; the shipped architecture is:
+
+1. **Canonical identity, not trajectory override.** `diagnose()` never feeds an
+   adapted displayed file into DECAF. DECAF treats `trajectory_override` as a
+   validation injection (judge layer disabled, weights renormalized) and the
+   canonical patch/outcome would mix run provenance with an arbitrary upload.
+   Instead the displayed file must be byte-identical (sha256) to the file DECAF
+   itself parses — resolved by `awe.adapters.canonical_trajectory_path` (codex
+   prefers `.jsonl`) so verification and diagnosis can never read different
+   sources. Non-matching files are refused with the provenance reason.
+2. **Cache provenance (DECAF v0.34, monorepo PR #12).** normtraj/trajsig caches
+   are content-keyed by source sha256; judge/arbiter verdicts stamp
+   `trajectory_sha256` and the seam disables an LLM layer whose cached verdict
+   does not verifiably belong to the current trajectory content (noted in the
+   result).
+3. **Per-request isolation.** `diagnose()` always configures an explicit corpus
+   root (caller's or the immutable import-time default) under a module lock —
+   configuration is never inherited across sessions/callers. `configure()`
+   clears `build_gold_reference` AND `load_outcomes` (the real lru owner).
+4. **Input validation.** `agent` must be a known corpus agent; `instance_id`
+   must match `^[A-Za-z0-9][A-Za-z0-9._-]*$` — no path traversal, no
+   file-existence oracle.
+5. **CI.** `ci.yml` (standalone, lockfile-installed) is the only PR workflow.
+   The DECAF integration lives in `integration.yml`, trusted contexts only
+   (push to main + workflow_dispatch), because a private-monorepo checkout —
+   whose Git pack contains blobs beyond the sparse worktree — must never
+   coexist with PR-controlled code. Requires a read-only `ARGUS_PAT` secret;
+   DECAF ref pinned to an immutable merge commit.

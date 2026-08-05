@@ -52,5 +52,6 @@
   },
   "finish_reason": "stop",
   "prompt_version": "6511d1a70c39",
-  "evidence_schema": 11
+  "evidence_schema": 11,
+  "trajectory_sha256": "16f22cc8cb7b97654a0686494e6595745d14a8c6052eab2e08b7ab11c6612809"
 }

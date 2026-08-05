@@ -1338,7 +1338,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "requests", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "attribution"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "typer"

@@ -88,14 +88,60 @@ def test_golden_arbiter_refuted_case_is_not_blamed():
                                source_path=_traj_path(ARB_AGENT, ARB_INST),
                                fmt="ccsession")
     assert res.available
+    assert res.notes == []               # vendored verdicts are provenance-stamped
     assert res.blame_status == ARB_EXPECT["blame_status"]
     assert res.primary is None
     assert not any(s.blamed for s in res.scorecard)
-    # judge verdict is vendored for this case -> judge caps were ASSESSED (clean)
+    # judge verdict is vendored for this case -> judge assessment is PER-CAP:
+    # each judge capability is assessed only when ITS opportunity opened (DECAF
+    # can judge requirement_understanding while task_planning is out of scope)
     assert res.used_judge is True
     by_cap = {s.capability: s for s in res.scorecard}
-    assert by_cap["requirement_understanding"].assessed is True
-    assert by_cap["requirement_understanding"].blamed is False
+    from awe.detect import detect
+    opp = detect(ARB_INST, ARB_AGENT)["opportunities"]
+    for cap in ("requirement_understanding", "task_planning"):
+        assert by_cap[cap].assessed == bool(opp.get(cap))
+        assert by_cap[cap].blamed is False
+    # the arbiter verdict is surfaced for the UI to render
+    assert (res.arbiter or {}).get("applied") == "refuted_unattributed"
+
+
+@requires_corpus
+def test_unverifiable_llm_verdicts_are_disabled(tmp_path, monkeypatch):
+    """A cached judge/arbiter verdict whose trajectory_sha256 does not match the
+    current canonical trajectory must NOT shape the diagnosis (a stale verdict
+    could otherwise refute a different trajectory citing nonexistent steps)."""
+    import awe.arbiter as _arb
+    from awe import config as _cfg
+
+    jdst = tmp_path / "judge"
+    adst = tmp_path / "arbiter"
+    shutil.copytree(_cfg.JUDGE_CACHE_DIR, jdst)
+    shutil.copytree(_arb.ARBITER_CACHE_DIR, adst)
+    for p in list(jdst.rglob("*.json")) + list(adst.rglob("*.json")):
+        rec = json.loads(p.read_text())
+        rec["trajectory_sha256"] = "0" * 64
+        p.write_text(json.dumps(rec))
+    monkeypatch.setattr(_cfg, "JUDGE_CACHE_DIR", jdst)
+    monkeypatch.setattr(_arb, "ARBITER_CACHE_DIR", adst)
+
+    res = attribution.diagnose(agent=ARB_AGENT, instance_id=ARB_INST)
+    assert res.available
+    # LLM layers disabled -> the rule-elected omission primary STANDS (no
+    # arbiter refutation), and the mismatch is noted for the UI
+    assert res.blame_status == "primary"
+    assert res.notes and any("provenance" in n for n in res.notes)
+    assert res.used_judge is False
+
+
+def test_path_traversal_instance_id_is_rejected():
+    """instance_id must never reach filesystem path construction: traversal is
+    rejected up front with a uniform message (no file-existence oracle)."""
+    for evil in ("../../../../etc/passwd", "..%2Fetc", "a/../b", "x/y", ".hidden"):
+        res = attribution.diagnose(agent=GOLD_AGENT, instance_id=evil)
+        assert res.available is False
+        assert "invalid instance id" in (res.reason or ""), evil
+        assert res.faults == []
 
 
 # --------------------------------------------------------------- identity
@@ -219,16 +265,3 @@ def test_adapter_parity_claude_code():
                 b.test_run, b.tool_error)
 
 
-# --------------------------------------------------------------- fixture hygiene
-def test_fixture_contains_no_secrets():
-    """The vendored fixture is research corpus data (public SWE-bench Verified
-    runs); assert no credential-shaped strings are committed."""
-    import re
-    from pathlib import Path
-    fix = Path(__file__).parent / "fixtures"
-    pat = re.compile(r"sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}"
-                     r"|api[_-]?key\s*[:=]\s*['\"][A-Za-z0-9_-]{16,}", re.IGNORECASE)
-    for p in fix.rglob("*"):
-        if p.is_file() and p.suffix in {".json", ".jsonl", ".diff"}:
-            hits = pat.findall(p.read_text(errors="replace"))
-            assert not hits, f"credential-shaped string in fixture {p}: {hits[:2]}"

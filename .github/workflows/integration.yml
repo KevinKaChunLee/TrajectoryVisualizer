@@ -1,0 +1,49 @@
+name: DECAF integration (trusted)
+
+# Runs the DECAF failure-attribution integration tests. DELIBERATELY NOT a
+# pull_request workflow: the integration needs a checkout of the private ARGUS
+# monorepo, and a fetched Git pack contains monorepo blobs beyond the sparse
+# worktree — PR-controlled code (install hooks, tests) must never execute
+# alongside that checkout or its credential. Trusted contexts only:
+#   - push to main (post-merge verification)
+#   - manual workflow_dispatch (e.g. to vet a branch before merging: dispatch
+#     with that branch selected)
+# Requires the ARGUS_PAT secret: a READ-ONLY fine-grained PAT for rshu/ARGUS.
+# TRAJVIZ_REQUIRE_ATTRIBUTION=1 turns a missing environment into a hard failure,
+# so this workflow can never be green by silently skipping the integration tests.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out DECAF (pinned, from the ARGUS monorepo)
+        uses: actions/checkout@v4
+        with:
+          repository: rshu/ARGUS
+          token: ${{ secrets.ARGUS_PAT }}
+          path: _argus
+          sparse-checkout: DECAF
+          persist-credentials: false
+          # rshu/ARGUS main @ merge of PR #12 (content-keyed caches +
+          # provenance-stamped verdicts). Bump deliberately on DECAF API change.
+          ref: 6341c1018eb39b990cbf562523f6e12477a1ea17
+      - uses: astral-sh/setup-uv@v5
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: Test (integration — DECAF present, no silent skips)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          AWE_DECAF_PATH: ${{ github.workspace }}/_argus/DECAF
+          TRAJVIZ_REQUIRE_ATTRIBUTION: "1"
+        run: uv run python -m pytest -q

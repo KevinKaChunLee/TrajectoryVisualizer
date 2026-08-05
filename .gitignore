@@ -62,3 +62,4 @@ data/
 !tests/fixtures/corpus/data/**
 *.trajectory.json.gz
 example_data
+.hypothesis/

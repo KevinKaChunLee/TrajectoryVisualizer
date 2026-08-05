@@ -1835,9 +1835,11 @@ def build_ui() -> gr.Blocks:
                                     source_path=src or None, fmt=fmt,
                                     argus_root=root or None)
             html_out = build_attribution_html(asdict(result))
+            import html as _html
+            ident = _html.escape(f"{result.agent}/{result.instance_id}")
             status = (
                 "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
-                f"Diagnosis complete &mdash; {result.agent}/{result.instance_id}.</div>"
+                f"Diagnosis complete &mdash; {ident}.</div>"
                 if result.available else
                 "<div style='color:var(--ov-muted);padding:0.5em;font-size:13px;'>"
                 "No gold-grounded attribution &mdash; see the note below.</div>")
@@ -1853,6 +1855,18 @@ def build_ui() -> gr.Blocks:
             outputs=[attr_result_html, attr_status_html],
             concurrency_id="attribution",
         )
+
+        # Clear stale attribution IMMEDIATELY when a new load starts (fast
+        # handler in parallel with do_load), so the previous run's diagnosis is
+        # never shown against a newly loaded trajectory even transiently.
+        def _clear_attribution():
+            return ("<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                    "Diagnosing the loaded trajectory&hellip;</div>",
+                    "")
+        load_btn.click(fn=_clear_attribution,
+                       outputs=[attr_result_html, attr_status_html])
+        file_upload.change(fn=_clear_attribution,
+                           outputs=[attr_result_html, attr_status_html])
 
         # Auto-populate on load, and IGNORE + clear the agent/instance override
         # fields so a previous case's identity can never attribute a newly loaded

@@ -1082,8 +1082,13 @@ def _attr_fault_html(fault: dict) -> str:
     cap, et = fault.get("capability", ""), fault.get("error_type", "")
     chain = fault.get("evidence_chain") or {}
     strength = chain.get("strength", "")
-    color, tier_label = _STRENGTH_STYLE.get(strength, ("#6b7280", strength or "—"))
     weight = fault.get("blame_weight", 0.0)
+    if float(weight or 0) == 0:
+        # arbiter-refuted candidate: neutral badge, never a tier color that
+        # could read as an attributed fault
+        color, tier_label = "#9ca3af", "refuted"
+    else:
+        color, tier_label = _STRENGTH_STYLE.get(strength, ("#6b7280", strength or "—"))
     primary_tag = " ★ primary" if fault.get("is_primary") else ""
     label = f"{_ATTR_CAP_LABEL.get(cap, cap)} → {et}"
 
@@ -1117,10 +1122,37 @@ def _attr_fault_html(fault: dict) -> str:
     )
 
 
+def _attr_arbiter_html(arb: dict | None) -> str:
+    """Render the arbiter's verdict prominently (a refutation is a first-class
+    result, not something to bury under a zero-weight fault card)."""
+    if not arb or arb.get("support") is None:
+        return ""
+    applied = arb.get("applied", "")
+    refuted = applied in ("demoted_to_conjunctive", "refuted_reassigned",
+                          "refuted_unattributed")
+    color = "#dc2626" if refuted else ("#059669" if applied == "corroborated"
+                                       else "#9ca3af")
+    verb = {"demoted_to_conjunctive": "refuted (demoted to conjunctive)",
+            "refuted_reassigned": "refuted (blame reassigned to a deductive fault)",
+            "refuted_unattributed": "refuted (no attributed cause remains)",
+            "corroborated": "corroborated", "noted": "noted"}.get(applied, applied)
+    tgt = arb.get("target") or {}
+    rationale = arb.get("rationale") or ""
+    return (
+        f"<div class='attr-banner'>"
+        f"<div class='attr-banner-head'>"
+        f"<span class='judge-badge' style='background:{color};'>Arbiter</span> "
+        f"{html.escape(verb)} — <code>{html.escape(str(tgt.get('error_type', '?')))}</code>"
+        f" ({html.escape(str(arb.get('confidence', '?')))})</div>"
+        + (f"<div class='attr-banner-sub'>{html.escape(rationale)}</div>" if rationale else "")
+        + "</div>")
+
+
 def build_attribution_html(data: dict) -> str:
-    """Render the DECAF attribution result: primary banner + capability
-    scorecard + per-fault evidence chains. ``data`` is a plain dict (an
-    AttributionResult serialized) so rendering stays decoupled from ``awe``."""
+    """Render the DECAF attribution result: primary banner + arbiter verdict +
+    capability scorecard + per-fault evidence chains (attributed and refuted
+    candidates separated). ``data`` is a plain dict (an AttributionResult
+    serialized) so rendering stays decoupled from ``awe``."""
     if not data.get("available"):
         return _attr_notice(data.get("reason") or "Attribution unavailable.")
 
@@ -1131,24 +1163,34 @@ def build_attribution_html(data: dict) -> str:
                 f"→ <code>{html.escape(primary['error_type'])}</code>")
     else:
         head = f"No single dominant cause (<code>{html.escape(status)}</code>)"
-    tier_note = ("7-capability (judge cache present)" if data.get("used_judge")
+    tier_note = ("7-capability (judge verdict for this case)" if data.get("used_judge")
                  else "5-capability deductive/associational slice")
     banner = (
         f"<div class='attr-banner'>"
         f"<div class='attr-banner-head'>{head}</div>"
         f"<div class='attr-banner-sub'>blame status: <b>{html.escape(status)}</b>"
         f" &middot; {html.escape(tier_note)}</div></div>")
+    notes_html = "".join(
+        f"<div class='attr-banner-sub'>&#9888; {html.escape(n)}</div>"
+        for n in data.get("notes") or [])
 
     faults = data.get("faults", [])
-    faults_html = "".join(_attr_fault_html(f) for f in faults) or _attr_notice(
-        "No fault candidates — a failed run with no attributable cause "
-        "(coverage gap).", warn=False)
-
-    return (banner
-            + _attr_scorecard_html(data.get("scorecard", []), primary)
-            + "<div style='margin-top:12px;font-weight:600;font-size:13px;'>"
-              "Diagnosed faults (evidence chains)</div>"
-            + faults_html)
+    attributed = [f for f in faults if float(f.get("blame_weight") or 0) > 0]
+    refuted = [f for f in faults if float(f.get("blame_weight") or 0) == 0]
+    out = (banner + notes_html
+           + _attr_arbiter_html(data.get("arbiter"))
+           + _attr_scorecard_html(data.get("scorecard", []), primary))
+    out += ("<div style='margin-top:12px;font-weight:600;font-size:13px;'>"
+            "Diagnosed faults (evidence chains)</div>")
+    out += "".join(_attr_fault_html(f) for f in attributed) or _attr_notice(
+        "No attributed faults — no cause survived (see the arbiter verdict "
+        "above / coverage gap).", warn=False)
+    if refuted:
+        out += ("<div style='margin-top:12px;font-weight:600;font-size:13px;"
+                "color:var(--ov-muted);'>Refuted candidates (zero blame — kept "
+                "for audit)</div>")
+        out += "".join(_attr_fault_html(f) for f in refuted)
+    return out
 
 
 def build_judge_result_html(judge_result: dict | None) -> str:
