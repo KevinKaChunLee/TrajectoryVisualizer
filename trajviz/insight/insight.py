@@ -20,7 +20,7 @@ from .parser import (
     compute_agent_summary,
     effective_agent,
 )
-from .analytics import compute_step_analytics, detect_phases
+from .analytics import compute_step_analytics
 from .diagnostics import (
     extract_file_interactions,
     identify_target_files,
@@ -514,7 +514,7 @@ def _build_overview_outputs(
 
 
 def _build_chart_outputs(
-    steps: list[dict], message_rows: list[dict], phases: list[dict],
+    steps: list[dict], message_rows: list[dict],
     step_analytics: list[dict], agent_summaries: list[dict],
     dark: bool = False,
     trajectory: list[dict] | None = None,
@@ -545,11 +545,7 @@ def _build_chart_outputs(
     plan_timeline_fig = build_plan_timeline_chart(plan_history, plan_metrics, dark=dark)
     error_class_fig = build_error_classification_chart(steps, dark=dark)
 
-    # Context growth chart. Skip Boot/Steady/Closeout phase overlays here —
-    # the heuristic bands clutter the cumulative-token view without adding
-    # signal.
-    context_growth_fig = build_context_growth_chart(
-        message_rows, phases=None, dark=dark)
+    context_growth_fig = build_context_growth_chart(message_rows, dark=dark)
 
     # New panels
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
@@ -1365,66 +1361,6 @@ def build_ui() -> gr.Blocks:
                                 }
                                 if (cards.length) selectCard(cards[0]);
                             }, 600);
-
-                            /* ===== Chart Interactivity Bridge ===== */
-                            /* Navigate to a step in the workflow tab */
-                            window.__navigateToStep = function(stepIdx) {
-                                var tabs = document.querySelectorAll('button[role=tab]');
-                                for (var ti = 0; ti < tabs.length; ti++) { if (tabs[ti].textContent.trim() === 'Workflow') { tabs[ti].click(); break; } }
-                                setTimeout(function() {
-                                    var card = document.getElementById('wf-card-' + stepIdx);
-                                    if (card) {
-                                        card.scrollIntoView({behavior: 'smooth', block: 'center'});
-                                        card.click();
-                                    }
-                                }, 300);
-                            };
-
-                            /* Attach click handlers to Plotly charts for phase regions */
-                            if (!window.__plotlyClickAttached) {
-                                window.__plotlyClickAttached = true;
-                                document.addEventListener('click', function(e) {
-                                    /* Phase region annotations are rendered as text elements */
-                                    var annot = e.target.closest('.annotation-text');
-                                    if (!annot) return;
-                                    var text = annot.textContent || '';
-                                    /* Check if it looks like a phase annotation */
-                                    if (['Boot', 'Steady', 'Closeout'].indexOf(text.trim()) === -1) return;
-                                    /* Find the phase data from the chart's vrects */
-                                    var plotDiv = annot.closest('.js-plotly-plot');
-                                    if (!plotDiv || !plotDiv.layout) return;
-                                    var shapes = plotDiv.layout.shapes || [];
-                                    var annotations = plotDiv.layout.annotations || [];
-                                    /* Find matching annotation index */
-                                    for (var i = 0; i < annotations.length; i++) {
-                                        if (annotations[i].text === text.trim() && shapes[i]) {
-                                            var startStep = Math.round(shapes[i].x0 + 0.5);
-                                            window.__navigateToStep(startStep);
-                                            break;
-                                        }
-                                    }
-                                });
-
-                                /* Outlier annotation click → navigate to step */
-                                document.addEventListener('click', function(e) {
-                                    var annot = e.target.closest('.annotation-text');
-                                    if (!annot) return;
-                                    var text = annot.textContent || '';
-                                    var m = text.match(/spike:\\s*([\\d,]+)/);
-                                    if (!m) return;
-                                    /* Outlier annotations have x coordinate = step index */
-                                    var plotDiv = annot.closest('.js-plotly-plot');
-                                    if (!plotDiv || !plotDiv.layout) return;
-                                    var annotations = plotDiv.layout.annotations || [];
-                                    for (var i = 0; i < annotations.length; i++) {
-                                        if (annotations[i].text && annotations[i].text.indexOf(text.trim()) >= 0) {
-                                            var stepIdx = Math.round(annotations[i].x);
-                                            window.__navigateToStep(stepIdx);
-                                            break;
-                                        }
-                                    }
-                                });
-                            }
                             """,
                         )
                     with gr.Column(scale=2, min_width=300, elem_classes=["detail-panel"]):
@@ -1571,7 +1507,6 @@ def build_ui() -> gr.Blocks:
             _, wfmt = wall_clock_fmt(metrics)
 
             step_analytics = compute_step_analytics(steps)
-            phases = detect_phases(step_analytics)
             verdicts = compute_health_verdict(metrics, step_analytics if steps else [])
             agent_summaries = compute_agent_summary(steps, raw)
 
@@ -1590,7 +1525,7 @@ def build_ui() -> gr.Blocks:
                 model_id=_model_id, agent_id=_agent_id,
             )
 
-            ch = _build_chart_outputs(steps, message_rows, phases,
+            ch = _build_chart_outputs(steps, message_rows,
                                       step_analytics, agent_summaries, dark=dark,
                                       trajectory=raw.get("trajectory") or raw.get("messages") or [],
                                       trajectory_format=detected)

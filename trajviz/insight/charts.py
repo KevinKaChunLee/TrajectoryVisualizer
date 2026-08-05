@@ -15,7 +15,7 @@ from plotly.subplots import make_subplots
 from .parser import infer_non_cache_input
 from .metrics import effective_agent
 from .palette import (
-    TOKEN_COLORS, PHASE_COLORS, PHASE_FILL_COLORS, PHASE_LINE_COLORS,
+    TOKEN_COLORS, SESSION_COLORS,
     AGENT_COLORS, AGENT_CSS_COLORS, ROLE_COLORS, TOOL_OUTCOME_COLORS,
     CHART_ACCENT, PLOTLY_DARK_TEMPLATE,
 )
@@ -48,24 +48,6 @@ def build_agent_color_map(steps: list[dict]) -> dict[str, int]:
             next_idx += 1
     return mapping
 
-
-def agent_color(agent_id: str, color_map: dict[str, int]) -> str:
-    """Return the hex color for an agent given its color map index."""
-    idx = color_map.get(agent_id, 0)
-    return AGENT_COLORS[idx % len(AGENT_COLORS)]
-
-
-def _plotly_step_color(step: dict) -> str:
-    """Return a hex bar-color for a step (Plotly can't use CSS variables)."""
-    if step["error_count"] > 0:
-        return ROLE_COLORS["error"]
-    if step.get("finish") in ("stop", "end_turn"):
-        return ROLE_COLORS["stop"]
-    if step["tool_call_count"] > 0:
-        return ROLE_COLORS["tool"]
-    if step["has_reasoning"] and step["role"] == "assistant":
-        return ROLE_COLORS["reasoning"]
-    return ROLE_COLORS.get(step["role"], ROLE_COLORS["default"])
 
 
 # -- Layout helpers -------------------------------------------------------
@@ -164,8 +146,6 @@ def _add_token_bar_traces(fig: go.Figure, x_values: list,
 
 # -- Annotation utilities ------------------------------------------------
 
-_PHASE_COLORS = PHASE_FILL_COLORS
-_PHASE_LINE_COLORS = PHASE_LINE_COLORS
 
 
 def _detect_outliers(values: list[float], threshold: float = 2.0) -> list[tuple[int, float, str]]:
@@ -189,81 +169,11 @@ def _detect_outliers(values: list[float], threshold: float = 2.0) -> list[tuple[
     return outliers
 
 
-def add_phase_overlays(fig: go.Figure, phases: list[dict] | None,
-                       step_count: int) -> None:
-    """Draw semi-transparent vertical regions for each detected phase."""
-    if not phases or len(phases) <= 1:
-        return
-    for p in phases:
-        color = _PHASE_COLORS.get(p["name"], "rgba(107,114,128,0.06)")
-        label_color = _PHASE_LINE_COLORS.get(p["name"], "#6b7280")
-        fig.add_vrect(
-            x0=p["start_idx"] - 0.5, x1=p["end_idx"] + 0.5,
-            fillcolor=color, layer="below", line_width=0,
-        )
-        fig.add_annotation(
-            x=(p["start_idx"] + p["end_idx"]) / 2, y=1.0,
-            yref="paper", text=p["name"],
-            showarrow=False, font=dict(size=10, color=label_color),
-            yanchor="bottom",
-        )
-
-
-def _add_outlier_annotations(fig: go.Figure, outliers: list[tuple[int, float, str]],
-                             fmt: str = ",.0f", suffix: str = "") -> None:
-    """Add annotation arrows for detected outlier points."""
-    for idx, val, label in outliers[:5]:  # cap at 5 to avoid clutter
-        fig.add_annotation(
-            x=idx, y=val,
-            text=f"{label}: {val:{fmt}}{suffix}",
-            showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
-            arrowcolor="#dc2626", font=dict(size=9, color="#dc2626"),
-            ax=0, ay=-30,
-        )
-
 
 # -- Chart builders -------------------------------------------------------
 
-def _add_agent_regions(fig: go.Figure, steps: list[dict],
-                       color_map: dict[str, int]) -> None:
-    """Add semi-transparent vertical shading per agent span on a chart."""
-    if not steps or len(color_map) <= 1:
-        return
-    # Find contiguous runs of the same agent
-    runs: list[tuple[str, int, int]] = []
-    prev_agent = effective_agent(steps[0])
-    run_start = 0
-    for i, s in enumerate(steps):
-        a = effective_agent(s)
-        if a != prev_agent:
-            runs.append((prev_agent, run_start, i - 1))
-            prev_agent = a
-            run_start = i
-    runs.append((prev_agent, run_start, len(steps) - 1))
 
-    for agent_id, start, end in runs:
-        if not agent_id:
-            continue  # don't shade main agent
-        hex_color = agent_color(agent_id, color_map)
-        # Convert hex to rgba with low opacity
-        r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
-        fig.add_vrect(
-            x0=start - 0.5, x1=end + 0.5,
-            fillcolor=f"rgba({r},{g},{b},0.08)", layer="below", line_width=0,
-        )
-        mid = (start + end) / 2
-        label = agent_id[:8] + "…" if len(agent_id) > 8 else agent_id
-        fig.add_annotation(
-            x=mid, y=1.0, yref="paper",
-            text=f"⬤ {label}", showarrow=False,
-            font=dict(size=9, color=hex_color),
-            yanchor="top", yshift=-2,
-        )
-
-
-def build_token_chart(steps: list[dict], cumulative: bool = False,
-                      phases: list[dict] | None = None,
-                      dark: bool = False,
+def build_token_chart(steps: list[dict], dark: bool = False,
                       *, format: str | None = None) -> go.Figure:
     """Stacked bar of token breakdown over steps (non-overlapping segments).
 
@@ -454,8 +364,6 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
     sorted_tools = sorted(all_tools.keys(), key=lambda t: all_tools[t])
     display_names = [n if len(n) <= 30 else n[:27] + "..." for n in sorted_tools]
 
-    # Use the same color palette as the Context Growth chart for consistency
-    _SESSION_COLORS = ["#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2"]
 
     fig = go.Figure()
     if has_agents:
@@ -466,7 +374,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
             else:
                 short = agent_id[:12] if len(agent_id) > 12 else agent_id
                 label = f"sub {short}"
-            color = _SESSION_COLORS[i % len(_SESSION_COLORS)]
+            color = SESSION_COLORS[i % len(SESSION_COLORS)]
             counts = [agent_tool[agent_id].get(t, 0) for t in sorted_tools]
             fig.add_trace(go.Bar(
                 y=display_names, x=counts, orientation="h",
@@ -552,7 +460,6 @@ def build_context_growth_chart(rows: list[dict],
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
     )
     _add_legend_hint(fig)
-    add_phase_overlays(fig, phases, len(rows))
     _apply_dark(fig, dark)
     return fig
 
@@ -595,9 +502,9 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
         _add_token_bar_traces(fig, labels, fresh_input, cache_read, output, reasoning, x_label="")
     else:
         # No token breakdown available — show total tokens per agent
-        _SESSION_COLORS = AGENT_COLORS  # shared palette so agent colors match across views
+        session_palette = AGENT_COLORS  # shared palette so agent colors match across views
         totals = [a["total_tokens"] for a in agent_summaries]
-        colors = [_SESSION_COLORS[i % len(_SESSION_COLORS)] for i in range(len(labels))]
+        colors = [session_palette[i % len(session_palette)] for i in range(len(labels))]
         fig.add_trace(go.Bar(
             x=labels, y=totals, name="Total Tokens",
             marker_color=colors,
@@ -653,7 +560,6 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
                 agent_runs[agent].append((idx, idx, tok, tools))
         prev[agent] = idx
 
-    _SESSION_COLORS = ["#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2"]
     lane_count = 0
     for i, agent_id in enumerate(sorted(color_map.keys(), key=lambda a: color_map[a])):
         if not agent_id:
@@ -662,7 +568,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
             short = agent_id[:12] if len(agent_id) > 12 else agent_id
             label = f"sub {short}"
         lane_count += 1
-        hex_c = _SESSION_COLORS[i % len(_SESSION_COLORS)]
+        hex_c = SESSION_COLORS[i % len(SESSION_COLORS)]
         for start, end, tok, tools in agent_runs.get(agent_id, []):
             width = end - start + 1
             fig.add_trace(go.Bar(

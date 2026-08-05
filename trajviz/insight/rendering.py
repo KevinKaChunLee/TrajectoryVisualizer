@@ -849,70 +849,6 @@ def _diag_jump_onclick(idx: int) -> str:
     )
 
 
-def build_failure_chain_strip_html(chains: list[dict]) -> str:
-    """Render a horizontal strip of clickable failure chain badges."""
-    if not chains:
-        return ""
-    badges = []
-    for c in chains:
-        start, end = c["start"], c["end"]
-        n = len(c["steps"])
-        onclick = _diag_jump_onclick(start)
-        if start == end:
-            label = f"Chain: step {start} (1 step)"
-        else:
-            label = f"Chain: {start}\u2013{end} ({n} steps)"
-        spawn_info = ""
-        if c.get("spawning_step") is not None:
-            spawn_info = f" <span style='font-size:10px;opacity:0.7;'>[from step {c['spawning_step']}]</span>"
-        badges.append(
-            f"<span class='diag-chain-badge' onclick=\"{onclick}\" style='cursor:pointer;'>"
-            f"{html.escape(label)}{spawn_info}"
-            f"</span>"
-        )
-    return "<div class='diag-chain-strip'>" + "".join(badges) + "</div>"
-
-
-def build_bottleneck_cards_html(explanations: list[dict]) -> str:
-    """Render bottleneck explanation cards with decomposition bars."""
-    if not explanations:
-        return ""
-    cards = []
-    for e in explanations:
-        d = e["decomposition"]
-        idx = e["step_idx"]
-        onclick = _diag_jump_onclick(idx)
-
-        # Build stacked bar segments
-        bar_segments = []
-        if d["tool_pct"] > 0:
-            bar_segments.append(
-                f"<div class='diag-bar-seg diag-bar-tool' style='width:{d['tool_pct']}%;'"
-                f" title='Tool: {d['tool_s']}s ({d['tool_pct']}%)'></div>"
-            )
-        if d["inference_pct"] > 0:
-            bar_segments.append(
-                f"<div class='diag-bar-seg diag-bar-inference' style='width:{d['inference_pct']}%;'"
-                f" title='Inference: {d['inference_s']}s ({d['inference_pct']}%)'></div>"
-            )
-        if d["idle_pct"] > 0:
-            bar_segments.append(
-                f"<div class='diag-bar-seg diag-bar-idle' style='width:{d['idle_pct']}%;'"
-                f" title='Idle: {d['idle_s']}s ({d['idle_pct']}%)'></div>"
-            )
-        bar_html = "<div class='diag-bar'>" + "".join(bar_segments) + "</div>"
-
-        cards.append(
-            f"<div class='diag-bottleneck-card' onclick=\"{onclick}\" style='cursor:pointer;'>"
-            f"<div class='diag-bottleneck-header'>"
-            f"<span class='diag-bottleneck-step'>Step {idx}</span>"
-            f"<span class='diag-bottleneck-dur'>{e['duration']:.1f}s</span>"
-            f"</div>"
-            f"{bar_html}"
-            f"<div class='diag-bottleneck-text'>{html.escape(e['explanation'])}</div>"
-            f"</div>"
-        )
-    return "<div class='diag-bottleneck-grid'>" + "".join(cards) + "</div>"
 
 
 def build_root_cause_html(clusters: list[dict]) -> str:
@@ -947,83 +883,10 @@ _JS_GOTO_WORKFLOW = ("var tabs=document.querySelectorAll('button[role=tab]');"
     "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}")
 
 
-_VERDICT_COLORS = {
-    "good": "#059669",
-    "warn": "#d97706",
-    "bad": "#dc2626",
-    "n/a": "#9ca3af",
-}
-
-_VERDICT_LABELS = {
-    "good": "Good",
-    "warn": "Warn",
-    "bad": "Bad",
-    "n/a": "N/A",
-}
-
-_DIMENSION_NAV_TARGETS = {
-    "targeting": "file-interaction",
-    "error_resilience": "failure-chain",
-    "execution_efficiency": "bottleneck",
-    "cost_efficiency": "cache",
-}
-
-_DIMENSION_DISPLAY_NAMES = {
-    "targeting": "Targeting",
-    "error_resilience": "Error Resilience",
-    "execution_efficiency": "Execution Efficiency",
-    "cost_efficiency": "Cost Efficiency",
-}
 
 
-def build_dimension_cards_html(dimensions: dict) -> str:
-    """Render four dimension cards with sub-score, verdict badge, and driving metric."""
-    if not dimensions:
-        return ""
 
-    cards = []
-    for name, dim in dimensions.items():
-        score = dim.get("score")
-        verdict = dim.get("verdict", "n/a")
-        color = _VERDICT_COLORS.get(verdict, "#9ca3af")
-        label = _DIMENSION_DISPLAY_NAMES.get(name, name)
-        score_str = f"{score:.0f}" if score is not None else "N/A"
 
-        # Find the driving metric (lowest score)
-        metrics = dim.get("metrics", {})
-        driving_metric = ""
-        if metrics:
-            non_none = {k: v for k, v in metrics.items() if v is not None}
-            if non_none:
-                worst_key = min(non_none, key=non_none.get)
-                driving_metric = f"{worst_key.replace('_', ' ')}: {non_none[worst_key]:.1f}" if isinstance(non_none[worst_key], float) else f"{worst_key.replace('_', ' ')}: {non_none[worst_key]}"
-
-        # Navigation target
-        nav = _DIMENSION_NAV_TARGETS.get(name, "")
-        onclick = ""
-        if nav:
-            onclick = (
-                f" onclick=\"(function(){{"
-                f"var acc=document.querySelectorAll('.per-message-acc');"
-                f"for(var i=0;i<acc.length;i++){{"
-                f"var btn=acc[i].querySelector('button');"
-                f"if(btn&&btn.textContent.indexOf('Diagnostics')>=0)"
-                f"{{if(acc[i].classList.contains('open')===false)btn.click();break;}}"
-                f"}}}})()\" style='cursor:pointer;'"
-            )
-
-        verdict_label = _VERDICT_LABELS.get(verdict, verdict)
-        cards.append(
-            f"<div class='score-dim-card'{onclick}>"
-            f"<div class='score-dim-header'>"
-            f"<span class='score-dim-name'>{html.escape(label)}</span>"
-            f"<span class='score-dim-badge' style='background:{color};'>{html.escape(verdict_label)}</span>"
-            f"</div>"
-            f"<div class='score-dim-score' style='color:{color};'>{score_str}</div>"
-            f"<div class='score-dim-metric'>{html.escape(driving_metric) if driving_metric else 'insufficient data'}</div>"
-            f"</div>"
-        )
-    return "<div class='score-dim-grid'>" + "".join(cards) + "</div>"
 
 
 # ---------------------------------------------------------------------------
@@ -1203,89 +1066,10 @@ def build_attribution_html(data: dict) -> str:
     return out
 
 
-def build_judge_result_html(judge_result: dict | None) -> str:
-    """Render collapsible LLM judge result panel."""
-    if not judge_result:
-        return ""
-
-    verdict = judge_result.get("verdict", "uncertain")
-    reasoning = judge_result.get("reasoning", "")
-    flagged = judge_result.get("flagged_steps", [])
-    color = _VERDICT_COLORS.get(
-        "good" if verdict == "acceptable" else ("bad" if verdict == "poor" else "warn"),
-        "#9ca3af",
-    )
-    verdict_display = verdict.title()
-
-    flagged_html = ""
-    if flagged:
-        links = []
-        for idx in flagged:
-            onclick = _diag_jump_onclick(idx)
-            links.append(f"<span class='insight-step-link' onclick=\"{onclick}\">step {idx}</span>")
-        flagged_html = f"<div class='judge-flagged'>Flagged: {', '.join(links)}</div>"
-
-    return (
-        f"<details class='judge-panel'>"
-        f"<summary>"
-        f"<span class='judge-badge' style='background:{color};'>{html.escape(verdict_display)}</span>"
-        f" LLM Judge Assessment"
-        f"</summary>"
-        f"<div class='judge-reasoning'>{html.escape(reasoning)}</div>"
-        f"{flagged_html}"
-        f"</details>"
-    )
-
 
 # ---------------------------------------------------------------------------
 # Sub-Agent Delegation Summary
 # ---------------------------------------------------------------------------
-
-def build_subagent_summary_html(sessions: list[dict]) -> str:
-    """Render a sub-agent delegation summary table."""
-    if not sessions:
-        return ""
-
-    rows = ""
-    for s in sessions:
-        sid = s.get("session_id", "")[:12]
-        spawn = s.get("spawn_step", "?")
-        start = s.get("start_step", "?")
-        end = s.get("end_step", "?")
-        steps = s.get("step_count", 0)
-        tokens = s.get("total_tokens", 0)
-        tools = s.get("total_tools", 0)
-        dur = s.get("total_duration", 0)
-        rows += (
-            f"<tr>"
-            f"<td style='font-family:monospace;font-size:12px;'>{html.escape(sid)}</td>"
-            f"<td style='text-align:center;'>{spawn}</td>"
-            f"<td style='text-align:center;'>{start}–{end}</td>"
-            f"<td style='text-align:right;'>{steps}</td>"
-            f"<td style='text-align:right;'>{tokens:,}</td>"
-            f"<td style='text-align:right;'>{tools}</td>"
-            f"<td style='text-align:right;'>{dur:.0f}s</td>"
-            f"</tr>"
-        )
-
-    total_steps = sum(s.get("step_count", 0) for s in sessions)
-    total_tokens = sum(s.get("total_tokens", 0) for s in sessions)
-
-    return (
-        f"<div style='margin-bottom:12px;'>"
-        f"<div style='font-size:13px;font-weight:600;margin-bottom:6px;'>"
-        f"Sub-Agent Delegation — {len(sessions)} session(s), {total_steps} steps, {total_tokens:,} tokens</div>"
-        f"<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
-        f"<thead><tr style='border-bottom:2px solid var(--ov-border);'>"
-        f"<th style='text-align:left;padding:4px 8px;'>Session</th>"
-        f"<th style='text-align:center;padding:4px 8px;'>Spawn</th>"
-        f"<th style='text-align:center;padding:4px 8px;'>Steps</th>"
-        f"<th style='text-align:right;padding:4px 8px;'>Count</th>"
-        f"<th style='text-align:right;padding:4px 8px;'>Tokens</th>"
-        f"<th style='text-align:right;padding:4px 8px;'>Tools</th>"
-        f"<th style='text-align:right;padding:4px 8px;'>Duration</th>"
-        f"</tr></thead><tbody>{rows}</tbody></table></div>"
-    )
 
 
 # ---------------------------------------------------------------------------

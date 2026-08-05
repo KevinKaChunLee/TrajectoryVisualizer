@@ -62,36 +62,8 @@ def _friendly_finish(raw: str | None) -> str:
     return _FINISH_LABELS.get(raw, raw.replace("-", " ").replace("_", " ").title())
 
 
-_PART_LABELS = {
-    "text": "Text",
-    "reasoning": "Reason",
-    "tool_call": "Tool",
-    "step_start": "Start",
-    "step_finish": "Finish",
-    "snapshot": "Snap",
-    "patch": "Patch",
-}
 
 
-def _friendly_parts(part_mix: str) -> str:
-    """Convert comma-separated part types to compact friendly labels."""
-    if not part_mix:
-        return ""
-    types = [t.strip() for t in part_mix.split(",") if t.strip()]
-    labels = [_PART_LABELS.get(t, t.replace("_", " ").title()) for t in types]
-    if len(labels) <= 3:
-        return " · ".join(labels)
-    return " · ".join(labels[:2]) + f" +{len(labels) - 2}"
-
-
-def _fmt_dict_as_table(d: dict, key_header: str = "Key", val_header: str = "Count") -> str:
-    """Format a dict as a markdown table."""
-    if not d:
-        return "*None*"
-    lines = [f"| {key_header} | {val_header} |", "|---|---|"]
-    for k, v in sorted(d.items(), key=lambda x: -(x[1] if isinstance(x[1], (int, float)) else 0)):
-        lines.append(f"| `{k}` | {v} |")
-    return "\n".join(lines)
 
 
 def _build_hotspots_md(rows: list[dict]) -> str:
@@ -198,20 +170,6 @@ def _build_per_message_md(rows: list[dict], limit: int = 80) -> str:
 
 def format_performance_md(metrics: dict, wall_fmt: str) -> str:
     """Format performance & token metrics as a markdown table."""
-    agent_section = ""
-    if metrics.get("agent_breakdown"):
-        agent_section = (
-            "\n**Agent breakdown**\n\n"
-            + _fmt_dict_as_table(metrics["agent_breakdown"], "Agent", "Steps")
-            + "\n"
-        )
-    model_section = ""
-    if metrics.get("model_breakdown"):
-        model_section = (
-            "\n**Model breakdown**\n\n"
-            + _fmt_dict_as_table(metrics["model_breakdown"], "Model", "Steps")
-            + "\n"
-        )
     tok = metrics["tokens"]
     timing_chips = [
         _metric_chip("Steps", str(metrics["total_steps"])),
@@ -401,27 +359,3 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
     return banner
 
 
-def build_analytics_dataframe(step_analytics: list[dict]) -> list[dict]:
-    """Convert step analytics into flat rows suitable for a DataFrame."""
-    has_agents = any(a.get("agent") for a in step_analytics)
-    rows = []
-    for a in step_analytics:
-        row: dict[str, Any] = {"idx": a["index"], "role": a["role"]}
-        if has_agents:
-            row["agent"] = a.get("agent", "")
-        row.update({
-            "Duration (s)": a["duration_s"],
-            "Total Tokens": a["tok_total"],
-            "Tok/s": round(a["tok_per_s"]) if a["tok_per_s"] is not None else None,
-            "Cache Read %": round(a["cache_ratio"] * 100, 1),
-            "Fresh Input": a["non_cache_tok"],
-            "Out/In Ratio": round(a["out_in_ratio"], 3) if a["out_in_ratio"] is not None else None,
-            "Tool Calls": a["tool_calls"],
-            "Tool Wait %": (round(a["tool_time_share"] * 100, 1)
-                            if a["tool_time_share"] is not None else None),
-            "Finish": _friendly_finish(a["finish"]),
-            "Parts": _friendly_parts(a["part_mix"]),
-            "Idle Gap (s)": a["idle_before_s"],
-        })
-        rows.append(row)
-    return rows

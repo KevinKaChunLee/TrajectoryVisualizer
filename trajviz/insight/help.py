@@ -35,7 +35,6 @@ HELP_TEXT: dict[str, str] = {
 
     # Analytics metrics
     "heatmap": "Normalized (0–1) per-step metrics across 6 dimensions. Darker cells indicate higher relative values.",
-    "phase_timeline": "Automatic phase segmentation: Boot (initialization), Steady (main work), Closeout (final output).",
 
     # Section explanations
     "section_performance": "Token consumption, step timing, and overall resource usage patterns.",

@@ -9,29 +9,10 @@ TOKEN_COLORS = {
     "reasoning": "#8b5cf6",     # violet
 }
 
-# Phase colors for overlays and phase-related charts.
-PHASE_COLORS = {
-    "Boot": "#ef4444",          # red
-    "Steady": "#3b82f6",        # blue
-    "Closeout": "#f59e0b",      # amber
-    "Full Run": "#6b7280",      # grey
-}
-
-# Phase overlay fill colors (semi-transparent).
-PHASE_FILL_COLORS = {
-    "Boot": "rgba(59,130,246,0.10)",
-    "Steady": "rgba(16,185,129,0.08)",
-    "Closeout": "rgba(245,158,11,0.10)",
-    "Full Run": "rgba(107,114,128,0.06)",
-}
-
-# Phase line/label colors.
-PHASE_LINE_COLORS = {
-    "Boot": "#3b82f6",
-    "Steady": "#10b981",
-    "Closeout": "#f59e0b",
-    "Full Run": "#6b7280",
-}
+# Session/lane color cycle shared by the subagent swimlane and timeline charts.
+SESSION_COLORS = [
+    "#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2",
+]
 
 # Agent color palette — first entry is "main", rest cycle for sub-agents.
 AGENT_COLORS = [
