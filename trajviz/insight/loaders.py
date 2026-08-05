@@ -17,8 +17,23 @@ def safe_get(d: Any, *keys: Any, default: Any = None) -> Any:
     return d
 
 
+# Canonical display names for the detected trajectory formats.  Defined here,
+# next to detect_format, as the single source of truth — UI/report modules
+# import this mapping instead of maintaining their own drifting copies.
+FORMAT_LABELS = {
+    "ccsession": "Claude Code",
+    "codearts": "CodeArts",
+    "opencode": "OpenCode",
+    "codex": "Codex CLI",
+}
+
+
 def detect_format(raw: dict) -> str:
     """Detect trajectory format: 'ccsession', 'opencode', 'codearts', or 'unknown'."""
+    # Defense in depth: parsed JSON may not be an object (e.g. a bare list of
+    # messages/events); nothing non-dict is a recognizable trajectory.
+    if not isinstance(raw, dict):
+        return "unknown"
     # Post-conversion marker: the Claude Code converter builds a fresh dict and
     # sets this flag. Check it before the raw-format markers below so already-
     # converted trajectories still report as ccsession.
@@ -40,14 +55,29 @@ def detect_format(raw: dict) -> str:
         and isinstance(raw.get("messages"), list)
     ):
         return "codearts"
+    # CodeArts legacy-JSON exports (codearts_consolidator.py emits
+    # source_format "codearts_legacy_json") lack the OpenCode "info" dict but
+    # are still CodeArts files — detect them so the UI's format-mismatch gate
+    # and labeling work instead of falling through to "unknown".
+    if (
+        isinstance(export_metadata, dict)
+        and export_metadata.get("schema_version") == 2
+        and export_metadata.get("source_format") == "codearts_legacy_json"
+        and isinstance(raw.get("messages"), list)
+    ):
+        return "codearts"
     if isinstance(raw.get("info"), dict) and isinstance(raw.get("messages"), list):
         return "opencode"
     return "unknown"
 
 
 def _iso_to_epoch_ms(iso_str: str | None) -> int | None:
-    """Convert ISO 8601 string to epoch milliseconds."""
-    if not iso_str:
+    """Convert ISO 8601 string to epoch milliseconds.
+
+    Non-string input (e.g. an already-numeric epoch timestamp in a
+    hand-edited file) degrades to None (missing timestamp) instead of raising.
+    """
+    if not iso_str or not isinstance(iso_str, str):
         return None
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
@@ -119,6 +149,27 @@ def _cc_content_to_parts(content: list, tool_result_map: dict | None = None) -> 
     return parts
 
 
+def _extract_tool_results(content: list, tool_exec: dict | None, result_map: dict) -> None:
+    """Record tool_result items from a user message's content into *result_map*.
+
+    Shared by the direct-user-message and event-nested ingestion paths of
+    _cc_build_tool_result_map so the id-fallback and is_error semantics
+    cannot diverge between them.
+    """
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "tool_result":
+            tool_id = item.get("tool_use_id", "") or item.get("tool_call_id", "")
+            is_error = item.get("is_error", False)
+            result_content = item.get("output", item.get("content", ""))
+            if tool_id:
+                result_map[tool_id] = {
+                    "output": result_content,
+                    "status": "error" if is_error else "success",
+                    "error": result_content if is_error else None,
+                    "tool_execution": tool_exec,
+                }
+
+
 def _cc_build_tool_result_map(entries: list) -> dict:
     """Build a map of tool_use_id -> {output, status, error} from all user messages."""
     result_map: dict[str, dict] = {}
@@ -135,18 +186,7 @@ def _cc_build_tool_result_map(entries: list) -> dict:
             tool_exec = entry.get("tool_execution")
             if not isinstance(tool_exec, dict):
                 tool_exec = None
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "tool_result":
-                    tool_id = item.get("tool_use_id", "") or item.get("tool_call_id", "")
-                    is_error = item.get("is_error", False)
-                    result_content = item.get("output", item.get("content", ""))
-                    if tool_id:
-                        result_map[tool_id] = {
-                            "output": result_content,
-                            "status": "error" if is_error else "success",
-                            "error": result_content if is_error else None,
-                            "tool_execution": tool_exec,
-                        }
+            _extract_tool_results(content, tool_exec, result_map)
 
         # Events with nested user messages containing tool_result
         if role == "event":
@@ -161,18 +201,7 @@ def _cc_build_tool_result_map(entries: list) -> dict:
                             inner_tool_exec = None
                         inner_content = inner_msg.get("content", [])
                         if isinstance(inner_content, list):
-                            for item in inner_content:
-                                if isinstance(item, dict) and item.get("type") == "tool_result":
-                                    tool_id = item.get("tool_use_id", "") or item.get("tool_call_id", "")
-                                    is_error = item.get("is_error", False)
-                                    result_content = item.get("output", item.get("content", ""))
-                                    if tool_id:
-                                        result_map[tool_id] = {
-                                            "output": result_content,
-                                            "status": "error" if is_error else "success",
-                                            "error": result_content if is_error else None,
-                                            "tool_execution": inner_tool_exec,
-                                        }
+                            _extract_tool_results(inner_content, inner_tool_exec, result_map)
     return result_map
 
 
@@ -246,6 +275,65 @@ def _cc_group_by_message_id(entries: list[dict]) -> list[dict]:
     return result
 
 
+def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
+                   timestamp_ms: int | None = None, model: str = "",
+                   finish: str = "", agent: str = "", message_id: str = "",
+                   step_id: str = "", parent_id: str = "", cwd: str = "",
+                   tool_calls: list | None = None,
+                   error_count: int | None = None,
+                   has_reasoning: bool | None = None,
+                   text_preview: str = "") -> dict:
+    """Build one internal-format step dict — the single source of the step schema.
+
+    Derived fields (tool_calls, error_count, has_reasoning) are computed from
+    *parts* unless explicitly overridden.  ``usage=None`` yields zeroed token
+    counts.  Callers compute their own ``text_preview`` (the preview heuristics
+    intentionally differ between the main-trajectory and event paths).
+    """
+    if tool_calls is None:
+        tool_calls = [p for p in parts if p.get("type") == "tool_call"]
+    if error_count is None:
+        error_count = sum(1 for tc in tool_calls if tc.get("status") == "error")
+    if has_reasoning is None:
+        has_reasoning = any(p.get("type") == "reasoning" for p in parts)
+    if usage is None:
+        tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0,
+                  "cache_read": 0, "cache_write": 0}
+    else:
+        tokens = {
+            "total": usage["total"],
+            "input": usage["input"],
+            "output": usage["output"],
+            "reasoning": usage["reasoning"],
+            "cache_read": usage["cache"]["read"],
+            "cache_write": usage["cache"]["write"],
+        }
+    return {
+        "role": role,
+        "tokens": tokens,
+        "duration": None,  # Will be computed from timestamps
+        "parts": parts,
+        "tool_calls": tool_calls,
+        "tool_call_count": len(tool_calls),
+        "error_count": error_count,
+        "has_reasoning": has_reasoning,
+        "text_preview": text_preview,
+        "finish": finish or "",
+        "model_id": model,
+        "provider_id": "",
+        "time_created_ms": timestamp_ms,
+        "time_completed_ms": None,
+        "agent": agent,
+        "mode": "",
+        "message_id": message_id,
+        "id": step_id,
+        "parent_id": parent_id,
+        "session_id": "",
+        "cwd": cwd,
+        "root": "",
+    }
+
+
 def _cc_convert_entry_to_step(entry: dict, tool_result_map: dict,
                               *, agent_id: str = "") -> dict | None:
     """Convert a single Claude Code trajectory entry to internal step format."""
@@ -272,10 +360,7 @@ def _cc_convert_entry_to_step(entry: dict, tool_result_map: dict,
 
     parts = _cc_content_to_parts(content, tool_result_map)
 
-    # Compute derived fields
-    tool_calls = [p for p in parts if p.get("type") == "tool_call"]
-    errors = sum(1 for tc in tool_calls if tc.get("status") == "error")
-    has_reasoning = any(p.get("type") == "reasoning" for p in parts)
+    # Preview: prefer text over reasoning (keep scanning after a reasoning hit)
     text_preview = ""
     for p in parts:
         if p.get("type") == "text" and p.get("text"):
@@ -286,40 +371,20 @@ def _cc_convert_entry_to_step(entry: dict, tool_result_map: dict,
         if p.get("type") == "tool_call" and not text_preview:
             text_preview = f"[Tool: {p['tool_name']}]"
 
-    model = entry.get("model", "")
-    finish = entry.get("stop_reason", "")
-
-    return {
-        "role": role,
-        "tokens": {
-            "total": usage["total"],
-            "input": usage["input"],
-            "output": usage["output"],
-            "reasoning": usage["reasoning"],
-            "cache_read": usage["cache"]["read"],
-            "cache_write": usage["cache"]["write"],
-        },
-        "duration": None,  # Will be computed from timestamps
-        "parts": parts,
-        "tool_calls": tool_calls,
-        "tool_call_count": len(tool_calls),
-        "error_count": errors,
-        "has_reasoning": has_reasoning,
-        "text_preview": text_preview,
-        "finish": finish or "",
-        "model_id": model,
-        "provider_id": "",
-        "time_created_ms": timestamp_ms,
-        "time_completed_ms": None,
-        "agent": agent_id or "",
-        "mode": "",
-        "message_id": entry.get("message_id", entry.get("uuid", "")),
-        "id": entry.get("uuid", ""),
-        "parent_id": entry.get("parent_uuid", ""),
-        "session_id": "",
-        "cwd": entry.get("cwd", ""),
-        "root": "",
-    }
+    return _cc_build_step(
+        parts,
+        role=role,
+        usage=usage,
+        timestamp_ms=timestamp_ms,
+        model=entry.get("model", ""),
+        finish=entry.get("stop_reason", ""),
+        agent=agent_id or "",
+        message_id=entry.get("message_id", entry.get("uuid", "")),
+        step_id=entry.get("uuid", ""),
+        parent_id=entry.get("parent_uuid", ""),
+        cwd=entry.get("cwd", ""),
+        text_preview=text_preview,
+    )
 
 
 def _cc_flatten_events(entries: list, tool_result_map: dict) -> list[dict]:
@@ -355,9 +420,7 @@ def _cc_flatten_events(entries: list, tool_result_map: dict) -> list[dict]:
             timestamp_ms = _iso_to_epoch_ms(msg.get("timestamp") or entry.get("timestamp"))
 
             parts = _cc_content_to_parts(inner_content, tool_result_map)
-            tool_calls = [p for p in parts if p.get("type") == "tool_call"]
-            errors = sum(1 for tc in tool_calls if tc.get("status") == "error")
-            has_reasoning = any(p.get("type") == "reasoning" for p in parts)
+            # Preview: first text-or-reasoning part wins (event-path heuristic)
             text_preview = ""
             for p in parts:
                 if p.get("type") in ("text", "reasoning") and p.get("text"):
@@ -366,40 +429,20 @@ def _cc_flatten_events(entries: list, tool_result_map: dict) -> list[dict]:
                 if p.get("type") == "tool_call" and not text_preview:
                     text_preview = f"[Tool: {p['tool_name']}]"
 
-            model = inner_msg.get("model", "")
-            finish = inner_msg.get("stop_reason", "")
-
-            steps.append({
-                "role": "assistant",
-                "tokens": {
-                    "total": usage["total"],
-                    "input": usage["input"],
-                    "output": usage["output"],
-                    "reasoning": usage["reasoning"],
-                    "cache_read": usage["cache"]["read"],
-                    "cache_write": usage["cache"]["write"],
-                },
-                "duration": None,
-                "parts": parts,
-                "tool_calls": tool_calls,
-                "tool_call_count": len(tool_calls),
-                "error_count": errors,
-                "has_reasoning": has_reasoning,
-                "text_preview": text_preview,
-                "finish": finish or "",
-                "model_id": model,
-                "provider_id": "",
-                "time_created_ms": timestamp_ms,
-                "time_completed_ms": None,
-                "agent": agent_id,
-                "mode": "",
-                "message_id": inner_msg.get("id", ""),
-                "id": msg.get("uuid", entry.get("uuid", "")),
-                "parent_id": entry.get("parent_uuid", ""),
-                "session_id": "",
-                "cwd": entry.get("cwd", ""),
-                "root": "",
-            })
+            steps.append(_cc_build_step(
+                parts,
+                role="assistant",
+                usage=usage,
+                timestamp_ms=timestamp_ms,
+                model=inner_msg.get("model", ""),
+                finish=inner_msg.get("stop_reason", ""),
+                agent=agent_id,
+                message_id=inner_msg.get("id", ""),
+                step_id=msg.get("uuid", entry.get("uuid", "")),
+                parent_id=entry.get("parent_uuid", ""),
+                cwd=entry.get("cwd", ""),
+                text_preview=text_preview,
+            ))
         elif msg_type == "user":
             # User messages in events are typically tool results — already handled via
             # tool_result_map. But if they have text content, include them.
@@ -413,34 +456,23 @@ def _cc_flatten_events(entries: list, tool_result_map: dict) -> list[dict]:
             if has_text:
                 timestamp_ms = _iso_to_epoch_ms(msg.get("timestamp") or entry.get("timestamp"))
                 parts = _cc_content_to_parts(inner_content, tool_result_map)
-                steps.append({
-                    "role": "user",
-                    "tokens": {"total": 0, "input": 0, "output": 0, "reasoning": 0,
-                               "cache_read": 0, "cache_write": 0},
-                    "duration": None,
-                    "parts": parts,
-                    "tool_calls": [],
-                    "tool_call_count": 0,
-                    "error_count": 0,
-                    "has_reasoning": False,
-                    "text_preview": next(
+                steps.append(_cc_build_step(
+                    parts,
+                    role="user",
+                    timestamp_ms=timestamp_ms,
+                    agent=agent_id,
+                    step_id=msg.get("uuid", entry.get("uuid", "")),
+                    parent_id=entry.get("parent_uuid", ""),
+                    cwd=entry.get("cwd", ""),
+                    # Event-path user steps never carry tool calls/usage
+                    tool_calls=[],
+                    error_count=0,
+                    has_reasoning=False,
+                    text_preview=next(
                         (p["text"] for p in parts if p.get("type") == "text" and p.get("text")),
                         ""
                     ),
-                    "finish": "",
-                    "model_id": "",
-                    "provider_id": "",
-                    "time_created_ms": timestamp_ms,
-                    "time_completed_ms": None,
-                    "agent": agent_id,
-                    "mode": "",
-                    "message_id": "",
-                    "id": msg.get("uuid", entry.get("uuid", "")),
-                    "parent_id": entry.get("parent_uuid", ""),
-                    "session_id": "",
-                    "cwd": entry.get("cwd", ""),
-                    "root": "",
-                })
+                ))
 
     return steps
 
@@ -635,6 +667,13 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
         timed = [s for s in agent_steps
                  if isinstance(s.get("time_created_ms"), (int, float))]
         for i in range(len(timed) - 1):
+            # Skip assistant->user turn boundaries: any user step surviving
+            # conversion is a real human prompt (tool_result-only user
+            # messages were dropped), so the gap is human idle time between
+            # turns, not model latency.  The turn-final assistant step keeps
+            # duration=None, same as the last step of each agent timeline.
+            if timed[i].get("role") == "assistant" and timed[i + 1].get("role") == "user":
+                continue
             t1 = timed[i]["time_created_ms"]
             t2 = timed[i + 1]["time_created_ms"]
             if t2 >= t1:
@@ -1143,18 +1182,21 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                 }
 
             elif item_type in ("function_call_output", "custom_tool_call_output"):
+                # An output can arrive after task_complete flushed the turn
+                # (role/timestamp reset to None); restore them so the final
+                # flush's role guard does not silently drop this part.
+                current_role = current_role or "assistant"
+                current_timestamp = current_timestamp or ts
                 call_id = payload.get("call_id", "")
                 output = payload.get("output", "")
                 tc = pending_tool_calls.pop(call_id, {})
 
-                # Determine status from output
+                # Determine status from output.  Structured metadata
+                # (metadata.exit_code) is authoritative; the substring
+                # heuristic is only a fallback when no exit code exists.
                 status = "success"
                 if isinstance(output, str):
-                    if "error" in output.lower()[:200] or "traceback" in output.lower()[:200]:
-                        status = "error"
-                    # Check exit code in output
-                    if "exited with code" in output and "code 0" not in output:
-                        status = "error"
+                    exit_code = None
                     try:
                         output_data = json.loads(output)
                     except json.JSONDecodeError:
@@ -1162,9 +1204,20 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                     if isinstance(output_data, dict):
                         metadata = output_data.get("metadata")
                         if isinstance(metadata, dict):
-                            exit_code = metadata.get("exit_code")
-                            if isinstance(exit_code, int) and exit_code != 0:
-                                status = "error"
+                            candidate = metadata.get("exit_code")
+                            if isinstance(candidate, int) and not isinstance(candidate, bool):
+                                exit_code = candidate
+                    if exit_code is not None:
+                        status = "error" if exit_code != 0 else "success"
+                    else:
+                        # Anchored fallback so benign text ("Found 0 errors",
+                        # "error-free") does not flag a successful call.
+                        if re.search(r"(?i)\b(?:error:|traceback \(most recent call last\))",
+                                     output[:200]):
+                            status = "error"
+                        # Check exit code reported in the output text
+                        if "exited with code" in output and "code 0" not in output:
+                            status = "error"
 
                 current_parts.append({
                     "type": "tool_call" if tc else "tool",
@@ -1246,6 +1299,22 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                         current_tokens["cache"]["read"] += token_delta["cache"]["read"]
             elif msg_type == "task_complete":
                 _flush_message()
+
+    # Drain tool calls that never received a function_call_output (session
+    # interrupted/truncated mid-command) so the final — often most diagnostic —
+    # invocation is not silently dropped from the timeline.
+    if pending_tool_calls:
+        current_role = current_role or "assistant"
+        for call_id, tc in pending_tool_calls.items():
+            current_parts.append({
+                "type": "tool_call",
+                "tool_name": tc.get("tool_name", "Bash"),
+                "tool_id": call_id,
+                "status": "error",  # interrupted: call never produced an output
+                "input": tc.get("input", {}),
+                "output": "",
+            })
+        pending_tool_calls.clear()
 
     # Flush any remaining parts
     _flush_message()
@@ -1356,19 +1425,7 @@ def _classify_codex_command(func_name: str, cmd: str) -> str:
         if pattern in cmd_lower:
             return "Write"
 
-    # Testing
-    if any(p in cmd_lower for p in ["pytest", "python -m pytest", "python -m unittest",
-                                     "make test", "tox ", "npm test"]):
-        return "Bash"  # test execution
-
-    # Git
-    if cmd_lower.startswith("git "):
-        return "Bash"
-
-    # Python execution
-    if cmd_lower.startswith("python ") or cmd_lower.startswith("python3 "):
-        return "Bash"
-
+    # Test, git, python, and all other shell commands are Bash
     return "Bash"
 
 
@@ -1515,12 +1572,28 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
         return {"_error": str(exc)}
     source_sha = _sha256_bytes(data)
 
+    # Every parse outcome must honor the {"_error": ...} contract — a
+    # non-object top level (bare messages/events array, string, number)
+    # cannot be a trajectory and would crash format detection/conversion.
+    if not isinstance(raw, dict):
+        return {"_error": f"Unsupported JSON input: top-level value is "
+                          f"{type(raw).__name__}; expected a JSON object "
+                          f"(for bare event arrays, save as .jsonl)."}
+
     fmt = detect_format(raw)
     if fmt == "unknown" and format_hint in ("ccsession", "codearts", "opencode"):
         fmt = format_hint
     if fmt == "ccsession":
         result = _convert_claude_code_to_internal(raw)
     elif fmt == "codearts":
+        # Legacy-JSON exports are detected as CodeArts (so the UI labels them
+        # correctly) but have no parser yet: their 'sender'/'content' messages
+        # are not OpenCode-shaped and would silently produce empty steps.
+        if safe_get(raw, "export_metadata", "source_format") == "codearts_legacy_json":
+            return {"_error": "CodeArts legacy-JSON export detected "
+                              "(source_format=codearts_legacy_json): this legacy "
+                              "message schema is not yet supported. Re-export the "
+                              "session from the CodeArts SQLite database instead."}
         result = _convert_codearts_metadata(raw)
     elif fmt == "opencode":
         result = _convert_opencode_metadata(raw)

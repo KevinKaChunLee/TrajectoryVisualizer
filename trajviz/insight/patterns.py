@@ -539,20 +539,17 @@ def compute_plan_metrics(plan_history: list[dict]) -> dict:
 # 5. Sub-Agent Delegation Analysis
 # ---------------------------------------------------------------------------
 
-def _get_step_info(step: dict, trajectory: list[dict], info_map: dict[int, dict] | None = None) -> dict:
+def _get_step_info(step: dict, trajectory: list[dict]) -> dict:
     """Retrieve the trajectory 'info' dict corresponding to a parsed step.
 
-    Matches by the step's 'raw_index' (original position in trajectory) if
-    available, otherwise falls back to scanning for matching 'info.id'.
-    Returns empty dict if no match is found.
+    Matches by the step's 'raw_index' (original position in trajectory);
+    returns {} if raw_index is missing or out of range.
     """
     raw_idx = step.get("raw_index")
     if raw_idx is not None and 0 <= raw_idx < len(trajectory):
         entry = trajectory[raw_idx]
         info = entry.get("info", {}) if isinstance(entry, dict) else {}
         return info if isinstance(info, dict) else {}
-    if info_map is not None and raw_idx is not None:
-        return info_map.get(raw_idx, {})
     return {}
 
 
@@ -851,6 +848,10 @@ def _is_fruitless_step(step: dict) -> bool:
             content = output.get("content", output.get("text", ""))
             if isinstance(content, str) and content.strip():
                 return False
+            # Content-block lists (e.g. [{"type": "text", "text": ...}]) are
+            # non-empty results too — mirror the bare-list handling below.
+            if isinstance(content, list) and content:
+                return False
         elif isinstance(output, list) and output:
             return False
 
@@ -932,7 +933,9 @@ def detect_tool_selection_antipatterns(steps: list[dict]) -> list[dict]:
     flagged: list[dict] = []
     for s in steps[:_MAX_STEPS]:
         for tc in s.get("tool_calls", []):
-            if tc.get("tool_name") != "Bash":
+            # OpenCode emits lowercase tool names — match both spellings,
+            # like _is_search_call above.
+            if tc.get("tool_name") not in ("Bash", "bash"):
                 continue
             inp = tc.get("input", {})
             cmd = inp.get("command", "") if isinstance(inp, dict) else ""
@@ -1044,9 +1047,10 @@ def detect_semantic_antipatterns(
                 )
                 if transitions >= 3:
                     p1, p2 = sorted(unique_phases)
-                    rank1 = _PHASE_RANK.get(p1, 99)
-                    rank2 = _PHASE_RANK.get(p2, 99)
-                    is_regression = rank1 < rank2 or rank2 < rank1
+                    # Means "at least one oscillating phase is a known workflow
+                    # phase" — not a direction check (the two phases here are
+                    # always distinct, so ranked phases always differ).
+                    is_regression = p1 in _PHASE_RANK or p2 in _PHASE_RANK
                     results["phase_oscillation"].append({
                         "phases": [p1, p2],
                         "step_range": [window[0][0], window[-1][0]],

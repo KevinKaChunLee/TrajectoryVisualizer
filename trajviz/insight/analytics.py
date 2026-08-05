@@ -2,6 +2,7 @@
 
 import statistics
 
+from .metrics import tool_call_duration_ms
 from .parser import infer_non_cache_input
 
 
@@ -12,22 +13,14 @@ def compute_step_analytics(steps: list[dict]) -> list[dict]:
         duration_s = step["duration"]
 
         # Tool time: naive sum of individual tool call durations (may overcount
-        # parallel calls). Fall back to duration_ms / metadata.totalDurationMs
-        # when explicit start/end are absent (Claude Code tool calls carry only
-        # totalDurationMs), matching the message-level tool-time computation.
+        # parallel calls). Uses the shared fallback chain in
+        # tool_call_duration_ms, matching the message-level tool-time
+        # computation exactly.
         tool_time_ms = 0
         for tc in step["tool_calls"]:
-            ts = tc.get("time_start")
-            te = tc.get("time_end")
-            if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
-                tool_time_ms += (te - ts)
-            else:
-                d = tc.get("duration_ms")
-                if not isinstance(d, (int, float)):
-                    meta = tc.get("metadata", {})
-                    d = meta.get("totalDurationMs") if isinstance(meta, dict) else None
-                if isinstance(d, (int, float)) and d >= 0:
-                    tool_time_ms += d
+            v = tool_call_duration_ms(tc)
+            if v is not None:
+                tool_time_ms += v
 
         tool_time_share = None
         if duration_s is not None and duration_s > 0:
