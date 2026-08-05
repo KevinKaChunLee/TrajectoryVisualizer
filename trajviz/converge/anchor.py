@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fnmatch
-import os
 from typing import Any
 
 from .canonical import CanonicalAction, _normalize_target, _targets_match
@@ -145,7 +144,7 @@ def compute_anchor_metrics(
     # Per-class recall
     class_totals: dict[str, int] = {}
     class_written: dict[str, int] = {}
-    for af, cat in file_to_class.items():
+    for cat in file_to_class.values():
         class_totals[cat] = class_totals.get(cat, 0) + 1
     for af in anchor_files_written:
         cat = file_to_class.get(af, "source")

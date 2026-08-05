@@ -2,7 +2,12 @@
 
 import math
 import statistics
-from typing import Any
+
+# Statuses that mark a tool call as failed. Single definition shared by
+# tool_success_rate (_compute_tool_stats) and edit_precision
+# (compute_diagnostic_metrics) so the two can never disagree.
+_FAILURE_STATUSES = {"error", "failed", "failure", "cancelled", "canceled",
+                     "timeout", "timed_out"}
 
 
 def effective_agent(s: dict) -> str:
@@ -40,8 +45,44 @@ def _percentile(values: list[float], q: float) -> float:
     if q >= 1:
         return max(values)
     vals = sorted(values)
-    idx = max(0, min(len(vals) - 1, int((len(vals) - 1) * q)))
+    # Nearest-rank: ceil(q * n) - 1 (0-based). Truncating int((n-1)*q) would
+    # pull every percentile one rank low (p95 of 10 values -> the 9th value).
+    idx = max(0, min(len(vals) - 1, math.ceil(q * len(vals)) - 1))
     return vals[idx]
+
+
+def tool_call_duration_ms(tc: dict) -> float | None:
+    """Best-effort duration of one tool call in milliseconds.
+
+    Fallback chain: explicit ``time_start``/``time_end`` pair, then
+    ``duration_ms``, then ``metadata.totalDurationMs`` (Claude Code tool
+    calls carry only the latter). Returns ``None`` when no usable timing
+    exists. Shared by analytics, message metrics, tool stats, and hotspot
+    decomposition so they can never disagree about the same tool call.
+    """
+    ts, te = tc.get("time_start"), tc.get("time_end")
+    if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
+        return float(te - ts)
+    dm = tc.get("duration_ms")
+    if not isinstance(dm, (int, float)):
+        meta = tc.get("metadata")
+        dm = meta.get("totalDurationMs") if isinstance(meta, dict) else None
+    return float(dm) if isinstance(dm, (int, float)) and dm > 0 else None
+
+
+def _raw_summary(raw: dict) -> tuple[dict, dict | None]:
+    """Extract the ``output`` dict and ``session_raw.summary`` dict from raw."""
+    output = raw.get("output", {}) if isinstance(raw.get("output"), dict) else {}
+    session_raw = raw.get("session_raw", {}) if isinstance(raw.get("session_raw"), dict) else {}
+    summary = session_raw.get("summary") if isinstance(session_raw.get("summary"), dict) else None
+    return output, summary
+
+
+def _churn(summary: dict | None) -> int | None:
+    """Total line churn (additions + deletions), or None when unavailable."""
+    if summary and "additions" in summary and "deletions" in summary:
+        return summary["additions"] + summary["deletions"]
+    return None
 
 
 def validate_token_integrity(steps: list[dict]) -> list[str]:
@@ -95,16 +136,9 @@ def build_message_metrics(steps: list[dict]) -> list[dict]:
 
         tool_time_sum = 0.0
         for tc in s.get("tool_calls", []):
-            ts = tc.get("time_start")
-            te = tc.get("time_end")
-            if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
-                tool_time_sum += (te - ts) / 1000.0
-            else:
-                dm = tc.get("duration_ms")
-                if dm is None:
-                    dm = (tc.get("metadata") or {}).get("totalDurationMs")
-                if isinstance(dm, (int, float)) and dm > 0:
-                    tool_time_sum += dm / 1000.0
+            v = tool_call_duration_ms(tc)
+            if v is not None:
+                tool_time_sum += v / 1000.0
 
         part_counts: dict[str, int] = {}
         for p in s.get("parts", []):
@@ -149,7 +183,9 @@ def _compute_command_metrics(steps: list[dict]) -> dict:
                 continue
             if "exit" in meta:
                 cmd_total += 1
-                if meta["exit"] != 0:
+                # exit=None (cancelled/unfinished, no exit code recorded) is not
+                # a failure — matches _step_has_error/cluster_errors/_tool_failed.
+                if meta["exit"] not in (None, 0):
                     cmd_failures += 1
     if cmd_total == 0:
         return {"command_success_rate": None, "command_call_count": None, "command_failures": None}
@@ -276,9 +312,7 @@ def _compute_plan_metrics(steps: list[dict]) -> dict:
 
 def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw):
     """Token breakdown, throughput, and cache metrics."""
-    output = raw.get("output", {}) if isinstance(raw.get("output"), dict) else {}
-    session_raw = raw.get("session_raw", {}) if isinstance(raw.get("session_raw"), dict) else {}
-    summary = session_raw.get("summary") if isinstance(session_raw.get("summary"), dict) else None
+    output, summary = _raw_summary(raw)
 
     assistant_rows = [r for r in message_rows if r.get("role") == "assistant"]
     assistant_tokens = [r["tokens_total"] for r in assistant_rows]
@@ -287,7 +321,7 @@ def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw)
     non_cache_total = sum(r["non_cache_tokens"] for r in message_rows)
     cache_dominant = sum(1 for r in assistant_rows if r["tokens_total"] > 0 and r["cache_ratio"] >= 0.90)
     total_io = total_tokens["input"] + total_tokens["output"]
-    churn = (summary["additions"] + summary["deletions"]) if summary and "additions" in summary and "deletions" in summary else 0
+    churn = _churn(summary) or 0
     return {
         "tokens": total_tokens,
         "non_cache_tokens": non_cache_total,
@@ -326,7 +360,7 @@ def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows)
             tool_breakdown[name] = tool_breakdown.get(name, 0) + 1
             status = tc.get("status", "unknown")
             tool_status_breakdown[status] = tool_status_breakdown.get(status, 0) + 1
-            if status in {"error", "failed", "failure", "cancelled", "canceled", "timeout", "timed_out"}:
+            if status in _FAILURE_STATUSES:
                 tool_fail += 1
             elif status in {"?", "unknown", ""}:
                 # Unknown status: treat as success unless it has a classified error_type
@@ -336,15 +370,9 @@ def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows)
                     tool_success += 1
             else:
                 tool_success += 1
-            ts, te = tc.get("time_start"), tc.get("time_end")
-            if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
-                tool_durations.append((te - ts) / 1000.0)
-            else:
-                dm = tc.get("duration_ms")
-                if dm is None:
-                    dm = (tc.get("metadata") or {}).get("totalDurationMs")
-                if isinstance(dm, (int, float)) and dm > 0:
-                    tool_durations.append(dm / 1000.0)
+            v = tool_call_duration_ms(tc)
+            if v is not None:
+                tool_durations.append(v / 1000.0)
 
     assistant_rows = [r for r in message_rows if r.get("role") == "assistant"]
     tool_time_total = sum(r["tool_time_sum"] for r in message_rows)
@@ -398,9 +426,7 @@ def _compute_efficiency_stats(steps, message_rows, raw):
             elif pt == "snapshot":
                 snapshot_parts += 1
 
-    output = raw.get("output", {}) if isinstance(raw.get("output"), dict) else {}
-    session_raw = raw.get("session_raw", {}) if isinstance(raw.get("session_raw"), dict) else {}
-    summary = session_raw.get("summary") if isinstance(session_raw.get("summary"), dict) else None
+    output, summary = _raw_summary(raw)
     file_status_raw = raw.get("file_status")
     asst_durs = [s["duration"] for s in steps if s.get("role") == "assistant" and s.get("duration") is not None]
     user_n, asst_n = roles.get("user", 0), roles.get("assistant", 0)
@@ -421,7 +447,7 @@ def _compute_efficiency_stats(steps, message_rows, raw):
         ),
         "additions": summary.get("additions") if summary else None,
         "deletions": summary.get("deletions") if summary else None,
-        "churn": (summary["additions"] + summary["deletions"]) if summary and "additions" in summary and "deletions" in summary else None,
+        "churn": _churn(summary),
         "net_change": (summary["additions"] - summary["deletions"]) if summary and "additions" in summary and "deletions" in summary else None,
         "user_turns": user_n,
         "assistant_turns": asst_n,
@@ -498,15 +524,16 @@ def compute_diagnostic_metrics(
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
 
     # Edit precision: successful edits / total edit attempts
-    edit_tools = {"Edit", "edit", "Write", "write", "MultiEdit", "multiedit",
-                  "str_replace_editor", "create_file"}
+    from trajviz.tool_vocab import WRITE_TOOL_NAMES as edit_tools
     edit_total = 0
     edit_success = 0
     for s in steps:
         for tc in s.get("tool_calls", []):
             if tc.get("tool_name") in edit_tools:
                 edit_total += 1
-                if tc.get("status") not in ("error", "failed", "failure"):
+                # Same failure definition as tool_success_rate: cancelled and
+                # timed-out edits are failures, not successes.
+                if tc.get("status") not in _FAILURE_STATUSES:
                     edit_success += 1
 
     # Search-to-action ratio: read/search calls per edit/write call
@@ -529,7 +556,7 @@ def compute_diagnostic_metrics(
     asst_tokens = [s.get("tokens", {}).get("total", 0) or 0
                    for s in steps if s.get("role") == "assistant"]
     if len(asst_tokens) >= 5:
-        increasing = sum(1 for a, b in zip(asst_tokens, asst_tokens[1:]) if b >= a)
+        increasing = sum(1 for a, b in zip(asst_tokens, asst_tokens[1:], strict=False) if b >= a)
         is_cumulative = increasing / (len(asst_tokens) - 1) > 0.7
     else:
         is_cumulative = False

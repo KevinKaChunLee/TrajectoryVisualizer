@@ -25,12 +25,9 @@ from .formatting import (  # noqa: F401
     format_behavioral_md,
     format_banner_html,
     wall_clock_fmt,
-    build_analytics_dataframe,
     _build_hotspots_md,
     _build_per_message_md,
-    _fmt_dict_as_table,
     _friendly_finish,
-    _friendly_parts,
 )
 
 # Re-export label functions for backward compatibility

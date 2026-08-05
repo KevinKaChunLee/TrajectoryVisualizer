@@ -12,6 +12,16 @@ LLM configuration is read from .env (LABEL_BASE_URL, LABEL_API_KEY,
 LABEL_MODEL, LABEL_TEMPERATURE, LABEL_MAX_TOKENS).  CLI flags override
 .env values.
 
+.. deprecated::
+    The v1 labeling pipeline (``label_trajectory``/``load_assistant_steps``)
+    has been removed; this CLI now routes through
+    ``step_labeler_v2.label_trajectory(assistant_only=True)``, which adds an
+    output-overwrite guard and atomic sidecar writes while keeping the
+    assistant-only output and the ``<stem>_labeled.json`` default name.
+    Prefer ``scripts/step_labeler_v2.py`` for new work — it emits a label
+    record for every parsed step.  The prompt/taxonomy/LLM helpers defined
+    here remain the shared implementation used by v2.
+
 Usage:
     python scripts/step_labeler.py samples/op_trajectory.json
 
@@ -29,8 +39,6 @@ import json
 import os
 import re
 import sys
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -62,9 +70,16 @@ def _load_dotenv(path: str = ".env") -> None:
                 os.environ[key] = value
 
 
-_load_dotenv()
-# Also try project root .env (one level up from scripts/)
-_load_dotenv(str(Path(__file__).resolve().parent.parent / ".env"))
+def load_env_files() -> None:
+    """Load ./.env plus the repo-root .env into os.environ (fill-only).
+
+    Called from ``main()`` (and step_labeler_v2's ``main()``) rather than at
+    module import, so merely importing this module — e.g. during test
+    collection — never mutates the process environment.
+    """
+    _load_dotenv()
+    # Also try project root .env (one level up from scripts/)
+    _load_dotenv(str(Path(__file__).resolve().parent.parent / ".env"))
 
 
 def _env_float(name: str, default: float) -> float:
@@ -353,29 +368,6 @@ def _call_anthropic(
     return "\n".join(texts).strip()
 
 
-# ── Trajectory loading ──────────────────────────────────────────────────
-
-
-def load_assistant_steps(trajectory_path: str) -> list[dict]:
-    """Load trajectory and return only assistant steps."""
-    # Add repo root to path so an uninstalled clone (no `pip install -e .`) can
-    # still import the trajviz package when this script is run
-    # as `python scripts/step_labeler.py` from the repo root.
-    project_root = str(Path(__file__).resolve().parent.parent)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-
-    from trajviz.insight.loaders import load_trajectory
-    from trajviz.insight.parser import parse_steps
-
-    raw = load_trajectory(trajectory_path)
-    if "_error" in raw:
-        raise ValueError(f"Failed to load trajectory: {raw['_error']}")
-
-    steps = parse_steps(raw)
-    return [s for s in steps if s.get("role") == "assistant"]
-
-
 # ── Label parsing and validation ────────────────────────────────────────
 
 
@@ -425,169 +417,12 @@ def parse_label_response(
     return {"phase": phase, "action": action}
 
 
-# ── Main pipeline ───────────────────────────────────────────────────────
-
-
-def label_trajectory(
-    trajectory_path: str,
-    output_path: str,
-    *,
-    base_url: str,
-    api_key: str,
-    model: str,
-    provider: str = "openai",
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-    max_content_chars: int = 8000,
-    delay: float = 0.0,
-    taxonomy_path: str | None = None,
-) -> None:
-    """Label all assistant steps in a trajectory and write output JSON."""
-    # Load taxonomy
-    if taxonomy_path is None:
-        taxonomy_path = str(Path(__file__).resolve().parent / "TAXONOMY_REFERENCE.md")
-    taxonomy_mapping, taxonomy_version = load_taxonomy(taxonomy_path)
-    valid_phases, valid_actions, action_to_phase = _build_valid_sets(taxonomy_mapping)
-
-    # Read raw taxonomy text for system prompt
-    with open(taxonomy_path, encoding="utf-8") as f:
-        taxonomy_text = f.read()
-
-    system_prompt = build_system_prompt(taxonomy_text)
-
-    # Load trajectory
-    print(f"Loading trajectory: {trajectory_path}", file=sys.stderr)
-    assistant_steps = load_assistant_steps(trajectory_path)
-    print(f"Found {len(assistant_steps)} assistant steps", file=sys.stderr)
-
-    if not assistant_steps:
-        print("No assistant steps found — nothing to label.", file=sys.stderr)
-        return
-
-    # Label each step
-    labeled_steps: list[dict] = []
-    unknown_count = 0
-
-    for i, step in enumerate(assistant_steps):
-        step_idx = step.get("index", i)
-        print(f"Labeling step {i + 1}/{len(assistant_steps)} (idx {step_idx})...",
-              file=sys.stderr, end=" ", flush=True)
-
-        user_message = build_step_message(step, max_chars=max_content_chars)
-
-        # Skip empty steps — no text, no tool calls, no reasoning
-        has_text = bool(step.get("text_preview", "").strip())
-        has_tools = bool(step.get("tool_calls"))
-        has_reasoning = any(
-            p.get("type") == "reasoning" and p.get("text")
-            for p in step.get("parts", [])
-        )
-        if not has_text and not has_tools and not has_reasoning:
-            print("(empty step — skipped)", file=sys.stderr)
-            label = {"phase": "unknown", "action": "unknown"}
-            unknown_count += 1
-            tool_names = []
-            tokens = step.get("tokens", {})
-            labeled_steps.append({
-                "index": step_idx,
-                "role": "assistant",
-                "phase": label["phase"],
-                "action": label["action"],
-                "time_created_ms": step.get("time_created_ms"),
-                "time_completed_ms": step.get("time_completed_ms"),
-                "duration_s": step.get("duration"),
-                "tokens_total": tokens.get("total", 0),
-                "tool_calls": tool_names,
-                "finish": step.get("finish", ""),
-                "agent": step.get("agent", ""),
-                "model_id": step.get("model_id", ""),
-                "text_preview": "",
-            })
-            continue
-
-        # Call LLM with one retry on error
-        label = None
-        for attempt in range(2):
-            try:
-                response = call_llm(
-                    base_url=base_url,
-                    api_key=api_key,
-                    model=model,
-                    system_prompt=system_prompt,
-                    user_message=user_message,
-                    provider=provider,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                label = parse_label_response(response, valid_phases, valid_actions, action_to_phase)
-                break
-            except Exception as exc:
-                if attempt == 0:
-                    print(f"[retry: {exc}]", file=sys.stderr, end=" ", flush=True)
-                    time.sleep(1)
-                else:
-                    print(f"[error: {exc}]", file=sys.stderr)
-                    label = {"phase": "unknown", "action": "unknown"}
-
-        if label is None:
-            label = {"phase": "unknown", "action": "unknown"}
-
-        if label["phase"] == "unknown" or label["action"] == "unknown":
-            unknown_count += 1
-
-        print(f"{label['phase']}/{label['action']}", file=sys.stderr)
-
-        # Extract tool call names
-        tool_names = [tc.get("tool_name", "?") for tc in step.get("tool_calls", [])]
-        tokens = step.get("tokens", {})
-
-        labeled_steps.append({
-            "index": step_idx,
-            "role": "assistant",
-            "phase": label["phase"],
-            "action": label["action"],
-            "time_created_ms": step.get("time_created_ms"),
-            "time_completed_ms": step.get("time_completed_ms"),
-            "duration_s": step.get("duration"),
-            "tokens_total": tokens.get("total", 0),
-            "tool_calls": tool_names,
-            "finish": step.get("finish", ""),
-            "agent": step.get("agent", ""),
-            "model_id": step.get("model_id", ""),
-            "text_preview": (step.get("text_preview", "") or "")[:200],
-            "is_sub_agent": step.get("is_sub_agent", False),
-            "session_id": step.get("session_id", ""),
-            "executor_id": step.get("agent", ""),
-        })
-
-        if delay > 0 and i < len(assistant_steps) - 1:
-            time.sleep(delay)
-
-    # Write output
-    output = {
-        "trajectory_file": os.path.abspath(trajectory_path),
-        "taxonomy_version": taxonomy_version,
-        "model": model,
-        "labeled_at": datetime.now(timezone.utc).isoformat(),
-        "steps": labeled_steps,
-    }
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
-
-    success_count = len(labeled_steps) - unknown_count
-    print(
-        f"\nDone: {len(labeled_steps)} steps labeled "
-        f"({success_count} classified, {unknown_count} unknown). "
-        f"Output: {output_path}",
-        file=sys.stderr,
-    )
-
-
 # ── CLI ─────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
+    # Resolve .env config at CLI entry, not at module import (B34).
+    load_env_files()
     parser = argparse.ArgumentParser(
         description="Label trajectory steps with phase/action tags using an LLM.",
     )
@@ -643,19 +478,32 @@ def main() -> None:
         inp = Path(args.input)
         output_path = str(inp.parent / f"{inp.stem}_labeled.json")
 
-    label_trajectory(
-        trajectory_path=args.input,
-        output_path=output_path,
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        provider=provider,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        max_content_chars=args.max_content_chars,
-        delay=args.delay,
-        taxonomy_path=args.taxonomy,
-    )
+    # The v1 CLI delegates to v2's labeling loop (assistant-only output).
+    # v2 supplies the output-overwrite guard and the atomic sidecar write.
+    # Imported lazily: step_labeler_v2 imports this module at its top level.
+    try:
+        from scripts import step_labeler_v2 as v2
+    except ImportError:  # Direct execution from scripts/.
+        import step_labeler_v2 as v2  # type: ignore[no-redef]
+
+    try:
+        v2.label_trajectory(
+            trajectory_path=args.input,
+            output_path=output_path,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            provider=provider,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_content_chars=args.max_content_chars,
+            delay=args.delay,
+            taxonomy_path=args.taxonomy,
+            assistant_only=True,
+        )
+    except v2.OutputSafetyError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

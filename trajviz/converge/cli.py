@@ -168,7 +168,7 @@ def _print_batch_summary(batch_report: dict) -> None:
     # Per-task summary
     per_task = batch_report.get("per_task", [])
     if per_task:
-        print(f"\n  Per-task results:")
+        print("\n  Per-task results:")
         for t in per_task:
             status = t.get("status", "?")
             tid = t.get("task_id", "?")

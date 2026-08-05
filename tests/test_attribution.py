@@ -138,7 +138,6 @@ def test_unverifiable_llm_verdicts_are_disabled(tmp_path, monkeypatch):
 def test_changed_gold_invalidates_llm_verdicts(tmp_path):
     """Verdict provenance covers ALL prompt inputs: a byte-identical trajectory
     with a CHANGED task/gold must not reuse the old judge/arbiter verdicts."""
-    from awe import config as _cfg
     # clone the fixture corpus, then mutate ONLY the requirements (task) file
     root = tmp_path / "corpus"
     shutil.copytree(attribution._DEFAULT_ROOT / "data", root / "data")
@@ -162,7 +161,6 @@ def test_toctou_mutated_canonical_file_is_refused(tmp_path):
     """Content identity, not path identity: if the corpus file changes AFTER the
     UI captured the displayed bytes' hash, diagnosis must refuse (the verdict
     would describe different bytes than the ones shown)."""
-    from awe import config as _cfg
     root = tmp_path / "corpus"
     shutil.copytree(attribution._DEFAULT_ROOT / "data", root / "data")
     tpath = root / "data" / "trajectory" / "claude_code" / f"{GOLD_INST}.json"
@@ -208,7 +206,8 @@ def test_mismatched_displayed_trajectory_is_refused(tmp_path):
     patch/outcome belong to a different execution) — never silently diagnose the
     corpus copy, never fabricate."""
     doctored = tmp_path / "doctored.json"
-    raw = json.loads(open(_traj_path(GOLD_AGENT, GOLD_INST)).read())
+    with open(_traj_path(GOLD_AGENT, GOLD_INST)) as f:
+        raw = json.load(f)
     raw["_tampered"] = True
     doctored.write_text(json.dumps(raw))
     res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
@@ -250,7 +249,6 @@ def test_configure_clears_outcome_and_gold_caches(tmp_path):
     """Switching corpus roots must not serve the previous root's outcomes: the
     lru_cache lives on load_outcomes (resolved() is uncached) — clearing the
     wrong symbol left stale outcomes active."""
-    from awe import config
     from awe.outcomes import resolved
     orig_root = attribution._DEFAULT_ROOT
     try:
@@ -304,7 +302,7 @@ def test_adapter_parity_claude_code():
     disk = load_normalized(GOLD_AGENT, GOLD_INST)
     assert disk is not None
     assert len(direct.steps) == len(disk.steps)
-    for a, b in zip(direct.steps, disk.steps):
+    for a, b in zip(direct.steps, disk.steps, strict=False):
         assert (a.actor, a.type, a.canonical_action, tuple(a.files or []),
                 a.test_run, a.tool_error) == \
                (b.actor, b.type, b.canonical_action, tuple(b.files or []),

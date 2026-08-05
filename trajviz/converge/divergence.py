@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from .canonical import CanonicalAction, compute_action_cost, DEFAULT_TOKEN_RATE
+from .canonical import CanonicalAction, DEFAULT_TOKEN_RATE
 
 
 # ---------------------------------------------------------------------------

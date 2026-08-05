@@ -4,7 +4,6 @@ import base64
 import html
 import json
 import os
-import re
 
 import gradio as gr
 import plotly.graph_objects as go
@@ -18,15 +17,12 @@ from .parser import (
     extract_agent_info,
     wall_clock_fmt, format_banner_html,
     compute_agent_summary,
-    effective_agent,
 )
-from .analytics import compute_step_analytics, detect_phases
+from .analytics import compute_step_analytics
 from .diagnostics import (
     extract_file_interactions,
     identify_target_files,
-    compute_file_targeting_metrics,
     detect_failure_chains,
-    classify_chain_steps,
     link_chains_to_agents,
     compute_failure_chain_metrics,
     cluster_errors,
@@ -54,23 +50,23 @@ from .comparison import run_comparison
 from .patterns import (
     detect_tool_sequences, detect_failure_patterns,
     extract_plan_history, compute_plan_metrics,
-    extract_subagent_sessions, compute_subagent_metrics,
-    detect_fruitless_streaks, compute_autonomy_ratio,
-    detect_tool_selection_antipatterns,
+    detect_fruitless_streaks, detect_tool_selection_antipatterns,
 )
 from .help import HELP_TEXT
+from .loaders import detect_format, FORMAT_LABELS
 from .parser import load_labeled_json, aggregate_labels
 from .rendering import (
     render_workflow_html, render_toc_sidebar, render_filter_chips,
     format_step_detail, render_agent_summary_cards,
     build_root_cause_html,
     build_antipattern_summary_html,
+    _diag_jump_onclick,
 )
-from .styles import APP_CSS
+from .styles import APP_CSS  # noqa: F401  (re-exported: __main__ passes it to app.launch(css=...))
 
 _DETAIL_PLACEHOLDER = (
     "<div id='wf-detail-content'>"
-    "<div data-wf-detail-placeholder='1' style='padding:2em 1em;text-align:center;color:#9ca3af;'>"
+    "<div data-wf-detail-placeholder='1' style='padding:2em 1em;text-align:center;color:var(--ov-muted);'>"
     "<p style='font-size:15px;margin-bottom:0.5em;'>Select a step to inspect</p>"
     "<p style='font-size:12px;'>Click any card on the left, or press <kbd>j</kbd>/<kbd>k</kbd> to navigate</p>"
     "</div></div>"
@@ -177,7 +173,7 @@ def _build_filtered_workflow_outputs(
     """
     if not steps:
         return (
-            "<div style='padding:3em;color:#9ca3af;text-align:center;"
+            "<div style='padding:3em;color:var(--ov-muted);text-align:center;"
             "font-size:15px;'>Load a trajectory to see the step flow.</div>",
             "",
             "",
@@ -191,7 +187,7 @@ def _build_filtered_workflow_outputs(
 
     if not (set(active_filters) & set(_ROLE_FILTERS)):
         workflow_html = (
-            "<div style='padding:2em;color:#9ca3af;text-align:center;'>"
+            "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>"
             "Select at least one role to see steps.</div>"
         )
     else:
@@ -205,8 +201,8 @@ def _build_filtered_workflow_outputs(
     return workflow_html, count_html, render_toc_sidebar(filtered_steps, collapsed=collapsed)
 
 
-def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
-    """Return a list of anomaly dicts (type, step_idx, value_str) from metrics."""
+def _compute_anomalies(message_rows: list[dict]) -> list[dict]:
+    """Return a list of anomaly dicts (type, step_idx, value_str) from message rows."""
     anomalies: list[dict] = []
     if not message_rows:
         return anomalies
@@ -264,21 +260,6 @@ def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
     return anomalies[:5]
 
 
-def _build_card_jump_onclick(idx) -> str:
-    """Return a JS onclick string that switches to the Workflow tab,
-    scrolls step card *idx* into view, and clicks it."""
-    return (
-        f"(function(){{"
-        f"var tabs=document.querySelectorAll('.tab-nav button');"
-        f"if(tabs.length>1)tabs[1].click();"
-        f"setTimeout(function(){{"
-        f"var c=document.getElementById('wf-card-{idx}');"
-        f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
-        f"}},200);"
-        f"}})()"
-    )
-
-
 def _build_anomaly_strip_html(anomalies: list[dict]) -> str:
     """Render clickable anomaly badges with data-step-idx attributes."""
     if not anomalies:
@@ -286,7 +267,7 @@ def _build_anomaly_strip_html(anomalies: list[dict]) -> str:
     badges = []
     for a in anomalies:
         idx = a["step_idx"]
-        onclick = _build_card_jump_onclick(idx)
+        onclick = _diag_jump_onclick(idx)
         badges.append(
             f"<span class='anomaly-badge' data-step-idx='{idx}'"
             f" onclick=\"{onclick}\" style='cursor:pointer;'>"
@@ -319,8 +300,7 @@ def _build_sparkline_svg(values: list[float], width: int = 100, height: int = 20
 
 
 def _build_session_detail_html(
-    metrics: dict, wall_fmt: str, timing: dict, metadata: dict,
-    raw: dict,
+    timing: dict, metadata: dict,
     *, model_id: str = "", agent_id: str = "",
 ) -> str:
     """Build Session Details panel as a chip grid of session environment fields.
@@ -479,11 +459,6 @@ def _build_overview_outputs(
     trajectory_format: str | None = None,
 ) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
-    _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
-    md, timing, outp = _d("metadata"), _d("timing"), _d("output")
-    session_raw, retry = _d("session_raw"), _d("retry")
-    model_id, provider_id, agent_id = extract_agent_info(steps)
-
     banner = format_banner_html(os.path.basename(file_path), metrics, wfmt,
                                 trajectory_format=trajectory_format)
     kpi_html = _build_overview_kpi_html(metrics, wfmt, verdicts=verdicts,
@@ -496,7 +471,7 @@ def _build_overview_outputs(
     hotspots_text = _build_hotspots_md(message_rows)
     per_message_text = _build_per_message_md(message_rows)
 
-    anomalies = _compute_anomalies(metrics, message_rows)
+    anomalies = _compute_anomalies(message_rows)
     anomaly_html = _build_anomaly_strip_html(anomalies)
 
     return {
@@ -511,20 +486,16 @@ def _build_overview_outputs(
 
 
 def _build_chart_outputs(
-    steps: list[dict], message_rows: list[dict], phases: list[dict],
-    step_analytics: list[dict], agent_summaries: list[dict],
+    steps: list[dict], message_rows: list[dict],
+    agent_summaries: list[dict],
     dark: bool = False,
-    trajectory: list[dict] | None = None,
     trajectory_format: str | None = None,
 ) -> dict:
     """Build all chart figures and analytics markdown."""
-    traj = trajectory or []
 
     # Compute diagnostic data for charts
     plan_history = extract_plan_history(steps)
     plan_metrics = compute_plan_metrics(plan_history)
-    subagent_sessions = extract_subagent_sessions(steps, traj)
-    subagent_metrics = compute_subagent_metrics(subagent_sessions, steps)
     fruitless_streaks = detect_fruitless_streaks(steps)
     tool_selection = detect_tool_selection_antipatterns(steps)
 
@@ -542,11 +513,7 @@ def _build_chart_outputs(
     plan_timeline_fig = build_plan_timeline_chart(plan_history, plan_metrics, dark=dark)
     error_class_fig = build_error_classification_chart(steps, dark=dark)
 
-    # Context growth chart. Skip Boot/Steady/Closeout phase overlays here —
-    # the heuristic bands clutter the cumulative-token view without adding
-    # signal.
-    context_growth_fig = build_context_growth_chart(
-        message_rows, phases=None, dark=dark)
+    context_growth_fig = build_context_growth_chart(message_rows, dark=dark)
 
     # New panels
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
@@ -571,12 +538,7 @@ def _build_chart_outputs(
 
 def trajectory_format_label(fmt: str | None) -> str:
     """Return a human-readable trajectory format label."""
-    labels = {
-        "ccsession": "Claude Code",
-        "codearts": "CodeArts",
-        "opencode": "OpenCode",
-    }
-    return labels.get(fmt or "", fmt or "Unknown")
+    return FORMAT_LABELS.get(fmt or "", fmt or "Unknown")
 
 
 def _build_diagnostics_outputs(
@@ -586,13 +548,11 @@ def _build_diagnostics_outputs(
 ) -> dict:
     """Build all diagnostics outputs: file interactions, failure chains, root causes, bottlenecks."""
     _empty_fig = go.Figure()
-    _empty_fig.update_layout(template="plotly_white", height=380)
+    _empty_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
 
     # File interaction analysis
     interactions = extract_file_interactions(steps)
     target_files = identify_target_files(steps)
-    file_targeting = compute_file_targeting_metrics(
-        interactions, target_files, len(steps))
     file_chart = build_file_interaction_chart(interactions, target_files, dark=dark) if interactions else _empty_fig
 
     # Failure chain analysis (metrics feed the summary line; UI strip removed)
@@ -601,9 +561,10 @@ def _build_diagnostics_outputs(
     chain_metrics = compute_failure_chain_metrics(
         chains, sum(1 for s in steps if s.get("role") == "assistant"))
 
-    # Root-cause attribution. The findings panel is suppressed for OpenCode
-    # because its tool-error reporting is noisy (every non-zero bash exit code
-    # surfaces as a "failure") and the cluster summaries become misleading.
+    # Root-cause attribution. The findings panel is suppressed for OpenCode,
+    # CodeArts, and Codex because their tool-error reporting is noisy (e.g.
+    # OpenCode surfaces every non-zero bash exit code as a "failure") and the
+    # cluster summaries become misleading.
     # Counts are still computed so the summary line stays accurate.
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
@@ -616,7 +577,6 @@ def _build_diagnostics_outputs(
     bottleneck_explanations = compute_bottleneck_explanations(steps, step_analytics)
 
     # Summary line
-    issue_count = chain_metrics["total_chains"] + len(bottleneck_explanations)
     parts = []
     if chain_metrics["total_chains"]:
         parts.append(f"{chain_metrics['total_chains']} failure chain(s)")
@@ -634,11 +594,6 @@ def _build_diagnostics_outputs(
     )
 
     return {
-        "file_targeting": file_targeting,
-        "chain_metrics": chain_metrics,
-        "error_clusters": clusters,
-        "failure_chains": chains,
-        "bottleneck_explanations": bottleneck_explanations,
         "diag_summary_html": summary_html,
         "diag_file_chart": file_chart,
         "diag_rootcause_html": rootcause_html,
@@ -706,15 +661,15 @@ def _count_bar_chart(counts: dict[str, int], title: str, dark: bool = False) -> 
     return fig
 
 
-def build_label_ui_payload(file_path: str) -> dict:
+def build_label_ui_payload(file_path: str, dark: bool = False) -> dict:
     """Build UI-facing label payload for a *_labeled.json label file."""
     data = load_labeled_json(file_path)
     agg = aggregate_labels(data)
-    pc_fig = build_label_phase_count_chart(agg["phase_counts"])
-    ac_fig = build_label_action_count_chart(agg["action_counts"], agg["action_to_phase"])
-    pd_fig = build_label_phase_duration_chart(agg["phase_durations"])
-    ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"])
-    tl_fig = build_label_timeline_chart(agg["steps"])
+    pc_fig = build_label_phase_count_chart(agg["phase_counts"], dark=dark)
+    ac_fig = build_label_action_count_chart(agg["action_counts"], agg["action_to_phase"], dark=dark)
+    pd_fig = build_label_phase_duration_chart(agg["phase_durations"], dark=dark)
+    ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"], dark=dark)
+    tl_fig = build_label_timeline_chart(agg["steps"], dark=dark)
 
     n_steps = len(agg.get("steps", []))
     phase_counts = agg.get("phase_counts", {})
@@ -744,7 +699,8 @@ def build_label_ui_payload(file_path: str) -> dict:
         "<span style='background:#059669;color:white;"
         "padding:4px 12px;border-radius:12px;font-size:13px;'>"
         f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
-        "<a href='#' onclick=\"var t=document.querySelectorAll('.tab-nav button');if(t.length)t[0].click();"
+        "<a href='#' onclick=\"var t=document.querySelectorAll('button[role=tab]');"
+        "for(var i=0;i<t.length;i++){if(t[i].textContent.trim()==='Overview'){t[i].click();break;}}"
         "var r=document.querySelector(&quot;.overview-section-radio input[value='Labels']&quot;);"
         "if(r){r.click();r.scrollIntoView({behavior:'smooth',block:'center'});}"
         "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
@@ -818,37 +774,36 @@ def build_ui() -> gr.Blocks:
         )
 
         # -- Upload area (collapses after load) --
-        with gr.Column(elem_classes=["upload-row"]) as upload_accordion:
-            with gr.Row(equal_height=True):
-                format_selector = gr.Dropdown(
-                    label="Format",
-                    choices=[
-                        ("Claude Code", "ccsession"),
-                        ("CodeArts", "codearts"),
-                        ("OpenCode", "opencode"),
-                        ("Codex CLI", "codex"),
-                    ],
-                    value="ccsession",
-                    interactive=True,
-                    scale=1,
-                    min_width=140,
+        with gr.Column(elem_classes=["upload-row"]) as upload_accordion, gr.Row(equal_height=True):
+            format_selector = gr.Dropdown(
+                label="Format",
+                choices=[
+                    ("Claude Code", "ccsession"),
+                    ("CodeArts", "codearts"),
+                    ("OpenCode", "opencode"),
+                    ("Codex CLI", "codex"),
+                ],
+                value="ccsession",
+                interactive=True,
+                scale=1,
+                min_width=140,
+            )
+            with gr.Column(scale=2, min_width=200):
+                file_upload = gr.File(
+                    label="Trajectory (.json / .jsonl)",
+                    file_types=[".json", ".jsonl"],
+                    height=110,
                 )
-                with gr.Column(scale=2, min_width=200):
-                    file_upload = gr.File(
-                        label="Trajectory (.json / .jsonl)",
-                        file_types=[".json", ".jsonl"],
-                        height=110,
-                    )
-                    load_btn = gr.Button("Load Trajectory", variant="primary",
-                                         size="sm", min_width=120)
-                with gr.Column(scale=2, min_width=200):
-                    label_file_upload = gr.File(
-                        label="Labels (optional)",
-                        file_types=[".json"],
-                        height=110,
-                    )
-                    label_load_btn = gr.Button("Load Labels", variant="secondary",
-                                               size="sm", min_width=120)
+                load_btn = gr.Button("Load Trajectory", variant="primary",
+                                     size="sm", min_width=120)
+            with gr.Column(scale=2, min_width=200):
+                label_file_upload = gr.File(
+                    label="Labels (optional)",
+                    file_types=[".json"],
+                    height=110,
+                )
+                label_load_btn = gr.Button("Load Labels", variant="secondary",
+                                           size="sm", min_width=120)
 
         # Summary banner + anomaly strip (hidden until load)
         with gr.Column(visible=False) as summary_area:
@@ -966,7 +921,7 @@ def build_ui() -> gr.Blocks:
                 )
                 _attr_placeholder = (
                     "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
-                    "Load a trajectory in the Overview tab, then click <b>Diagnose failure</b>. "
+                    "Load a trajectory in the Overview tab &mdash; diagnosis runs automatically on load (<b>Diagnose failure</b> re-runs it with the overrides below). "
                     "For a corpus trajectory (…/trajectory/&lt;agent&gt;/&lt;instance&gt;.json) the agent "
                     "and instance are auto-detected from the path; for an uploaded file, set them below."
                     "</div>"
@@ -976,15 +931,14 @@ def build_ui() -> gr.Blocks:
                     attr_run_btn = gr.Button("Diagnose failure", variant="primary",
                                              size="sm", scale=1, min_width=140)
                 with gr.Accordion("Override agent / instance / corpus (for uploaded files)",
-                                  open=False, elem_classes=["per-message-acc"]):
-                    with gr.Row(equal_height=True):
-                        attr_agent_override = gr.Textbox(
-                            label="Agent", placeholder="auto-detected from path", scale=1)
-                        attr_inst_override = gr.Textbox(
-                            label="Instance id", placeholder="auto-detected from path", scale=2)
-                        attr_root_override = gr.Textbox(
-                            label="ARGUS corpus root",
-                            placeholder="default: sibling TraceProbe checkout", scale=2)
+                                  open=False, elem_classes=["per-message-acc"]), gr.Row(equal_height=True):
+                    attr_agent_override = gr.Textbox(
+                        label="Agent", placeholder="auto-detected from path", scale=1)
+                    attr_inst_override = gr.Textbox(
+                        label="Instance id", placeholder="auto-detected from path", scale=2)
+                    attr_root_override = gr.Textbox(
+                        label="ARGUS corpus root",
+                        placeholder="default: sibling TraceProbe checkout", scale=2)
                 attr_result_html = gr.HTML("")
 
             # ===== Comparison Tab (Converge embedded) =====
@@ -1003,6 +957,7 @@ def build_ui() -> gr.Blocks:
                                 ("Claude Code", "ccsession"),
                                 ("CodeArts", "codearts"),
                                 ("OpenCode", "opencode"),
+                                ("Codex CLI", "codex"),
                             ],
                             value="ccsession",
                             interactive=True,
@@ -1026,10 +981,13 @@ def build_ui() -> gr.Blocks:
                             scale=4,
                         )
                     with gr.Row(equal_height=False):
-                        cmp_is_baseline = gr.Checkbox(
-                            label="Reference trajectory is the baseline",
-                            info="This trajectory is what we compared to, i.e., the baseline.",
-                            value=True, scale=4,
+                        # Roles are fixed in the pipeline: the upload here is the
+                        # reference/baseline, the Overview trajectory is compared.
+                        # (Replaced a Checkbox that was wired to nothing.)
+                        gr.Markdown(
+                            "_The uploaded trajectory is treated as the "
+                            "**reference/baseline**; the trajectory loaded on the "
+                            "Overview tab is the **compared** one._",
                         )
                         cmp_run_btn = gr.Button(
                             "Run Comparison", variant="primary",
@@ -1067,7 +1025,7 @@ def build_ui() -> gr.Blocks:
                         toc_html = gr.HTML("", elem_id="wf-toc-container")
                     with gr.Column(scale=3, min_width=400):
                         workflow_html = gr.HTML(
-                            "<div style='padding:3em;color:#9ca3af;text-align:center;"
+                            "<div style='padding:3em;color:var(--ov-muted);text-align:center;"
                             "font-size:15px;'>Load a trajectory to see the step flow.</div>",
                             js_on_load="""
                             /* Filter chip click handler (delegated, survives re-renders) */
@@ -1329,7 +1287,7 @@ def build_ui() -> gr.Blocks:
                                     if (target.querySelector('[data-wf-hidden-msg]')) return;
                                     target.innerHTML =
                                         "<div data-wf-hidden-msg='1'" +
-                                        " style='padding:2em 1em;text-align:center;color:#9ca3af;'>" +
+                                        " style='padding:2em 1em;text-align:center;color:var(--ov-muted);'>" +
                                         "<p style='font-size:15px;margin-bottom:0.5em;'>" +
                                         "Selected step is hidden by the current filters</p>" +
                                         "<p style='font-size:12px;'>Adjust the filters to show it again.</p>" +
@@ -1356,66 +1314,6 @@ def build_ui() -> gr.Blocks:
                                 }
                                 if (cards.length) selectCard(cards[0]);
                             }, 600);
-
-                            /* ===== Chart Interactivity Bridge ===== */
-                            /* Navigate to a step in the workflow tab */
-                            window.__navigateToStep = function(stepIdx) {
-                                var tabs = document.querySelectorAll('.tab-nav button');
-                                if (tabs.length > 1) tabs[1].click();
-                                setTimeout(function() {
-                                    var card = document.getElementById('wf-card-' + stepIdx);
-                                    if (card) {
-                                        card.scrollIntoView({behavior: 'smooth', block: 'center'});
-                                        card.click();
-                                    }
-                                }, 300);
-                            };
-
-                            /* Attach click handlers to Plotly charts for phase regions */
-                            if (!window.__plotlyClickAttached) {
-                                window.__plotlyClickAttached = true;
-                                document.addEventListener('click', function(e) {
-                                    /* Phase region annotations are rendered as text elements */
-                                    var annot = e.target.closest('.annotation-text');
-                                    if (!annot) return;
-                                    var text = annot.textContent || '';
-                                    /* Check if it looks like a phase annotation */
-                                    if (['Boot', 'Steady', 'Closeout'].indexOf(text.trim()) === -1) return;
-                                    /* Find the phase data from the chart's vrects */
-                                    var plotDiv = annot.closest('.js-plotly-plot');
-                                    if (!plotDiv || !plotDiv.layout) return;
-                                    var shapes = plotDiv.layout.shapes || [];
-                                    var annotations = plotDiv.layout.annotations || [];
-                                    /* Find matching annotation index */
-                                    for (var i = 0; i < annotations.length; i++) {
-                                        if (annotations[i].text === text.trim() && shapes[i]) {
-                                            var startStep = Math.round(shapes[i].x0 + 0.5);
-                                            window.__navigateToStep(startStep);
-                                            break;
-                                        }
-                                    }
-                                });
-
-                                /* Outlier annotation click → navigate to step */
-                                document.addEventListener('click', function(e) {
-                                    var annot = e.target.closest('.annotation-text');
-                                    if (!annot) return;
-                                    var text = annot.textContent || '';
-                                    var m = text.match(/spike:\\s*([\\d,]+)/);
-                                    if (!m) return;
-                                    /* Outlier annotations have x coordinate = step index */
-                                    var plotDiv = annot.closest('.js-plotly-plot');
-                                    if (!plotDiv || !plotDiv.layout) return;
-                                    var annotations = plotDiv.layout.annotations || [];
-                                    for (var i = 0; i < annotations.length; i++) {
-                                        if (annotations[i].text && annotations[i].text.indexOf(text.trim()) >= 0) {
-                                            var stepIdx = Math.round(annotations[i].x);
-                                            window.__navigateToStep(stepIdx);
-                                            break;
-                                        }
-                                    }
-                                });
-                            }
                             """,
                         )
                     with gr.Column(scale=2, min_width=300, elem_classes=["detail-panel"]):
@@ -1454,11 +1352,17 @@ def build_ui() -> gr.Blocks:
         )
 
         _empty_fig = go.Figure()
-        _empty_fig.update_layout(template="plotly_white", height=380)
+        _empty_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
 
         def _empty_result(banner="", detail="*No data*"):
             """Return the empty outputs tuple for error states."""
             f = _empty_fig
+            # Surface the detail message (it previously vanished: every load
+            # error's specifics were dropped and only the generic banner shown).
+            if detail and detail != "*No data*":
+                import html as _html
+                banner += ("<p style='color:var(--ov-muted);font-size:13px;margin:4px 0 0;'>"
+                           f"{_html.escape(detail.strip('*'))}</p>")
             return (
                 gr.update(visible=False),  # main_tabs
                 gr.update(visible=bool(banner)),  # summary_area (reveal so the error banner shows)
@@ -1502,7 +1406,6 @@ def build_ui() -> gr.Blocks:
 
         def _do_load_inner(upload_obj, dark=False, selected_format="ccsession"):
             """Load trajectory from uploaded file."""
-            from .loaders import detect_format
 
             file_path = None
             if upload_obj is not None:
@@ -1517,18 +1420,15 @@ def build_ui() -> gr.Blocks:
                 return _empty_result(banner=err_banner, detail="*Error loading file.*")
 
             # Validate format matches user selection
-            _FORMAT_LABELS = {"ccsession": "Claude Code", "codearts": "CodeArts",
-                              "opencode": "OpenCode", "codex": "Codex CLI",
-                              "unknown": "Unknown"}
             detected = detect_format(raw)
             # Codex is produced only from an unambiguous .jsonl upload, so accept
             # it regardless of the dropdown selection.
             if detected != selected_format and detected not in ("unknown", "codex"):
                 err_msg = (
                     f"Format mismatch: selected "
-                    f"<b>{html.escape(_FORMAT_LABELS.get(selected_format, selected_format))}</b>"
+                    f"<b>{html.escape(FORMAT_LABELS.get(selected_format, selected_format))}</b>"
                     f" but file detected as "
-                    f"<b>{html.escape(_FORMAT_LABELS.get(detected, detected))}</b>."
+                    f"<b>{html.escape(FORMAT_LABELS.get(detected, detected))}</b>."
                 )
                 return _empty_result(
                     banner=f"<p style='color:#dc2626;'>{err_msg}</p>",
@@ -1556,7 +1456,6 @@ def build_ui() -> gr.Blocks:
             _, wfmt = wall_clock_fmt(metrics)
 
             step_analytics = compute_step_analytics(steps)
-            phases = detect_phases(step_analytics)
             verdicts = compute_health_verdict(metrics, step_analytics if steps else [])
             agent_summaries = compute_agent_summary(steps, raw)
 
@@ -1567,17 +1466,16 @@ def build_ui() -> gr.Blocks:
                                          verdicts, wfmt, file_path,
                                          trajectory_format=detected)
 
-            _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
+            def _d(k):
+                return raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
             _md, _timing = _d("metadata"), _d("timing")
             _model_id, _, _agent_id = extract_agent_info(steps)
             session_detail = _build_session_detail_html(
-                metrics, wfmt, _timing, _md, raw,
-                model_id=_model_id, agent_id=_agent_id,
+                _timing, _md, model_id=_model_id, agent_id=_agent_id,
             )
 
-            ch = _build_chart_outputs(steps, message_rows, phases,
-                                      step_analytics, agent_summaries, dark=dark,
-                                      trajectory=raw.get("trajectory") or raw.get("messages") or [],
+            ch = _build_chart_outputs(steps, message_rows,
+                                      agent_summaries, dark=dark,
                                       trajectory_format=detected)
             wf = _build_workflow_outputs(steps)
 
@@ -1710,7 +1608,7 @@ def build_ui() -> gr.Blocks:
                               ref_labels_file, cmp_labels_file,
                               overview_raw, dark):
             empty_fig = go.Figure()
-            empty_fig.update_layout(template="plotly_white", height=380)
+            empty_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
 
             if not overview_raw:
                 return (
@@ -1785,10 +1683,18 @@ def build_ui() -> gr.Blocks:
                     logging.getLogger(__name__).debug(
                         "Phase comparison chart build failed: %s", exc)
 
-            status = (
-                "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
-                "Comparison complete.</div>"
-            )
+            # Branch on the pipeline's explicit ok flag (backward-compatible:
+            # a result without the flag reads as success, today's behavior).
+            if result.get("ok", True):
+                status = (
+                    "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
+                    "Comparison complete.</div>"
+                )
+            else:
+                status = (
+                    "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>"
+                    "Comparison failed &mdash; see the report panel for details.</div>"
+                )
 
             return (result["report_html"], phase_count_fig, phase_duration_fig, status)
 
@@ -1924,9 +1830,9 @@ def build_ui() -> gr.Blocks:
 
         # -- Label file upload callback --
         _empty_label_fig = go.Figure()
-        _empty_label_fig.update_layout(template="plotly_white", height=380)
+        _empty_label_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
 
-        def do_load_labels(upload_obj):
+        def do_load_labels(upload_obj, dark=False):
             """Load labeled JSON and update all label UI components.
 
             Returns values matching the output list below:
@@ -1950,7 +1856,7 @@ def build_ui() -> gr.Blocks:
             if not file_path or not os.path.isfile(file_path):
                 return (
                     "",  # label_badge_html
-                    "<div style='padding:1em;color:#9ca3af;text-align:center;'>"
+                    "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
                     "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>",
                     gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty, empty,
@@ -1958,7 +1864,7 @@ def build_ui() -> gr.Blocks:
                 )
 
             try:
-                payload = build_label_ui_payload(file_path)
+                payload = build_label_ui_payload(file_path, dark=bool(dark))
             except Exception as exc:
                 return (
                     "",  # label_badge_html
@@ -1986,7 +1892,7 @@ def build_ui() -> gr.Blocks:
             label_action_dur_chart,
             label_timeline_row, label_timeline_chart,
         ]
-        label_inputs = [label_file_upload]
+        label_inputs = [label_file_upload, state_dark]
         label_load_btn.click(
             fn=do_load_labels,
             inputs=label_inputs,

@@ -119,12 +119,16 @@ TrajViz's existing error clusters / failure chains (`diagnostics.py`) become sup
 **Test matrix (all under the 3.13 `.venv`):**
 | Test | Guards | Location |
 |---|---|---|
-| **Adapter parity** — DECAF adapter on TrajViz's raw dict ≡ `awe.load_normalized` on the corpus file, for claude_code/opencode/codex | the reuse seam doesn't silently diverge | `TrajectoryVisualizer/tests/test_attribution_parity.py` |
-| **Golden diagnosis** — `diagnose()` on N committed corpus cases reproduces the exact `blame_status` + primary capability in `DECAF/data/dossier/faults.json` | in-memory path ≡ batch path; DECAF numbers unchanged | `tests/test_attribution_golden.py` |
-| **Offline / no-key** — `diagnose(use_judge=False)` with `OPENROUTER_API_KEY` unset yields the 5-cap slice, no network | the default path never needs a key | `tests/test_attribution_offline.py` |
-| **Cache read-back** — with judge cache present, 7 caps appear with no key | Phase 3 read path | same |
-| **Gold-free degradation** — arbitrary upload → `available=False`, clean reason, no exception, no fabricated blame | the honesty guard | `tests/test_attribution_degraded.py` |
+| **Adapter parity** — under the shipped byte-identity design, TrajViz re-reads the canonical corpus file and verifies the displayed trajectory hashes to the same bytes before DECAF diagnoses it | the reuse seam doesn't silently diverge | `tests/test_attribution.py::test_adapter_parity_claude_code` |
+| **Golden diagnosis** — `diagnose()` on committed corpus cases reproduces the exact `blame_status` + primary capability in `DECAF/data/dossier/faults.json` | in-memory path ≡ batch path; DECAF numbers unchanged | `tests/test_attribution.py::test_golden_deductive_case_matches_pinned_expectations` |
+| **Offline / no-key** — `diagnose(use_judge=False)` with `OPENROUTER_API_KEY` unset yields the 5-cap slice, no network | the default path never needs a key | `tests/test_attribution.py::test_diagnose_offline_without_api_key` |
+| **Cache read-back** — with judge cache present, 7 caps appear with no key | Phase 3 read path | same file |
+| **Gold-free degradation** — arbitrary upload → `available=False`, clean reason, no exception, no fabricated blame | the honesty guard | `tests/test_attribution.py::test_gold_free_upload_degrades_cleanly` |
 | **UI smoke** — build the Attribution tab outputs for a known case; assert scorecard + dossier HTML contain the expected primary capability | wiring & renderers | `tests/test_attribution_ui.py` |
+
+*(2026-08 note: the per-guard test files originally named here were
+consolidated into `tests/test_attribution.py`; the Location column above
+points at the shipped tests.)*
 
 **End-to-end verification (not just unit tests):** launch the Gradio app under `.venv`, load `trajectory/claude_code/<a-known-failing-id>.json`, open Attribution, and confirm the rendered primary cause + evidence chain match that case's `faults.json` record. Do this before each phase's PR (the `verify`/`run` workflow).
 

@@ -2,6 +2,7 @@
 
 import statistics
 
+from .metrics import tool_call_duration_ms
 from .parser import infer_non_cache_input
 
 
@@ -12,22 +13,14 @@ def compute_step_analytics(steps: list[dict]) -> list[dict]:
         duration_s = step["duration"]
 
         # Tool time: naive sum of individual tool call durations (may overcount
-        # parallel calls). Fall back to duration_ms / metadata.totalDurationMs
-        # when explicit start/end are absent (Claude Code tool calls carry only
-        # totalDurationMs), matching the message-level tool-time computation.
+        # parallel calls). Uses the shared fallback chain in
+        # tool_call_duration_ms, matching the message-level tool-time
+        # computation exactly.
         tool_time_ms = 0
         for tc in step["tool_calls"]:
-            ts = tc.get("time_start")
-            te = tc.get("time_end")
-            if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
-                tool_time_ms += (te - ts)
-            else:
-                d = tc.get("duration_ms")
-                if not isinstance(d, (int, float)):
-                    meta = tc.get("metadata", {})
-                    d = meta.get("totalDurationMs") if isinstance(meta, dict) else None
-                if isinstance(d, (int, float)) and d >= 0:
-                    tool_time_ms += d
+            v = tool_call_duration_ms(tc)
+            if v is not None:
+                tool_time_ms += v
 
         tool_time_share = None
         if duration_s is not None and duration_s > 0:
@@ -87,83 +80,6 @@ def compute_step_analytics(steps: list[dict]) -> list[dict]:
 
     return analytics
 
-
-def detect_phases(analytics: list[dict]) -> list[dict]:
-    """Automatic phase detection based on token/runtime share heuristics."""
-    if len(analytics) < 3:
-        return [{"name": "Full Run", "start_idx": 0,
-                 "end_idx": max(len(analytics) - 1, 0),
-                 "token_share": 100.0, "runtime_share": 100.0}]
-
-    total_tok = sum(a["tok_total"] for a in analytics)
-    total_rt = sum(a["duration_s"] or 0 for a in analytics)
-
-    if total_tok == 0 or total_rt == 0:
-        return [{"name": "Full Run", "start_idx": 0,
-                 "end_idx": len(analytics) - 1,
-                 "token_share": 100.0, "runtime_share": 100.0}]
-
-    def _make_phase(name: str, start: int, end: int) -> dict:
-        p_tok = sum(analytics[j]["tok_total"] for j in range(start, end + 1))
-        p_rt = sum(analytics[j]["duration_s"] or 0 for j in range(start, end + 1))
-        return {
-            "name": name, "start_idx": start, "end_idx": end,
-            "token_share": round(p_tok / total_tok * 100, 1) if total_tok else 0,
-            "runtime_share": round(p_rt / total_rt * 100, 1) if total_rt else 0,
-        }
-
-    # Boot: cumulative token share < 15% but cumulative runtime share > 30%
-    cum_tok, cum_rt, boot_end = 0, 0.0, None
-    prev_rt_pct = 0.0
-    for i, a in enumerate(analytics):
-        cum_tok += a["tok_total"]
-        cum_rt += (a["duration_s"] or 0)
-        tok_pct = cum_tok / total_tok * 100
-        rt_pct = cum_rt / total_rt * 100
-        if tok_pct >= 15 or i >= len(analytics) - 2:
-            # Use pre-boundary runtime (before step i) for the >30% check
-            boot_end = i - 1 if i > 0 and prev_rt_pct > 30 else None
-            break
-        if rt_pct > 30 and tok_pct < 15:
-            boot_end = i
-        prev_rt_pct = rt_pct
-
-    # Closeout: trailing steps with finish=stop/end_turn or no tools + high tokens
-    # Skip zero-token steps (e.g. user messages) instead of breaking on them
-    avg_tok = total_tok / len(analytics)
-    closeout_start = None
-    for i in range(len(analytics) - 1, max(0, (boot_end or 0) + 1) - 1, -1):
-        a = analytics[i]
-        if a["tok_total"] == 0:
-            continue  # skip empty/user steps, don't break the chain
-        is_close = (
-            (a["finish"] in ("stop", "end_turn") or a["tool_calls"] == 0)
-            and a["tok_total"] > avg_tok
-        )
-        if is_close:
-            closeout_start = i
-        else:
-            break
-
-    phases: list[dict] = []
-    steady_start = 0
-    if boot_end is not None and boot_end >= 0:
-        phases.append(_make_phase("Boot", 0, boot_end))
-        steady_start = boot_end + 1
-
-    steady_end = len(analytics) - 1
-    if closeout_start is not None and closeout_start > steady_start:
-        steady_end = closeout_start - 1
-    else:
-        closeout_start = None
-
-    if steady_start <= steady_end:
-        phases.append(_make_phase("Steady", steady_start, steady_end))
-
-    if closeout_start is not None:
-        phases.append(_make_phase("Closeout", closeout_start, len(analytics) - 1))
-
-    return phases if phases else [_make_phase("Full Run", 0, len(analytics) - 1)]
 
 
 def generate_insights(

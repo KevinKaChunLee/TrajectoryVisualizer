@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import statistics
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any
+from collections.abc import Callable
 
 from .alignment import build_comparison_report
 
@@ -138,11 +140,16 @@ def _safe_stat(values: list[float], func, default=None):
 
 
 def _percentile(values: list[float], q: float) -> float:
-    """Compute percentile using nearest-rank."""
+    """Compute percentile using true nearest-rank: ceil(q*n)-1 (B28).
+
+    The old truncated index int((n-1)*q) biased every tail low — p95 of 10
+    values returned the 89th percentile and p5 collapsed to the minimum for
+    all n <= 20.
+    """
     if not values:
         return 0.0
     vals = sorted(values)
-    idx = max(0, min(len(vals) - 1, int((len(vals) - 1) * q)))
+    idx = max(0, min(len(vals) - 1, math.ceil(q * len(vals)) - 1))
     return vals[idx]
 
 

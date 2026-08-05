@@ -38,6 +38,15 @@ def extract_milestones(
 
     norm_targets = {_norm(f) for f in target_files} if target_files else None
 
+    def _is_target(target: str) -> bool:
+        """Normalize-and-suffix-match against the target set (R26: hoisted
+        from three verbatim copies below; behavior unchanged)."""
+        nt = _norm(target)
+        return any(
+            nt == t or nt.endswith("/" + t) or t.endswith("/" + nt)
+            for t in norm_targets
+        )
+
     milestones: dict[str, int | None] = {
         "first_relevant_file": None,
         "first_edit": None,
@@ -56,9 +65,7 @@ def extract_milestones(
         if milestones["first_relevant_file"] is None:
             if a.action_type in ("FILE_READ", "SEARCH"):
                 if norm_targets is not None:
-                    # Check if the action's target matches any target file
-                    nt = _norm(a.target)
-                    if any(nt == t or nt.endswith("/" + t) or t.endswith("/" + nt) for t in norm_targets):
+                    if _is_target(a.target):
                         milestones["first_relevant_file"] = a.step_index
                 elif a.effect_label in ("justified", "survived"):
                     # Fallback: use effect label when no target_files provided
@@ -66,22 +73,14 @@ def extract_milestones(
 
         # first_edit: earliest FILE_WRITE to a target file (or any file if no targets)
         if milestones["first_edit"] is None and a.action_type == "FILE_WRITE":
-            if norm_targets is not None:
-                nt = _norm(a.target)
-                if any(nt == t or nt.endswith("/" + t) or t.endswith("/" + nt) for t in norm_targets):
-                    milestones["first_edit"] = a.step_index
-            else:
+            if norm_targets is None or _is_target(a.target):
                 milestones["first_edit"] = a.step_index
 
         # first_surviving_edit: earliest FILE_WRITE with effect_label=survived
         # Grounded to target files when available
         if milestones["first_surviving_edit"] is None:
             if a.action_type == "FILE_WRITE" and a.effect_label == "survived":
-                if norm_targets is not None:
-                    nt = _norm(a.target)
-                    if any(nt == t or nt.endswith("/" + t) or t.endswith("/" + nt) for t in norm_targets):
-                        milestones["first_surviving_edit"] = a.step_index
-                else:
+                if norm_targets is None or _is_target(a.target):
                     milestones["first_surviving_edit"] = a.step_index
 
         # first_passing_validation: earliest recognized validation COMMAND that
@@ -207,7 +206,7 @@ def compare_segments(
     if ref_order == cmp_order:
         # Paired comparison with real within-segment alignment
         paired = []
-        for ref_seg, cmp_seg in zip(ref_segments, cmp_segments):
+        for ref_seg, cmp_seg in zip(ref_segments, cmp_segments, strict=False):
             ref_seg_actions = ref_seg["actions"]
             cmp_seg_actions = cmp_seg["actions"]
 
@@ -256,17 +255,3 @@ def compare_segments(
             "reference_segments": ref_segs,
             "compared_segments": cmp_segs,
         }
-
-
-# ---------------------------------------------------------------------------
-# Anchor patch
-# ---------------------------------------------------------------------------
-
-def apply_anchor_patch(
-    actions: list[CanonicalAction],
-    steps: list[dict],
-    anchor_files: set[str],
-) -> None:
-    """Recompute effect_labels against an external anchor file set. Mutates in place."""
-    from .canonical import assign_effect_labels
-    assign_effect_labels(actions, steps, anchor_files)

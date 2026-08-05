@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from trajviz.tool_vocab import (WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
+                                write_target_path as _write_target_path)
+
 import os
 import re
-from collections import Counter
+
+# Tool-call statuses that open/continue a failure chain. Shared by
+# _step_has_error, classify_chain_steps, and cluster_errors so the chain
+# detector and the chain classifier can never drift apart again.
+_ERROR_STATUSES = ("error", "failed", "failure", "cancelled", "timeout")
 
 
 # ---------------------------------------------------------------------------
@@ -146,11 +153,11 @@ def identify_target_files(steps: list[dict]) -> set[str]:
         for tc in step.get("tool_calls", []):
             tool_name = tc.get("tool_name", "")
             status = tc.get("status", "")
-            if tool_name in ("Edit", "edit", "Write", "write") and status not in ("error", "failed", "failure"):
+            if tool_name in _WRITE_TOOL_SET and status not in ("error", "failed", "failure"):
                 inp = tc.get("input", {})
                 if isinstance(inp, dict):
                     # OpenCode uses ``filePath``; Claude Code uses ``file_path``.
-                    path = inp.get("file_path") or inp.get("filePath") or ""
+                    path = _write_target_path(inp)
                     if path:
                         # Match extract_file_interactions, which normalizes
                         # backslashes; _paths_match/normpath won't on POSIX.
@@ -255,7 +262,7 @@ def _step_has_error(step: dict) -> bool:
         return True
     for tc in step.get("tool_calls", []):
         status = tc.get("status", "")
-        if status in ("error", "failed", "failure", "cancelled", "timeout"):
+        if status in _ERROR_STATUSES:
             return True
         meta = tc.get("metadata", {})
         if isinstance(meta, dict) and meta.get("exit") not in (None, 0):
@@ -322,7 +329,10 @@ def classify_chain_steps(chain: dict, steps: list[dict]) -> list[dict]:
     first_step = step_map.get(chain_steps[0], {})
     first_error_sigs = set()
     for tc in first_step.get("tool_calls", []):
-        if tc.get("status") in ("error", "failed", "failure") or (
+        # Same status set as _step_has_error: a chain opened by a cancelled or
+        # timed-out call must still yield first-error signatures, or identical
+        # retries would all be classified "cascade".
+        if tc.get("status") in _ERROR_STATUSES or (
             isinstance(tc.get("metadata"), dict) and tc["metadata"].get("exit") not in (None, 0)
         ):
             first_error_sigs.add(_error_tool_target(tc))
@@ -435,7 +445,7 @@ def cluster_errors(steps: list[dict]) -> list[dict]:
     for step in steps:
         for tc in step.get("tool_calls", []):
             is_error = (
-                tc.get("status") in ("error", "failed", "failure", "cancelled", "timeout")
+                tc.get("status") in _ERROR_STATUSES
                 or (isinstance(tc.get("metadata"), dict) and tc["metadata"].get("exit") not in (None, 0))
             )
             if not is_error:
@@ -534,20 +544,13 @@ def decompose_hotspot_duration(
     dominant_tool_target = ""
     dominant_tool_dur = 0
 
+    from .metrics import tool_call_duration_ms
+
     for tc in step.get("tool_calls", []):
-        ts = tc.get("time_start")
-        te = tc.get("time_end")
-        dur_ms = 0
-        if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
-            dur_ms = te - ts
-        else:
-            dm = tc.get("duration_ms")
-            if dm is None:
-                dm = (tc.get("metadata") or {}).get("totalDurationMs")
-            if isinstance(dm, (int, float)) and dm > 0:
-                dur_ms = dm
-            else:
-                timing_complete = False
+        v = tool_call_duration_ms(tc)
+        dur_ms = v if v is not None else 0
+        if v is None:
+            timing_complete = False
 
         tool_time_ms += dur_ms
         if dur_ms > dominant_tool_dur:
@@ -574,13 +577,18 @@ def decompose_hotspot_duration(
             "duration_s": round(dominant_tool_dur / 1000.0, 2),
         }
 
+    # All three percentages share one base — the full wall-clock span the step
+    # accounts for (its own duration plus the disjoint pre-step idle gap) — so
+    # they sum to ~100% and idle_pct can never exceed 100.
+    total = duration + idle_s
+
     return {
         "tool_s": round(tool_s, 2),
         "inference_s": round(inference_s, 2),
         "idle_s": round(idle_s, 2),
-        "tool_pct": round(tool_s / duration * 100, 1) if duration > 0 else 0,
-        "inference_pct": round(inference_s / duration * 100, 1) if duration > 0 else 0,
-        "idle_pct": round(idle_s / duration * 100, 1) if duration > 0 else 0,
+        "tool_pct": round(tool_s / total * 100, 1) if total > 0 else 0,
+        "inference_pct": round(inference_s / total * 100, 1) if total > 0 else 0,
+        "idle_pct": round(idle_s / total * 100, 1) if total > 0 else 0,
         "timing_incomplete": not timing_complete,
         "dominant_tool": dominant_tool,
     }
@@ -609,6 +617,11 @@ def explain_hotspot(step: dict, decomposition: dict) -> str:
         parts.append(f"{d['idle_s']}s idle gap before step (queuing or rate limiting)")
         if d["tool_s"] > 0:
             parts.append(f"{d['tool_s']}s tool execution")
+        # Mirror the other branches: never drop a component of the step's own
+        # duration just because the pre-step idle gap dominates.
+        if d["inference_s"] > 0:
+            tok = step["tokens"]["total"]
+            parts.append(f"{d['inference_s']}s LLM inference ({tok:,} tokens)")
     else:
         tok = step["tokens"]["total"]
         parts.append(f"{d['inference_s']}s LLM inference ({tok:,} tokens)")

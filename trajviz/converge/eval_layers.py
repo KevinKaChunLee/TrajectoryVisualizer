@@ -60,11 +60,10 @@ DEFAULT_VERDICT_THRESHOLDS: dict[str, dict[str, float | int]] = {
 
 def _extract_layer_metric(
     metric_def: dict,
-    report: dict,
     patterns: list[dict],
     anchor_analysis: dict | None,
 ) -> float | int | None:
-    """Extract a single metric value from report data."""
+    """Extract a single metric value from pattern/anchor data."""
     source = metric_def.get("source")
 
     if source == "patterns":
@@ -90,12 +89,11 @@ def _extract_layer_metric(
 # ---------------------------------------------------------------------------
 
 def compute_eval_layers(
-    report: dict,
     patterns: list[dict],
     anchor_analysis: dict | None = None,
     verdict_thresholds: dict[str, dict[str, float | int]] | None = None,
 ) -> dict[str, dict]:
-    """Compute three evaluation layers from report data.
+    """Compute three evaluation layers from divergence patterns and anchor data.
 
     Args:
         verdict_thresholds: Optional per-metric thresholds overriding
@@ -114,7 +112,7 @@ def compute_eval_layers(
         layer_metrics: dict[str, Any] = {}
 
         for metric_name, metric_def in layer_def["metrics"].items():
-            value = _extract_layer_metric(metric_def, report, patterns, anchor_analysis)
+            value = _extract_layer_metric(metric_def, patterns, anchor_analysis)
             layer_metrics[metric_name] = value
 
         verdict = _compute_verdict(layer_metrics, effective_thresholds)

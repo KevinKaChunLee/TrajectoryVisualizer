@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html as html_stdlib
-import json
 import traceback
 
 import gradio as gr
@@ -147,9 +146,7 @@ def build_ui() -> gr.Blocks:
             from .batch import (
                 parse_manifest, run_batch, aggregate_reports,
                 compute_pattern_frequency, promote_patterns,
-                compute_consistency, build_batch_report,
             )
-            from .charts import _empty_figure
 
             if manifest_upload is None:
                 return "<div class='cvg-report'><p>Please upload a batch manifest JSON file.</p></div>"
@@ -161,14 +158,11 @@ def build_ui() -> gr.Blocks:
                 aggregate = aggregate_reports(results)
                 frequency = compute_pattern_frequency(results)
                 promoted = promote_patterns(frequency)
-                consistency = compute_consistency(aggregate)
-                batch_report = build_batch_report(
-                    manifest_path, results, aggregate, frequency, promoted, consistency)
 
                 # Render as HTML
                 import html as html_mod
                 parts = ['<div class="cvg-report">']
-                parts.append(f"<h2>Batch Report</h2>")
+                parts.append("<h2>Batch Report</h2>")
                 parts.append(f"<p>{aggregate.get('success_count', 0)} of {aggregate.get('task_count', 0)} tasks succeeded</p>")
 
                 # Metrics table
@@ -261,7 +255,7 @@ def build_ui() -> gr.Blocks:
 
                 import html as html_mod
                 parts = ['<div class="cvg-report">']
-                parts.append(f"<h2>Intervention Report</h2>")
+                parts.append("<h2>Intervention Report</h2>")
                 parts.append(f"<p>Paired tasks: {report['paired_tasks']}</p>")
 
                 # Recommendation

@@ -48,6 +48,8 @@ if _DECAF and str(_DECAF) not in sys.path:
 #    fixture-corpus runs never write into (or thrash) DECAF's own study caches.
 _DECAF_OK = False
 try:
+    import atexit
+    import shutil
     import tempfile
     from awe import config as _cfg
     import awe.arbiter as _arb
@@ -57,6 +59,10 @@ try:
         _cfg.JUDGE_CACHE_DIR = _CACHE / "judge"
         _arb.ARBITER_CACHE_DIR = _CACHE / "arbiter"
     _TMP_CACHE = Path(tempfile.mkdtemp(prefix="trajviz-decaf-cache-"))
+    # The redirected caches are per-run throwaways: remove them at interpreter
+    # exit so repeated suite runs do not leak tmp dirs (ignore_errors keeps
+    # teardown from ever failing the run).
+    atexit.register(shutil.rmtree, _TMP_CACHE, ignore_errors=True)
     _ad._NORMTRAJ_CACHE = _TMP_CACHE / "normtraj"
     _ts._CACHE = _TMP_CACHE / "trajsig"
     _DECAF_OK = True

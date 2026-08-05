@@ -36,10 +36,15 @@ import os
 import re
 import sqlite3
 import sys
-import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
+from collections.abc import Iterable, Sequence
+
+try:
+    from scripts import _common
+except ImportError:  # Direct execution from scripts/.
+    import _common  # type: ignore[no-redef]
 
 
 SCHEMA_VERSION = 2
@@ -274,7 +279,8 @@ def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _row_value(row: sqlite3.Row, column: str, default: Any = None) -> Any:
-    return row[column] if column in row.keys() else default
+    # sqlite3.Row has no __contains__ and iterates VALUES, so `.keys()` is required.
+    return row[column] if column in row.keys() else default  # noqa: SIM118
 
 
 def _validate_database_schema(connection: sqlite3.Connection) -> None:
@@ -360,7 +366,8 @@ def _optional_rows(
         f'SELECT * FROM "{table}" WHERE "{filter_column}" = ?',
         (filter_value,),
     ).fetchall()
-    return [{key: row[key] for key in row.keys()} for row in rows]
+    # sqlite3.Row iteration yields values, not keys — `.keys()` is required.
+    return [{key: row[key] for key in row.keys()} for row in rows]  # noqa: SIM118
 
 
 def _message_extra_map(
@@ -675,7 +682,7 @@ def consolidate_database_session(
                 "source_format": "codearts_opencode_sqlite",
                 "source_database": db_path.name,
                 "root_session_id": session_id,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now(UTC).isoformat(),
                 "database_mode": "read_only",
                 "include_children": include_children,
                 "max_depth": max_depth,
@@ -703,53 +710,19 @@ def write_output(data: dict[str, Any], output_path: str | Path) -> None:
 
     path = Path(output_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_name: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            newline="\n",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temporary_name = handle.name
-            json.dump(data, handle, indent=2, ensure_ascii=False)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-        temporary_name = None
-    finally:
-        if temporary_name is not None:
-            try:
-                Path(temporary_name).unlink()
-            except OSError:
-                pass
+    _common.write_json_atomic(path, data)
 
 
 def ensure_output_is_not_source(
     output_path: str | Path, source_paths: Iterable[str | Path]
 ) -> None:
     """Refuse to replace a database or legacy shard with exported JSON."""
-    if str(output_path) == "-":
-        return
-    destination = Path(output_path).expanduser().resolve()
-    for source_path in source_paths:
-        source = Path(source_path).expanduser().resolve()
-        same_file = destination == source
-        if not same_file and destination.exists() and source.exists():
-            try:
-                same_file = os.path.samefile(destination, source)
-            except OSError:
-                # Exact resolved paths were already compared above.  Failure to
-                # inspect a locked Windows source should not hide that result.
-                same_file = False
-        if same_file:
-            raise ConsolidationError(
-                f"Output path would overwrite input source: {source}"
-            )
+    _common.ensure_output_does_not_overwrite(
+        output_path,
+        source_paths,
+        exc=ConsolidationError,
+        allow_stdout_dash=True,
+    )
 
 
 def _safe_filename_component(value: Any, fallback: str = "session") -> str:

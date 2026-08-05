@@ -110,14 +110,17 @@ python -m trajviz.insight --port 8080
 
 ## Supported trajectory formats
 
-trajviz auto-detects and normalizes the following formats on load:
+trajviz normalizes the following formats. Select the matching format in the
+**Format** dropdown before loading — auto-detection is used to reject a
+mismatched selection (Codex `.jsonl` rollouts are recognized regardless of the
+dropdown):
 
 | Format | Detection | Notes |
 |---|---|---|
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
-| Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the shared step model (select **Codex** in the format dropdown); tool intent (Read / Grep / Glob / Write / Bash) inferred from classic `exec_command` calls and modern `exec` / `apply_patch` records |
+| Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the shared step model (recognized from the `.jsonl` upload with any dropdown selection); tool intent (Read / Grep / Glob / Write / Bash) inferred from classic `exec_command` calls and modern `exec` / `apply_patch` records |
 
 ---
 
@@ -140,12 +143,19 @@ clone it and point `AWE_DECAF_PATH` at it (default: a sibling `../DECAF`
 directory). Without DECAF, TrajViz runs fully standalone and the Attribution
 tab degrades to an informative notice. It is **gold-grounded** — it
 needs the task's reference patch and test outcome — so it works on trajectories
-from a corpus laid out as `.../trajectory/<agent>/<instance_id>.json` alongside
-DECAF's `requirements/`, `patch/`, and `eval_<agent>.json` data. When a
-trajectory is loaded from such a path, its `(agent, instance_id)` are
-auto-detected and the tab populates on load; for an uploaded file, set them in
-the tab's override fields. Without a reference patch the tab degrades honestly
-(trajectory-only signals) rather than guessing.
+from a gold corpus laid out as
+`<corpus_root>/data/{requirements,patch,trajectory}/` plus
+`eval_<agent>.json`, with trajectories at
+`.../trajectory/<agent>/<instance_id>.json`. The corpus root is set via the
+`AWE_ARGUS_ROOT` environment variable (default: a sibling `../TraceProbe`
+checkout). When a trajectory is loaded from such a path, its
+`(agent, instance_id)` are auto-detected and the tab populates on load; for an
+uploaded file, set them in the tab's override fields. The uploaded file must be
+byte-identical to the corpus copy of that run — a re-formatted or re-saved
+export, or your own fresh run of the same instance, is refused, because the
+gold-grounded verdict is only valid for the exact canonical trajectory bytes.
+Without a reference patch the tab degrades honestly (trajectory-only signals)
+rather than guessing.
 
 The deductive/associational slice (five capabilities) runs fully **offline with
 no API key**; the two judge capabilities are read back from cached verdicts when
