@@ -10,13 +10,12 @@ except ImportError:
     pass
 
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from .parser import infer_non_cache_input
 from .metrics import effective_agent
 from .palette import (
-    TOKEN_COLORS, SESSION_COLORS,
-    AGENT_COLORS, AGENT_CSS_COLORS, ROLE_COLORS, TOOL_OUTCOME_COLORS,
+    TOKEN_COLORS, SESSION_COLORS, LABEL_PHASE_COLORS,
+    AGENT_COLORS, ROLE_COLORS, TOOL_OUTCOME_COLORS,
     CHART_ACCENT, PLOTLY_DARK_TEMPLATE,
 )
 
@@ -208,7 +207,7 @@ def build_token_chart(steps: list[dict], dark: bool = False,
     reasoning_t = [s["tokens"]["reasoning"] for s in steps]
     output_t = [s["tokens"]["output"] for s in steps]
     net_output = [max(0, output - reasoning)
-                  for output, reasoning in zip(output_t, reasoning_t)]
+                  for output, reasoning in zip(output_t, reasoning_t, strict=False)]
     cache_w = [s["tokens"].get("cache_write", 0) or 0 for s in steps]
 
     # Detect if token breakdown is available (any non-zero input/output/cache)
@@ -262,7 +261,6 @@ def build_duration_chart(steps: list[dict],
         _apply_dark(fig, dark)
         return fig
 
-    indices = list(range(len(steps)))
     durations = [s["duration"] if s["duration"] is not None else 0 for s in steps]
 
     # Average over steps that actually have a duration; steps with a missing
@@ -654,8 +652,6 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
 
 # -- Label visualization charts -------------------------------------------
 
-from .palette import LABEL_PHASE_COLORS
-
 
 _LABEL_FONT = dict(size=13)  # consistent font size across label charts
 
@@ -947,11 +943,11 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
     y_pos = list(range(len(steps)))
 
     # --- Assistant bars (only non-user rows; user rows get 0) ---
-    asst_durations = [d if r != "user" else 0 for d, r in zip(durations, roles)]
+    asst_durations = [d if r != "user" else 0 for d, r in zip(durations, roles, strict=False)]
     asst_colors = [LABEL_PHASE_COLORS.get(p, "#6b7280") for p in phases]
     asst_text = [
         f"{a}  ({d:.1f}s)" if r != "user" else ""
-        for r, a, d in zip(roles, actions, durations)
+        for r, a, d in zip(roles, actions, durations, strict=False)
     ]
     asst_hover = [
         (f"<b>Step {step_indices[i]}</b><br>"
@@ -1002,7 +998,7 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
 
     # --- Legend entries (one per phase + user) ---
     seen: set[str] = set()
-    for role, phase in zip(roles, phases):
+    for role, phase in zip(roles, phases, strict=False):
         key = "user" if role == "user" else phase
         if key and key not in seen:
             seen.add(key)
@@ -1187,7 +1183,7 @@ def build_plan_timeline_chart(
 
     fig = go.Figure()
     y_labels = []
-    for i, item in enumerate(items):
+    for item in items:
         content = item["content"]
         short = content[:40] + "..." if len(content) > 40 else content
         y_labels.append(short)
@@ -1244,7 +1240,7 @@ def build_plan_timeline_chart(
     _apply_chart_layout(
         fig, "Plan Progress Timeline",
         xaxis="Step", height=chart_height,
-        margin=dict(l=max(200, max((len(l) for l in y_labels), default=10) * 6 + 20), r=40, t=50, b=40),
+        margin=dict(l=max(200, max((len(lbl) for lbl in y_labels), default=10) * 6 + 20), r=40, t=50, b=40),
     )
     # Tighter bar gap so individual items don't visually balloon when the
     # surrounding container is wide (e.g., right column of a 2-col layout).
@@ -1317,7 +1313,7 @@ def build_error_classification_chart(
     _apply_chart_layout(
         fig, "Tool Error Classification",
         xaxis="Count", height=max(200, 40 * len(sorted_types)),
-        margin=dict(l=max(140, max((len(l) for l in labels), default=10) * 7 + 20), r=60, t=50, b=40),
+        margin=dict(l=max(140, max((len(lbl) for lbl in labels), default=10) * 7 + 20), r=60, t=50, b=40),
     )
     _apply_dark(fig, dark)
     return fig

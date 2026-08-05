@@ -17,14 +17,12 @@ from .parser import (
     extract_agent_info,
     wall_clock_fmt, format_banner_html,
     compute_agent_summary,
-    effective_agent,
 )
 from .analytics import compute_step_analytics
 from .diagnostics import (
     extract_file_interactions,
     identify_target_files,
     detect_failure_chains,
-    classify_chain_steps,
     link_chains_to_agents,
     compute_failure_chain_metrics,
     cluster_errors,
@@ -52,8 +50,7 @@ from .comparison import run_comparison
 from .patterns import (
     detect_tool_sequences, detect_failure_patterns,
     extract_plan_history, compute_plan_metrics,
-    detect_fruitless_streaks, compute_autonomy_ratio,
-    detect_tool_selection_antipatterns,
+    detect_fruitless_streaks, detect_tool_selection_antipatterns,
 )
 from .help import HELP_TEXT
 from .loaders import detect_format, FORMAT_LABELS
@@ -65,7 +62,7 @@ from .rendering import (
     build_antipattern_summary_html,
     _diag_jump_onclick,
 )
-from .styles import APP_CSS
+from .styles import APP_CSS  # noqa: F401  (re-exported: __main__ passes it to app.launch(css=...))
 
 _DETAIL_PLACEHOLDER = (
     "<div id='wf-detail-content'>"
@@ -492,11 +489,9 @@ def _build_chart_outputs(
     steps: list[dict], message_rows: list[dict],
     agent_summaries: list[dict],
     dark: bool = False,
-    trajectory: list[dict] | None = None,
     trajectory_format: str | None = None,
 ) -> dict:
     """Build all chart figures and analytics markdown."""
-    traj = trajectory or []
 
     # Compute diagnostic data for charts
     plan_history = extract_plan_history(steps)
@@ -779,37 +774,36 @@ def build_ui() -> gr.Blocks:
         )
 
         # -- Upload area (collapses after load) --
-        with gr.Column(elem_classes=["upload-row"]) as upload_accordion:
-            with gr.Row(equal_height=True):
-                format_selector = gr.Dropdown(
-                    label="Format",
-                    choices=[
-                        ("Claude Code", "ccsession"),
-                        ("CodeArts", "codearts"),
-                        ("OpenCode", "opencode"),
-                        ("Codex CLI", "codex"),
-                    ],
-                    value="ccsession",
-                    interactive=True,
-                    scale=1,
-                    min_width=140,
+        with gr.Column(elem_classes=["upload-row"]) as upload_accordion, gr.Row(equal_height=True):
+            format_selector = gr.Dropdown(
+                label="Format",
+                choices=[
+                    ("Claude Code", "ccsession"),
+                    ("CodeArts", "codearts"),
+                    ("OpenCode", "opencode"),
+                    ("Codex CLI", "codex"),
+                ],
+                value="ccsession",
+                interactive=True,
+                scale=1,
+                min_width=140,
+            )
+            with gr.Column(scale=2, min_width=200):
+                file_upload = gr.File(
+                    label="Trajectory (.json / .jsonl)",
+                    file_types=[".json", ".jsonl"],
+                    height=110,
                 )
-                with gr.Column(scale=2, min_width=200):
-                    file_upload = gr.File(
-                        label="Trajectory (.json / .jsonl)",
-                        file_types=[".json", ".jsonl"],
-                        height=110,
-                    )
-                    load_btn = gr.Button("Load Trajectory", variant="primary",
-                                         size="sm", min_width=120)
-                with gr.Column(scale=2, min_width=200):
-                    label_file_upload = gr.File(
-                        label="Labels (optional)",
-                        file_types=[".json"],
-                        height=110,
-                    )
-                    label_load_btn = gr.Button("Load Labels", variant="secondary",
-                                               size="sm", min_width=120)
+                load_btn = gr.Button("Load Trajectory", variant="primary",
+                                     size="sm", min_width=120)
+            with gr.Column(scale=2, min_width=200):
+                label_file_upload = gr.File(
+                    label="Labels (optional)",
+                    file_types=[".json"],
+                    height=110,
+                )
+                label_load_btn = gr.Button("Load Labels", variant="secondary",
+                                           size="sm", min_width=120)
 
         # Summary banner + anomaly strip (hidden until load)
         with gr.Column(visible=False) as summary_area:
@@ -937,15 +931,14 @@ def build_ui() -> gr.Blocks:
                     attr_run_btn = gr.Button("Diagnose failure", variant="primary",
                                              size="sm", scale=1, min_width=140)
                 with gr.Accordion("Override agent / instance / corpus (for uploaded files)",
-                                  open=False, elem_classes=["per-message-acc"]):
-                    with gr.Row(equal_height=True):
-                        attr_agent_override = gr.Textbox(
-                            label="Agent", placeholder="auto-detected from path", scale=1)
-                        attr_inst_override = gr.Textbox(
-                            label="Instance id", placeholder="auto-detected from path", scale=2)
-                        attr_root_override = gr.Textbox(
-                            label="ARGUS corpus root",
-                            placeholder="default: sibling TraceProbe checkout", scale=2)
+                                  open=False, elem_classes=["per-message-acc"]), gr.Row(equal_height=True):
+                    attr_agent_override = gr.Textbox(
+                        label="Agent", placeholder="auto-detected from path", scale=1)
+                    attr_inst_override = gr.Textbox(
+                        label="Instance id", placeholder="auto-detected from path", scale=2)
+                    attr_root_override = gr.Textbox(
+                        label="ARGUS corpus root",
+                        placeholder="default: sibling TraceProbe checkout", scale=2)
                 attr_result_html = gr.HTML("")
 
             # ===== Comparison Tab (Converge embedded) =====
@@ -1473,7 +1466,8 @@ def build_ui() -> gr.Blocks:
                                          verdicts, wfmt, file_path,
                                          trajectory_format=detected)
 
-            _d = lambda k: raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
+            def _d(k):
+                return raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
             _md, _timing = _d("metadata"), _d("timing")
             _model_id, _, _agent_id = extract_agent_info(steps)
             session_detail = _build_session_detail_html(
@@ -1482,7 +1476,6 @@ def build_ui() -> gr.Blocks:
 
             ch = _build_chart_outputs(steps, message_rows,
                                       agent_summaries, dark=dark,
-                                      trajectory=raw.get("trajectory") or raw.get("messages") or [],
                                       trajectory_format=detected)
             wf = _build_workflow_outputs(steps)
 

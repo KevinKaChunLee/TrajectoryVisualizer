@@ -2,7 +2,6 @@
 
 import math
 import statistics
-from typing import Any
 
 # Statuses that mark a tool call as failed. Single definition shared by
 # tool_success_rate (_compute_tool_stats) and edit_precision
@@ -557,7 +556,7 @@ def compute_diagnostic_metrics(
     asst_tokens = [s.get("tokens", {}).get("total", 0) or 0
                    for s in steps if s.get("role") == "assistant"]
     if len(asst_tokens) >= 5:
-        increasing = sum(1 for a, b in zip(asst_tokens, asst_tokens[1:]) if b >= a)
+        increasing = sum(1 for a, b in zip(asst_tokens, asst_tokens[1:], strict=False) if b >= a)
         is_cumulative = increasing / (len(asst_tokens) - 1) > 0.7
     else:
         is_cumulative = False

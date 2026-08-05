@@ -3,7 +3,7 @@
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 
@@ -738,9 +738,9 @@ def _convert_opencode_metadata(raw: dict) -> dict:
     started_at = ""
     finished_at = ""
     if isinstance(created_ms, (int, float)):
-        started_at = datetime.fromtimestamp(created_ms / 1000.0, tz=timezone.utc).isoformat()
+        started_at = datetime.fromtimestamp(created_ms / 1000.0, tz=UTC).isoformat()
     if isinstance(updated_ms, (int, float)):
-        finished_at = datetime.fromtimestamp(updated_ms / 1000.0, tz=timezone.utc).isoformat()
+        finished_at = datetime.fromtimestamp(updated_ms / 1000.0, tz=UTC).isoformat()
     if isinstance(created_ms, (int, float)) and isinstance(updated_ms, (int, float)):
         duration_seconds = round((updated_ms - created_ms) / 1000.0, 3)
 
@@ -1126,9 +1126,7 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                         continue
                     ctype = content.get("type", "")
                     text = content.get("text", "")
-                    if ctype == "output_text":
-                        current_parts.append({"type": "text", "text": text})
-                    elif ctype == "input_text":
+                    if ctype == "output_text" or ctype == "input_text":
                         current_parts.append({"type": "text", "text": text})
 
             elif item_type == "reasoning":

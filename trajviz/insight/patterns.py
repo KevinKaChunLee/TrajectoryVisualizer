@@ -521,9 +521,7 @@ def compute_plan_metrics(plan_history: list[dict]) -> dict:
         duration = (end - start) if start is not None and end is not None else None
         entry = {"content": content, "start_step": start, "end_step": end, "duration_steps": duration}
         items.append(entry)
-        if start is not None and end is None:
-            stalled.append(entry)
-        elif duration is not None and duration > 20:
+        if start is not None and end is None or duration is not None and duration > 20:
             stalled.append(entry)
 
     phases = detect_plan_phases(plan_history)
@@ -1090,7 +1088,6 @@ def detect_semantic_antipatterns(
     # --- 3. Semantic fruitless exploration ---
     # Consecutive understand/code_reading or understand/file_discovery steps
     # where the read targets don't appear in subsequent implement steps
-    reading_streak: list[tuple[int, str]] = []
     impl_targets: set[str] = set()
     for s in steps[:_MAX_STEPS]:
         idx = s.get("index", 0)

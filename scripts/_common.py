@@ -13,7 +13,8 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 
 def ensure_output_does_not_overwrite(

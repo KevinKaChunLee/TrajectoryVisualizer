@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from .batch import BatchResult
@@ -56,7 +55,6 @@ def pair_tasks(
     before_map = {r.task_id: r for r in before_results if r.report is not None}
     after_map = {r.task_id: r for r in after_results if r.report is not None}
 
-    all_ids = set(before_map.keys()) | set(after_map.keys())
     paired_ids = set(before_map.keys()) & set(after_map.keys())
 
     paired = [(before_map[tid], after_map[tid]) for tid in sorted(paired_ids)]
@@ -213,7 +211,7 @@ def test_significance(
     # Try Wilcoxon signed-rank
     try:
         from scipy.stats import wilcoxon
-        diffs = [a - b for a, b in zip(after_values, before_values)]
+        diffs = [a - b for a, b in zip(after_values, before_values, strict=False)]
         # wilcoxon requires at least one non-zero difference
         if all(d == 0 for d in diffs):
             return {"p_value": 1.0, "significant": False, "test_method": "wilcoxon",
@@ -229,7 +227,7 @@ def test_significance(
         pass
 
     # Fallback: sign test (binomial)
-    diffs = [a - b for a, b in zip(after_values, before_values)]
+    diffs = [a - b for a, b in zip(after_values, before_values, strict=False)]
     n_pos = sum(1 for d in diffs if d > 0)
     n_neg = sum(1 for d in diffs if d < 0)
     n_nonzero = n_pos + n_neg

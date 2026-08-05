@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any
 
 from .canonical import (
     CanonicalAction, compute_action_cost, semantic_equivalent,
@@ -343,7 +342,8 @@ def build_comparison_report_from_steps(
 
     # Determine target files for milestone grounding
     from trajviz.insight.diagnostics import identify_target_files
-    _norm = lambda p: os.path.normpath(p) if p else p
+    def _norm(p):
+        return os.path.normpath(p) if p else p
     if anchor_files:
         milestone_targets = {_norm(f) for f in anchor_files}
     else:

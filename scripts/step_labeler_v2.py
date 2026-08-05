@@ -25,7 +25,7 @@ import json  # noqa: F401  (re-exported: tests patch step_labeler_v2.json.dump)
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
@@ -291,7 +291,7 @@ def label_trajectory(
         "trajectory_file": os.path.abspath(trajectory_path),
         "taxonomy_version": taxonomy_version,
         "model": model,
-        "labeled_at": datetime.now(timezone.utc).isoformat(),
+        "labeled_at": datetime.now(UTC).isoformat(),
         "defaults": {
             "user": {"phase": user_phase, "action": user_action},
             "other": dict(OTHER_DEFAULT_LABEL),

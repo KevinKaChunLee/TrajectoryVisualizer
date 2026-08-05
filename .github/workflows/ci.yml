@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**"]
+    branches: [main, "feat/**", "fix/**", "refactor/**"]
   pull_request:
 
 permissions:
@@ -25,6 +25,8 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - name: Install (locked)
         run: uv sync --locked --extra dev
+      - name: Lint (ruff)
+        run: uv run ruff check trajviz scripts tests
       - name: Test (standalone — DECAF absent)
         env:
           PYTHONPATH: ${{ github.workspace }}

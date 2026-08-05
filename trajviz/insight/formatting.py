@@ -1,7 +1,6 @@
 """Markdown and HTML display string generation."""
 
 import html
-from typing import Any
 
 
 _VERDICT_STYLES = {
@@ -45,7 +44,7 @@ def _metric_chip(label: str, value: str, *, wide: bool = False,
 def _metric_grid(chips: list[str], title: str = "") -> str:
     """Wrap chips in a flex-wrap grid with optional title."""
     header = f"### {title}\n\n" if title else ""
-    return header + f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>" + "".join(chips) + "</div>\n"
+    return header + "<div style='display:flex;flex-wrap:wrap;gap:6px;'>" + "".join(chips) + "</div>\n"
 
 
 _FINISH_LABELS = {
@@ -238,7 +237,7 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
             + _metric_grid(agent_chips)
         )
     if model_chips:
-        sections.append(f"\n**Model breakdown**\n\n" + _metric_grid(model_chips))
+        sections.append("\n**Model breakdown**\n\n" + _metric_grid(model_chips))
 
     return "\n".join(sections)
 

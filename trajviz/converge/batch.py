@@ -6,8 +6,9 @@ import json
 import math
 import os
 import statistics
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any
+from collections.abc import Callable
 
 from .alignment import build_comparison_report
 

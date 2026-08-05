@@ -206,7 +206,7 @@ def compare_segments(
     if ref_order == cmp_order:
         # Paired comparison with real within-segment alignment
         paired = []
-        for ref_seg, cmp_seg in zip(ref_segments, cmp_segments):
+        for ref_seg, cmp_seg in zip(ref_segments, cmp_segments, strict=False):
             ref_seg_actions = ref_seg["actions"]
             cmp_seg_actions = cmp_seg["actions"]
 

@@ -3,13 +3,14 @@
 import html
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from pygments import highlight as _pygments_highlight
 from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
-from .charts import AGENT_CSS_COLORS, build_agent_color_map, AGENT_COLORS
+from .charts import build_agent_color_map
+from .palette import AGENT_COLORS, AGENT_CSS_COLORS
 from .styles import WORKFLOW_CSS
 
 
@@ -361,7 +362,7 @@ def _fmt_timestamp(ms):
     """Convert epoch-milliseconds to readable ``YYYY-MM-DD HH:MM:SS`` (UTC)."""
     if not isinstance(ms, (int, float)):
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _format_step_header(step: dict) -> str:
@@ -857,7 +858,7 @@ def build_root_cause_html(clusters: list[dict]) -> str:
     summaries = format_root_cause_summary(clusters)
 
     items = []
-    for i, (cluster, summary) in enumerate(zip(clusters, summaries)):
+    for i, (cluster, summary) in enumerate(zip(clusters, summaries, strict=False)):
         badge_class = "diag-rc-primary" if i == 0 else "diag-rc-secondary"
         first_step = cluster["first_step"]
         onclick = _diag_jump_onclick(first_step)

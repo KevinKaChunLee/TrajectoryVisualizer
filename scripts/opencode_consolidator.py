@@ -41,7 +41,8 @@ import json
 import sqlite3
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Set, Optional, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 try:
     from scripts import _common
@@ -68,12 +69,12 @@ def get_db_path() -> Path:
 def export_session_and_collect_children(
     conn: sqlite3.Connection,
     session_id: str,
-    visited: Set[str],
+    visited: set[str],
     max_depth: int = 10,
     current_depth: int = 0,
-    main_session_info: Optional[Dict[str, Any]] = None,
-    all_messages: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    main_session_info: dict[str, Any] | None = None,
+    all_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Export a session and recursively export all child sessions.
 
     Returns:
@@ -317,10 +318,10 @@ def print_usage():
     print("\nArguments:", file=sys.stderr)
     print("  session-id    The session ID to export (e.g., ses_123abc456)", file=sys.stderr)
     print("  output-file   Optional output path. Use '-' for stdout.", file=sys.stderr)
-    print(f"                Defaults to 'export-<session-id>.json'", file=sys.stderr)
+    print("                Defaults to 'export-<session-id>.json'", file=sys.stderr)
     print("\nEnvironment variables:", file=sys.stderr)
     print("  OPENCODE_DATABASE  Path to opencode database", file=sys.stderr)
-    print(f"                     (default: ~/.local/share/opencode/opencode.db)", file=sys.stderr)
+    print("                     (default: ~/.local/share/opencode/opencode.db)", file=sys.stderr)
     print("\nExamples:", file=sys.stderr)
     print(f"  {sys.argv[0]} ses_123abc456", file=sys.stderr)
     print(f"  {sys.argv[0]} ses_123abc456 export.json", file=sys.stderr)

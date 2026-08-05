@@ -7,7 +7,6 @@ from trajviz.tool_vocab import (WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
 
 import os
 import re
-from collections import Counter
 
 # Tool-call statuses that open/continue a failure chain. Shared by
 # _step_has_error, classify_chain_steps, and cluster_errors so the chain

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOLS
+# Shared single-source helpers (C8/C9): validation-command detection lives in
+# insight/patterns.py and bash path extraction in insight/diagnostics.py (the
+# quoted + Windows-drive-aware implementation). Both modules import only
+# stdlib/tool_vocab at module level, so there is no import cycle.
+from trajviz.insight.diagnostics import _extract_bash_paths
+from trajviz.insight.patterns import _is_validation_command
 
 
 # ---------------------------------------------------------------------------
@@ -53,13 +59,6 @@ class CanonicalAction:
 # ---------------------------------------------------------------------------
 
 _READ_TOOLS = {"Read", "read"}
-from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOLS
-# Shared single-source helpers (C8/C9): validation-command detection lives in
-# insight/patterns.py and bash path extraction in insight/diagnostics.py (the
-# quoted + Windows-drive-aware implementation). Both modules import only
-# stdlib/tool_vocab at module level, so there is no import cycle.
-from trajviz.insight.diagnostics import _extract_bash_paths
-from trajviz.insight.patterns import _is_validation_command
 _SEARCH_TOOLS = {"Glob", "glob", "Grep", "grep", "find", "ToolSearch"}
 _BASH_TOOLS = {"Bash", "bash", "BashCommand"}
 _SPAWN_TOOLS = {"Agent", "agent"}
@@ -457,10 +456,7 @@ def assign_effect_labels(
             else:
                 a.effect_label = "unknown"
 
-        elif a.action_type == "SEARCH":
-            a.effect_label = "unknown"
-
-        elif a.action_type == "AGENT_SPAWN":
+        elif a.action_type == "SEARCH" or a.action_type == "AGENT_SPAWN":
             a.effect_label = "unknown"
 
 
@@ -517,7 +513,7 @@ def _targets_match(a: str, b: str) -> bool:
     pa = na.split("/")
     pb = nb.split("/")
     common = 0
-    for sa, sb in zip(reversed(pa), reversed(pb)):
+    for sa, sb in zip(reversed(pa), reversed(pb), strict=False):
         if sa == sb:
             common += 1
         else:

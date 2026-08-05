@@ -36,9 +36,10 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
+from collections.abc import Iterable, Sequence
 
 try:
     from scripts import _common
@@ -278,7 +279,8 @@ def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _row_value(row: sqlite3.Row, column: str, default: Any = None) -> Any:
-    return row[column] if column in row.keys() else default
+    # sqlite3.Row has no __contains__ and iterates VALUES, so `.keys()` is required.
+    return row[column] if column in row.keys() else default  # noqa: SIM118
 
 
 def _validate_database_schema(connection: sqlite3.Connection) -> None:
@@ -364,7 +366,8 @@ def _optional_rows(
         f'SELECT * FROM "{table}" WHERE "{filter_column}" = ?',
         (filter_value,),
     ).fetchall()
-    return [{key: row[key] for key in row.keys()} for row in rows]
+    # sqlite3.Row iteration yields values, not keys — `.keys()` is required.
+    return [{key: row[key] for key in row.keys()} for row in rows]  # noqa: SIM118
 
 
 def _message_extra_map(
@@ -679,7 +682,7 @@ def consolidate_database_session(
                 "source_format": "codearts_opencode_sqlite",
                 "source_database": db_path.name,
                 "root_session_id": session_id,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now(UTC).isoformat(),
                 "database_mode": "read_only",
                 "include_children": include_children,
                 "max_depth": max_depth,
