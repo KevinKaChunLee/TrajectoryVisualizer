@@ -264,13 +264,16 @@ def _compute_anomalies(metrics: dict, message_rows: list[dict]) -> list[dict]:
     return anomalies[:5]
 
 
+_JS_GOTO_WORKFLOW = ("var tabs=document.querySelectorAll('button[role=tab]');"
+    "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}")
+
+
 def _build_card_jump_onclick(idx) -> str:
     """Return a JS onclick string that switches to the Workflow tab,
     scrolls step card *idx* into view, and clicks it."""
     return (
         f"(function(){{"
-        f"var tabs=document.querySelectorAll('.tab-nav button');"
-        f"if(tabs.length>1)tabs[1].click();"
+        f"{_JS_GOTO_WORKFLOW}"
         f"setTimeout(function(){{"
         f"var c=document.getElementById('wf-card-{idx}');"
         f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
@@ -601,9 +604,10 @@ def _build_diagnostics_outputs(
     chain_metrics = compute_failure_chain_metrics(
         chains, sum(1 for s in steps if s.get("role") == "assistant"))
 
-    # Root-cause attribution. The findings panel is suppressed for OpenCode
-    # because its tool-error reporting is noisy (every non-zero bash exit code
-    # surfaces as a "failure") and the cluster summaries become misleading.
+    # Root-cause attribution. The findings panel is suppressed for OpenCode,
+    # CodeArts, and Codex because their tool-error reporting is noisy (e.g.
+    # OpenCode surfaces every non-zero bash exit code as a "failure") and the
+    # cluster summaries become misleading.
     # Counts are still computed so the summary line stays accurate.
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
@@ -744,7 +748,8 @@ def build_label_ui_payload(file_path: str) -> dict:
         "<span style='background:#059669;color:white;"
         "padding:4px 12px;border-radius:12px;font-size:13px;'>"
         f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
-        "<a href='#' onclick=\"var t=document.querySelectorAll('.tab-nav button');if(t.length)t[0].click();"
+        "<a href='#' onclick=\"var t=document.querySelectorAll('button[role=tab]');"
+        "for(var i=0;i<t.length;i++){if(t[i].textContent.trim()==='Overview'){t[i].click();break;}}"
         "var r=document.querySelector(&quot;.overview-section-radio input[value='Labels']&quot;);"
         "if(r){r.click();r.scrollIntoView({behavior:'smooth',block:'center'});}"
         "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
@@ -1026,10 +1031,13 @@ def build_ui() -> gr.Blocks:
                             scale=4,
                         )
                     with gr.Row(equal_height=False):
-                        cmp_is_baseline = gr.Checkbox(
-                            label="Reference trajectory is the baseline",
-                            info="This trajectory is what we compared to, i.e., the baseline.",
-                            value=True, scale=4,
+                        # Roles are fixed in the pipeline: the upload here is the
+                        # reference/baseline, the Overview trajectory is compared.
+                        # (Replaced a Checkbox that was wired to nothing.)
+                        gr.Markdown(
+                            "_The uploaded trajectory is treated as the "
+                            "**reference/baseline**; the trajectory loaded on the "
+                            "Overview tab is the **compared** one._",
                         )
                         cmp_run_btn = gr.Button(
                             "Run Comparison", variant="primary",
@@ -1360,8 +1368,8 @@ def build_ui() -> gr.Blocks:
                             /* ===== Chart Interactivity Bridge ===== */
                             /* Navigate to a step in the workflow tab */
                             window.__navigateToStep = function(stepIdx) {
-                                var tabs = document.querySelectorAll('.tab-nav button');
-                                if (tabs.length > 1) tabs[1].click();
+                                var tabs = document.querySelectorAll('button[role=tab]');
+                                for (var ti = 0; ti < tabs.length; ti++) { if (tabs[ti].textContent.trim() === 'Workflow') { tabs[ti].click(); break; } }
                                 setTimeout(function() {
                                     var card = document.getElementById('wf-card-' + stepIdx);
                                     if (card) {

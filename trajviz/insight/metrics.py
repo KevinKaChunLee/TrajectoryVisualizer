@@ -498,8 +498,7 @@ def compute_diagnostic_metrics(
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
 
     # Edit precision: successful edits / total edit attempts
-    edit_tools = {"Edit", "edit", "Write", "write", "MultiEdit", "multiedit",
-                  "str_replace_editor", "create_file"}
+    from trajviz.tool_vocab import WRITE_TOOL_NAMES as edit_tools
     edit_total = 0
     edit_success = 0
     for s in steps:

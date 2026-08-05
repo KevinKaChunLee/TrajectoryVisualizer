@@ -53,7 +53,7 @@ class CanonicalAction:
 # ---------------------------------------------------------------------------
 
 _READ_TOOLS = {"Read", "read"}
-_WRITE_TOOLS = {"Edit", "edit", "Write", "write", "NotebookEdit", "patch"}
+from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOLS
 _SEARCH_TOOLS = {"Glob", "glob", "Grep", "grep", "find", "ToolSearch"}
 _BASH_TOOLS = {"Bash", "bash", "BashCommand"}
 _SPAWN_TOOLS = {"Agent", "agent"}
@@ -192,9 +192,8 @@ def canonicalize_steps(
                     inp.get("file_path", "") or inp.get("filePath", ""))
             elif tool_name in _WRITE_TOOLS:
                 action_type = "FILE_WRITE"
-                target = _normalize_target(
-                    inp.get("file_path", "") or inp.get("filePath", "")
-                    or inp.get("notebook_path", ""))
+                from trajviz.tool_vocab import write_target_path
+                target = _normalize_target(write_target_path(inp))
             elif tool_name in _SEARCH_TOOLS:
                 action_type = "SEARCH"
                 pattern = inp.get("pattern", "")

@@ -25,10 +25,8 @@ _READ_TOOL_NAMES = {"Read", "read", "WebFetch"}
 _SEARCH_TOOL_NAMES = {
     "Bash", "bash", "Grep", "Glob", "grep", "glob", "find", "ToolSearch", "WebSearch",
 }
-_WRITE_TOOL_NAMES = {
-    "Edit", "edit", "Write", "write", "NotebookEdit", "patch", "MultiEdit",
-    "multiedit", "str_replace_editor", "create_file",
-}
+# Single source of truth for write-tool names: trajviz.tool_vocab.
+from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES  # noqa: E402
 _VALIDATION_COMMAND_PATTERNS = (
     "pytest", "python -m pytest", "unittest", "tox", "nox", "go test",
     "cargo test", "npm test", "pnpm test", "yarn test", "jest", "vitest",

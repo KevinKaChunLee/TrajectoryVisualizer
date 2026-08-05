@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from trajviz.tool_vocab import (WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
+                                write_target_path as _write_target_path)
+
 import os
 import re
 from collections import Counter
@@ -146,11 +149,11 @@ def identify_target_files(steps: list[dict]) -> set[str]:
         for tc in step.get("tool_calls", []):
             tool_name = tc.get("tool_name", "")
             status = tc.get("status", "")
-            if tool_name in ("Edit", "edit", "Write", "write") and status not in ("error", "failed", "failure"):
+            if tool_name in _WRITE_TOOL_SET and status not in ("error", "failed", "failure"):
                 inp = tc.get("input", {})
                 if isinstance(inp, dict):
                     # OpenCode uses ``filePath``; Claude Code uses ``file_path``.
-                    path = inp.get("file_path") or inp.get("filePath") or ""
+                    path = _write_target_path(inp)
                     if path:
                         # Match extract_file_interactions, which normalizes
                         # backslashes; _paths_match/normpath won't on POSIX.

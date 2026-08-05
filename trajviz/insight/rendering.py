@@ -126,8 +126,7 @@ def _render_one_agent_card(a: dict, agent_hex: str) -> str:
         spawn_html = (
             f"<div class='agent-card-spawn'>"
             f"<span class='insight-step-link' onclick=\""
-            f"(function(){{var tabs=document.querySelectorAll('.tab-nav button');"
-            f"if(tabs.length>1)tabs[1].click();"
+            f"(function(){{{_JS_GOTO_WORKFLOW}"
             f"setTimeout(function(){{var c=document.getElementById('wf-card-{sidx}');"
             f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
             f"}},200);}})()\">Spawned at step #{sidx}</span>"
@@ -774,8 +773,7 @@ def format_step_detail(step: dict) -> str:
     # Breadcrumb
     breadcrumb = (
         f"<div class='dp-breadcrumb'>"
-        f"<span onclick=\"var tabs=document.querySelectorAll('.tab-nav button');"
-        f"if(tabs.length>1)tabs[1].click();\">Workflow</span>"
+        f"<span onclick=\"{_JS_GOTO_WORKFLOW}\">Workflow</span>"
         f" › Step {idx}"
         f"</div>"
     )
@@ -837,8 +835,7 @@ def _diag_jump_onclick(idx: int) -> str:
     """JS onclick to switch to Workflow tab and scroll to a step card."""
     return (
         f"(function(){{"
-        f"var tabs=document.querySelectorAll('.tab-nav button');"
-        f"if(tabs.length>1)tabs[1].click();"
+        f"{_JS_GOTO_WORKFLOW}"
         f"setTimeout(function(){{"
         f"var c=document.getElementById('wf-card-{idx}');"
         f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
@@ -938,6 +935,12 @@ def build_root_cause_html(clusters: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 # Score visualization renderers
 # ---------------------------------------------------------------------------
+
+# Label-based Workflow-tab jump: robust to tab insertions/reordering
+# (positional tabs[i] indexing broke when the Attribution tab shifted the order).
+_JS_GOTO_WORKFLOW = ("var tabs=document.querySelectorAll('button[role=tab]');"
+    "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}")
+
 
 _VERDICT_COLORS = {
     "good": "#059669",
