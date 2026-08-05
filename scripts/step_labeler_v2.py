@@ -21,18 +21,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
+import json  # noqa: F401  (re-exported: tests patch step_labeler_v2.json.dump)
 import os
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 try:
+    from scripts import _common
     from scripts import step_labeler as v1
 except ImportError:  # Direct execution from scripts/.
+    import _common  # type: ignore[no-redef]
     import step_labeler as v1  # type: ignore[no-redef]
 
 
@@ -47,47 +48,17 @@ class OutputSafetyError(ValueError):
 def _ensure_output_is_not_input(
     trajectory_path: str | Path, output_path: str | Path
 ) -> None:
-    source = Path(trajectory_path).expanduser().resolve()
-    destination = Path(output_path).expanduser().resolve()
-    same_file = source == destination
-    if not same_file and source.exists() and destination.exists():
-        try:
-            same_file = os.path.samefile(source, destination)
-        except OSError:
-            same_file = False
-    if same_file:
-        raise OutputSafetyError(
-            f"Output path would overwrite input trajectory: {source}"
-        )
+    _common.ensure_output_does_not_overwrite(
+        output_path,
+        [trajectory_path],
+        exc=OutputSafetyError,
+        message="Output path would overwrite input trajectory: {source}",
+    )
 
 
 def _write_json_atomic(output_path: str | Path, data: dict[str, Any]) -> None:
     """Replace a label sidecar only after its complete JSON is durable."""
-    path = Path(output_path).expanduser().resolve()
-    temporary_name: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            newline="\n",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temporary_name = handle.name
-            json.dump(data, handle, indent=2, ensure_ascii=False)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-        temporary_name = None
-    finally:
-        if temporary_name is not None:
-            try:
-                Path(temporary_name).unlink()
-            except OSError:
-                pass
+    _common.write_json_atomic(output_path, data)
 
 
 def load_all_steps(trajectory_path: str) -> list[dict]:
@@ -174,8 +145,14 @@ def label_trajectory(
     taxonomy_path: str | None = None,
     user_phase: str = USER_DEFAULT_LABEL["phase"],
     user_action: str = USER_DEFAULT_LABEL["action"],
+    assistant_only: bool = False,
 ) -> None:
-    """Label assistants and emit labels for every parsed source index."""
+    """Label assistants and emit labels for every parsed source index.
+
+    With ``assistant_only=True`` (the v1 CLI's mode) only assistant records
+    are written to the sidecar; user/other steps still receive deterministic
+    labels internally but are filtered from the output.
+    """
     _ensure_output_is_not_input(trajectory_path, output_path)
     if taxonomy_path is None:
         taxonomy_path = str(Path(__file__).resolve().parent / "TAXONOMY_REFERENCE.md")
@@ -302,6 +279,13 @@ def label_trajectory(
     if len(labeled_steps) != len(all_steps):
         raise RuntimeError("Internal error: not every parsed index received a label")
 
+    if assistant_only:
+        labeled_steps = [s for s in labeled_steps if s.get("role") == "assistant"]
+        if len(labeled_steps) != assistant_count:
+            raise RuntimeError(
+                "Internal error: assistant-only output lost assistant records"
+            )
+
     output = {
         "schema_version": "trajectory_labels.v2",
         "trajectory_file": os.path.abspath(trajectory_path),
@@ -333,6 +317,8 @@ def label_trajectory(
 
 
 def main() -> None:
+    # Resolve .env config at CLI entry, not at module import (see step_labeler).
+    v1.load_env_files()
     parser = argparse.ArgumentParser(
         description=(
             "Label assistant trajectory steps with an LLM and emit a label "

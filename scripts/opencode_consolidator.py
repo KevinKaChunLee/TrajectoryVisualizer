@@ -43,6 +43,11 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any, Set, Optional, Iterable
 
+try:
+    from scripts import _common
+except ImportError:  # Direct execution from scripts/.
+    import _common  # type: ignore[no-redef]
+
 
 def get_db_path() -> Path:
     """Get the opencode database path."""
@@ -83,7 +88,9 @@ def export_session_and_collect_children(
         return {}
 
     if session_id in visited:
-        print(f"Warning: Cycle detected at session {session_id}", file=sys.stderr)
+        # With a shared visited set this covers both cycles and diamonds
+        # (a session reachable through two different parents).
+        print(f"Warning: Session {session_id} already exported, skipping", file=sys.stderr)
         return {}
 
     visited.add(session_id)
@@ -147,10 +154,17 @@ def export_session_and_collect_children(
             msg_info = json.loads(msg_data) if isinstance(msg_data, str) else msg_data
             msg_info["id"] = msg_id
             msg_info["sessionID"] = msg_session_id
-            msg_info["time"] = {
-                "created": msg_time_created,
-                "updated": msg_time_updated,
-            }
+            # Fill-only merge: never replace timing persisted inside the
+            # message payload (especially time.completed, the model's real
+            # finish time) with DB row write timestamps.  Row times are used
+            # only when the payload carries no timing of its own.
+            raw_time = msg_info.get("time")
+            if not isinstance(raw_time, dict):
+                raw_time = {}
+                msg_info["time"] = raw_time
+            raw_time.setdefault("created", msg_time_created)
+            if "completed" not in raw_time:
+                raw_time.setdefault("updated", msg_time_updated)
 
             # Get parts for this message
             parts = []
@@ -282,7 +296,7 @@ def export_session_and_collect_children(
             export_session_and_collect_children(
                 conn,
                 child_id,
-                visited.copy(),  # Use copy to allow separate paths
+                visited,  # Shared set: each session is exported exactly once
                 max_depth,
                 current_depth + 1,
                 main_session_info,
@@ -318,22 +332,12 @@ def ensure_output_is_not_source(
     output_path: str | Path, source_paths: Iterable[str | Path]
 ) -> None:
     """Refuse to replace the live database or one of its SQLite sidecars."""
-    if str(output_path) == "-":
-        return
-
-    destination = Path(output_path).expanduser().resolve()
-    for source_path in source_paths:
-        source = Path(source_path).expanduser().resolve()
-        same_file = destination == source
-        if not same_file and destination.exists() and source.exists():
-            try:
-                same_file = os.path.samefile(destination, source)
-            except OSError:
-                # The resolved-path comparison above still protects the common
-                # case when a locked database cannot be inspected further.
-                same_file = False
-        if same_file:
-            raise ValueError(f"Output path would overwrite input source: {source}")
+    _common.ensure_output_does_not_overwrite(
+        output_path,
+        source_paths,
+        exc=ValueError,
+        allow_stdout_dash=True,
+    )
 
 
 def main():
