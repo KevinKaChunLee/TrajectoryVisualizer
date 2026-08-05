@@ -67,6 +67,13 @@ if _DECAF_ROOT is not None and str(_DECAF_ROOT) not in sys.path:
 # at import). Default to a sibling TraceProbe; a later configure() can re-point.
 os.environ.setdefault(
     "AWE_ARGUS_ROOT", str(Path(__file__).resolve().parents[3] / "TraceProbe"))
+# DECAF's judge/arbiter verdict caches are partitioned by model slug. The
+# checked-in caches were produced with z-ai/glm-5.2, so we must read them back
+# under THAT namespace — the awe default (anthropic/claude-sonnet-4.5) points at
+# an empty namespace, which silently drops the arbiter (refuted faults would then
+# show as blamed) and the two judge capabilities. Override AWE_JUDGE_MODEL to
+# change this; it only selects which cache namespace is read (no key needed).
+os.environ.setdefault("AWE_JUDGE_MODEL", "z-ai/glm-5.2")
 
 DECAF_AVAILABLE = False
 _IMPORT_ERROR: str | None = None
@@ -96,11 +103,16 @@ def configure(argus_root: str | os.PathLike) -> None:
     _cfg.PATCH_DIR = _cfg.DATA / "patch"
     _cfg.TRAJECTORY_DIR = _cfg.DATA / "trajectory"
     _cfg.LABELS_DIR = _cfg.DATA / "labels"
-    try:
-        from awe.gold import build_gold_reference
-        build_gold_reference.cache_clear()
-    except Exception:
-        pass
+    # Clear DECAF's per-instance memoized caches so a corpus switch cannot serve a
+    # previous root's gold/outcome for a same-named instance_id (both are
+    # @lru_cache keyed by id, not by root).
+    for mod, fn in (("awe.gold", "build_gold_reference"),
+                    ("awe.outcomes", "resolved")):
+        try:
+            import importlib
+            getattr(importlib.import_module(mod), fn).cache_clear()
+        except Exception:
+            pass
 
 
 # --------------------------------------------------------------------------- #
@@ -109,10 +121,23 @@ def configure(argus_root: str | os.PathLike) -> None:
 @dataclass
 class CapabilityScore:
     capability: str
-    blamed: bool
+    assessed: bool                # was this capability in scope for this case?
+    blamed: bool                  # NON-ZERO blame — arbiter-refuted faults are not blamed
     weight: float                 # summed blame weight for this capability (0..1)
     tier: str | None              # deductive | associational | model_inferred
     top_error: str | None         # dominant error_type, if blamed
+
+
+# TrajViz format -> DECAF adapter (reused so no re-normalization / drift). CodeArts
+# has no DECAF adapter yet -> those trajectories can't be diagnosed (degrade).
+_FMT_ADAPTER = {
+    "ccsession": ("adapt_claude_code", "json"),
+    "opencode": ("adapt_opencode", "json"),
+    "codex": ("adapt_codex", "lines"),
+}
+# Always assessed on a failed case (the deductive core); the rest are conditional
+# on an opportunity in the trajectory.
+_ALWAYS_ASSESSED = frozenset({"code_localization", "code_editing"})
 
 
 @dataclass
@@ -134,14 +159,44 @@ class AttributionResult:
 # --------------------------------------------------------------------------- #
 # Diagnosis
 # --------------------------------------------------------------------------- #
-def diagnose(*, agent: str | None, instance_id: str | None,
-             argus_root: str | os.PathLike | None = None) -> AttributionResult:
-    """Diagnose one (agent, instance) failure and return an AttributionResult.
+def _adapt_displayed(source_path, fmt, agent, instance_id):
+    """Adapt the DISPLAYED trajectory file into a DECAF NormalizedTrajectory via
+    DECAF's own adapters, so diagnosis reflects what the UI shows rather than the
+    canonical corpus copy. Returns (nt, reason): nt=None with reason=None means
+    'no readable source — fall back to the corpus copy'; a non-None reason is a
+    real adapt failure worth surfacing."""
+    spec = _FMT_ADAPTER.get(fmt or "")
+    if spec is None:
+        return None, (f"format '{fmt}' has no DECAF adapter "
+                      f"(CodeArts is not yet diagnosable)" if fmt else None)
+    if not source_path or not Path(source_path).is_file():
+        return None, None
+    fn_name, kind = spec
+    import importlib
+    import json as _json
+    adapt = getattr(importlib.import_module("awe.adapters"), fn_name)
+    p = Path(source_path)
+    try:
+        raw = (p.read_text(errors="replace").splitlines() if kind == "lines"
+               else _json.loads(p.read_text(errors="replace")))
+        return adapt(raw, agent, instance_id), None
+    except Exception as exc:
+        return None, f"could not adapt the displayed trajectory: {type(exc).__name__}: {exc}"
 
-    Corpus mode only in this phase: requires the on-disk reference at
-    ``<argus_root>/data/requirements/<instance_id>.json``. Returns
-    ``available=False`` (never raises, never fabricates) when the inputs the
-    gold-grounded method needs are absent.
+
+def diagnose(*, agent: str | None, instance_id: str | None,
+             source_path: str | os.PathLike | None = None, fmt: str | None = None,
+             argus_root: str | os.PathLike | None = None) -> AttributionResult:
+    """Diagnose the failure of the *displayed* trajectory and return an
+    AttributionResult.
+
+    Requires the on-disk gold reference at
+    ``<argus_root>/data/requirements/<instance_id>.json``. When ``source_path`` +
+    ``fmt`` are given, the displayed trajectory file is adapted and diagnosed
+    directly (so we never silently diagnose the canonical corpus copy); otherwise
+    the on-disk corpus trajectory is used as a fallback. Returns
+    ``available=False`` (never raises, never fabricates) when the gold-grounded
+    inputs are absent.
     """
     if not DECAF_AVAILABLE:
         return AttributionResult(False, reason=f"DECAF unavailable ({_IMPORT_ERROR})")
@@ -160,8 +215,6 @@ def diagnose(*, agent: str | None, instance_id: str | None,
             reason=f"no gold reference (data/requirements/{instance_id}.json) under "
                    f"{config.ARGUS_ROOT} — attribution needs the reference patch + "
                    f"test outcome; showing trajectory-only signals instead")
-    # An uploaded file lands at a temp path, so the corpus agent dir isn't always
-    # recoverable — require a valid agent (blame reads patch/<agent>/ + eval_<agent>).
     if agent not in config.AGENTS:
         return AttributionResult(
             False, mode="corpus", agent=agent, instance_id=instance_id,
@@ -169,9 +222,19 @@ def diagnose(*, agent: str | None, instance_id: str | None,
                    f"(got '{agent}'). Set the agent override to one of: "
                    f"{', '.join(config.AGENTS)}")
 
+    # Diagnose what's displayed: adapt the loaded file and pass it as an override.
+    nt, adapt_reason = _adapt_displayed(source_path, fmt, agent, instance_id)
+    if nt is None and adapt_reason and not config.patch_path(agent, instance_id).is_file():
+        # a genuine off-corpus upload whose trajectory couldn't be adapted and has
+        # no corpus fallback -> surface the reason rather than guess.
+        return AttributionResult(False, mode="gold_free", agent=agent,
+                                 instance_id=instance_id, reason=adapt_reason)
+
     from awe.dossier import case_record
+    from awe.detect import detect
     try:
-        rec = case_record(agent, instance_id)
+        rec = case_record(agent, instance_id, trajectory_override=nt)
+        d = detect(instance_id, agent, trajectory_override=nt)  # for opportunities
     except Exception as exc:  # never surface a raw traceback to the UI
         return AttributionResult(
             False, mode="corpus", agent=agent, instance_id=instance_id,
@@ -181,35 +244,42 @@ def diagnose(*, agent: str | None, instance_id: str | None,
             False, mode="corpus", agent=agent, instance_id=instance_id,
             reason="this run resolved (or its outcome is unknown); DECAF attributes "
                    "failures only")
-    return _shape(rec)
+    return _shape(rec, d.get("opportunities", {}),
+                  traj_source=("displayed" if nt is not None else "corpus"))
 
 
-def _shape(rec: dict) -> AttributionResult:
-    """Turn a DECAF case_record dict into an AttributionResult + scorecard."""
+def _shape(rec: dict, opportunities: dict,
+           traj_source: str = "corpus") -> AttributionResult:
+    """Turn a DECAF case_record dict + the detection's opportunities into an
+    AttributionResult. Blame is NON-ZERO only (arbiter-refuted faults carry weight
+    0 and are not 'blamed'); a capability with no opportunity is 'not assessed'
+    (n/a), distinct from 'assessed clean'."""
     faults = rec.get("faults", [])
     primary = next(({"capability": f["capability"], "error_type": f["error_type"]}
                     for f in faults if f.get("is_primary")), None)
 
-    # per-capability rollup for the scorecard
     agg: dict[str, dict] = {}
     for f in faults:
         cap = f["capability"]
+        w = float(f.get("blame_weight") or 0.0)
         a = agg.setdefault(cap, {"weight": 0.0, "tier": None, "errors": {}})
-        a["weight"] += float(f.get("blame_weight") or 0.0)
-        a["tier"] = (f.get("evidence_chain") or {}).get("strength") or a["tier"]
-        a["errors"][f["error_type"]] = a["errors"].get(f["error_type"], 0.0) + \
-            float(f.get("blame_weight") or 0.0)
+        a["weight"] += w
+        if w > 0:   # tier / top_error reflect BLAMED faults only (skip refuted)
+            a["tier"] = (f.get("evidence_chain") or {}).get("strength") or a["tier"]
+            a["errors"][f["error_type"]] = a["errors"].get(f["error_type"], 0.0) + w
+
     scorecard = []
     for cap in CAPABILITIES:
         a = agg.get(cap)
-        if a:
-            top = max(a["errors"], key=a["errors"].get) if a["errors"] else None
-            scorecard.append(CapabilityScore(cap, True, round(a["weight"], 3),
-                                             a["tier"], top))
-        else:
-            scorecard.append(CapabilityScore(cap, False, 0.0, None, None))
+        weight = round(a["weight"], 3) if a else 0.0
+        blamed = weight > 0
+        assessed = blamed or cap in _ALWAYS_ASSESSED or bool(opportunities.get(cap))
+        top = (max(a["errors"], key=a["errors"].get) if (a and a["errors"]) else None)
+        scorecard.append(CapabilityScore(cap, assessed, blamed, weight,
+                                         (a["tier"] if a else None), top))
 
-    used_judge = any(f["capability"] in _JUDGE_CAPS for f in faults) or any(
+    used_judge = any(f["capability"] in _JUDGE_CAPS and float(f.get("blame_weight") or 0) > 0
+                     for f in faults) or any(
         (f.get("evidence_chain") or {}).get("strength") == "model_inferred"
         for f in faults)
 

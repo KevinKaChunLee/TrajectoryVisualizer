@@ -1057,8 +1057,12 @@ def _attr_scorecard_html(scorecard: list[dict], primary: dict | None) -> str:
             badge = tier_label
             score = f"{s.get('weight', 0.0):.2f}"
             metric = (s.get("top_error") or "").replace("_", " ") or "blamed"
+        elif s.get("assessed"):
+            color, badge, score, metric = "#059669", "clean", "—", "no blame"
         else:
-            color, badge, score, metric = "#9ca3af", "clean", "—", "no blame"
+            # NOT assessed (e.g. judge capabilities with no cached verdict) — this
+            # is NOT the same as "clean"; do not imply the capability was checked.
+            color, badge, score, metric = "#9ca3af", "n/a", "—", "not assessed"
         star = " ★" if cap == prim_cap else ""
         cards.append(
             f"<div class='score-dim-card'>"

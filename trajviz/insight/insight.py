@@ -1800,9 +1800,10 @@ def build_ui() -> gr.Blocks:
 
         # -- Attribution callback (DECAF) --
         # Self-contained (reads state_raw), so it never touches the Overview load
-        # tuple. Derives (agent, instance_id) from the loaded trajectory's source
-        # path for corpus files; the override fields cover uploaded temp paths.
-        def on_diagnose(overview_raw, agent_override, inst_override):
+        # tuple. Diagnoses the DISPLAYED trajectory (via source_path + fmt), and
+        # derives (agent, instance_id) from the source path for corpus files; the
+        # override fields cover uploaded temp paths.
+        def on_diagnose(overview_raw, fmt, agent_override, inst_override):
             from dataclasses import asdict
             from .rendering import build_attribution_html
             from . import attribution as _attr
@@ -1823,7 +1824,8 @@ def build_ui() -> gr.Blocks:
                 if not agent:
                     agent = os.path.basename(os.path.dirname(src))
 
-            result = _attr.diagnose(agent=agent or None, instance_id=inst or None)
+            result = _attr.diagnose(agent=agent or None, instance_id=inst or None,
+                                    source_path=src or None, fmt=fmt)
             html_out = build_attribution_html(asdict(result))
             status = (
                 "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
@@ -1833,19 +1835,25 @@ def build_ui() -> gr.Blocks:
                 "No gold-grounded attribution &mdash; see the note below.</div>")
             return html_out, status
 
+        # Manual button: honors the override fields for the current file.
         attr_run_btn.click(
             fn=on_diagnose,
-            inputs=[state_raw, attr_agent_override, attr_inst_override],
+            inputs=[state_raw, format_selector, attr_agent_override, attr_inst_override],
             outputs=[attr_result_html, attr_status_html],
         )
-        # Auto-populate the Attribution tab after a trajectory loads (corpus files
-        # attribute immediately; off-corpus uploads show the degradation notice).
-        # Chained via .then() so state_raw is already refreshed by do_load.
+
+        # Auto-populate on load, and IGNORE + clear the override fields so a
+        # previous case's identity can never attribute a newly loaded one.
+        def on_diagnose_autoload(overview_raw, fmt):
+            html_out, status = on_diagnose(overview_raw, fmt, "", "")
+            return html_out, status, "", ""   # last two clear the override fields
+
         for _ev in (_load_ev, _upload_ev):
             _ev.then(
-                fn=on_diagnose,
-                inputs=[state_raw, attr_agent_override, attr_inst_override],
-                outputs=[attr_result_html, attr_status_html],
+                fn=on_diagnose_autoload,
+                inputs=[state_raw, format_selector],
+                outputs=[attr_result_html, attr_status_html,
+                         attr_agent_override, attr_inst_override],
             )
 
         # -- Workflow filter callback --

@@ -49,13 +49,36 @@ def _faults_record():
 requires_corpus = pytest.mark.skipif(
     not _corpus_present(), reason="TraceProbe corpus not present")
 
+# An arbiter-refuted case: catches the model-namespace bug (#4) and the
+# refuted-not-blamed semantics (#3) that a deductive-only case cannot.
+ARB_AGENT, ARB_INST = "claude_code", "django__django-11477"
+
+
+def _traj_path(agent, inst):
+    from awe import config
+    return str(config.TRAJECTORY_DIR / agent / f"{inst}.json")
+
+
+def _faults_record_for(agent, inst):
+    root = attribution._DECAF_ROOT
+    fj = root / "data" / "dossier" / "faults.json"
+    if not fj.is_file():
+        return None
+    for r in json.loads(fj.read_text()):
+        if r.get("agent") == agent and r.get("instance_id") == inst:
+            return r
+    return None
+
 
 @requires_corpus
 def test_corpus_diagnose_matches_committed_faults_json():
     ref = _faults_record()
     if ref is None:
         pytest.skip("faults.json golden record not present")
-    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST)
+    # exercise the DISPLAYED-trajectory path (source_path + fmt), not the disk fallback
+    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
+                               source_path=_traj_path(GOLD_AGENT, GOLD_INST),
+                               fmt="ccsession")
 
     assert res.available is True
     assert res.mode == "corpus"
@@ -112,6 +135,41 @@ def test_adapter_parity_claude_code():
                 a.test_run, a.tool_error) == \
                (b.actor, b.type, b.canonical_action, tuple(b.files or []),
                 b.test_run, b.tool_error)
+
+
+@pytest.mark.skipif(not _corpus_present(), reason="TraceProbe corpus not present")
+def test_arbiter_refuted_case_matches_and_is_not_blamed():
+    """Regression for the model-namespace (#4) + refuted-not-blamed (#3) bugs.
+
+    Under the wrong judge-model namespace the arbiter is inert and this case
+    renders as a blamed primary; under the correct (glm) namespace it is
+    refuted_unattributed and NO capability is blamed."""
+    ref = _faults_record_for(ARB_AGENT, ARB_INST)
+    if ref is None:
+        pytest.skip("arbiter golden record not present")
+    res = attribution.diagnose(agent=ARB_AGENT, instance_id=ARB_INST,
+                               source_path=_traj_path(ARB_AGENT, ARB_INST),
+                               fmt="ccsession")
+    assert res.available
+    assert res.blame_status == ref["blame_status"] == "refuted_unattributed"
+    assert res.primary is None
+    # the refuted fault carries zero weight -> NO capability is 'blamed'
+    assert not any(s.blamed for s in res.scorecard)
+
+
+@pytest.mark.skipif(not _corpus_present(), reason="TraceProbe corpus not present")
+def test_unassessed_capabilities_are_na_not_clean():
+    """Judge capabilities with no cached verdict must be 'not assessed', not 'clean'
+    — and the deductive core is always assessed."""
+    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
+                               source_path=_traj_path(GOLD_AGENT, GOLD_INST),
+                               fmt="ccsession")
+    assert res.available
+    by_cap = {s.capability: s for s in res.scorecard}
+    assert by_cap["code_localization"].assessed and by_cap["code_editing"].assessed
+    # a capability is never simultaneously blamed and unassessed
+    for s in res.scorecard:
+        assert not (s.blamed and not s.assessed)
 
 
 def test_gold_free_upload_degrades_cleanly():
