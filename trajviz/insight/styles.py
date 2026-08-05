@@ -1097,6 +1097,29 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     border-top: 1px solid var(--ov-border);
 }
 
+/* DECAF attribution tab */
+.attr-banner {
+    padding: 12px 14px; margin-bottom: 12px; border-radius: 8px;
+    background: var(--ov-card); border: 1px solid var(--ov-border);
+}
+.attr-banner-head { font-size: 15px; font-weight: 600; color: var(--ov-text); }
+.attr-banner-sub { font-size: 12px; color: var(--ov-muted); margin-top: 4px; }
+.attr-link { display: flex; gap: 8px; padding: 4px 0; align-items: flex-start; }
+.attr-link-icon { color: var(--ov-muted); font-weight: 700; min-width: 14px; }
+.attr-link-body { flex: 1; color: var(--ov-text); }
+.attr-link-src {
+    display: block; font-size: 11px; color: var(--ov-muted);
+    font-family: ui-monospace, monospace; margin-top: 2px;
+}
+.attr-quote {
+    font-size: 11px; color: var(--ov-muted); border-left: 2px solid var(--ov-border);
+    padding: 2px 8px; margin: 4px 0 4px 6px; font-style: italic;
+}
+.attr-audit {
+    font-size: 11px; color: var(--ov-muted); margin-top: 6px;
+    padding-top: 6px; border-top: 1px dashed var(--ov-border);
+}
+
 .score-copy-btn {
     font-size: 11px; padding: 4px 10px; border-radius: 5px;
     border: 1px solid var(--ov-border); background: var(--ov-card);

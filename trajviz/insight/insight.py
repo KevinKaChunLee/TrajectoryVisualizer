@@ -956,6 +956,37 @@ def build_ui() -> gr.Blocks:
                         "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>Load a trajectory to detect anti-patterns.</div>"
                     )
 
+            # ===== Attribution Tab (DECAF failure attribution) =====
+            with gr.TabItem("Attribution"):
+                gr.HTML(
+                    "<div class='section-subtitle'>DECAF capability failure attribution "
+                    "&mdash; which of the seven workflow capabilities broke, with tiered "
+                    "evidence (deductive / associational / model-inferred). Gold-grounded: "
+                    "needs the reference patch + test outcome for this task.</div>"
+                )
+                _attr_placeholder = (
+                    "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
+                    "Load a trajectory in the Overview tab, then click <b>Diagnose failure</b>. "
+                    "For a corpus trajectory (…/trajectory/&lt;agent&gt;/&lt;instance&gt;.json) the agent "
+                    "and instance are auto-detected from the path; for an uploaded file, set them below."
+                    "</div>"
+                )
+                attr_status_html = gr.HTML(_attr_placeholder)
+                with gr.Row(equal_height=True):
+                    attr_run_btn = gr.Button("Diagnose failure", variant="primary",
+                                             size="sm", scale=1, min_width=140)
+                with gr.Accordion("Override agent / instance / corpus (for uploaded files)",
+                                  open=False, elem_classes=["per-message-acc"]):
+                    with gr.Row(equal_height=True):
+                        attr_agent_override = gr.Textbox(
+                            label="Agent", placeholder="auto-detected from path", scale=1)
+                        attr_inst_override = gr.Textbox(
+                            label="Instance id", placeholder="auto-detected from path", scale=2)
+                        attr_root_override = gr.Textbox(
+                            label="ARGUS corpus root",
+                            placeholder="default: sibling TraceProbe checkout", scale=2)
+                attr_result_html = gr.HTML("")
+
             # ===== Comparison Tab (Converge embedded) =====
             with gr.TabItem("Comparison"):
                 _cmp_placeholder = (
@@ -1659,13 +1690,13 @@ def build_ui() -> gr.Blocks:
             state_raw,
         ]
 
-        load_btn.click(
+        _load_ev = load_btn.click(
             fn=do_load,
             inputs=[file_upload, state_dark, format_selector],
             outputs=all_outputs,
         )
         # Auto-load when file is uploaded (no separate click needed)
-        file_upload.change(
+        _upload_ev = file_upload.change(
             fn=do_load,
             inputs=[file_upload, state_dark, format_selector],
             outputs=all_outputs,
@@ -1769,6 +1800,96 @@ def build_ui() -> gr.Blocks:
             outputs=[cmp_report_html, cmp_phase_count_chart,
                      cmp_phase_duration_chart, cmp_status_html],
         )
+
+        # -- Attribution callback (DECAF) --
+        # Self-contained (reads state_raw), so it never touches the Overview load
+        # tuple. Diagnoses the DISPLAYED trajectory (via source_path + fmt), and
+        # derives (agent, instance_id) from the source path for corpus files; the
+        # override fields cover uploaded temp paths.
+        def on_diagnose(overview_raw, fmt, agent_override, inst_override, root_override):
+            from dataclasses import asdict
+            from .rendering import build_attribution_html
+            from . import attribution as _attr
+
+            if not overview_raw:
+                return (build_attribution_html(
+                            {"available": False,
+                             "reason": "Load a trajectory in the Overview tab first."}),
+                        "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>"
+                        "No trajectory loaded.</div>")
+
+            src = overview_raw.get("_source_path", "") if isinstance(overview_raw, dict) else ""
+            src_sha = overview_raw.get("_source_sha256") if isinstance(overview_raw, dict) else None
+            agent = (agent_override or "").strip()
+            inst = (inst_override or "").strip()
+            root = (root_override or "").strip()
+            if src:
+                if not inst:
+                    inst = os.path.splitext(os.path.basename(src))[0]
+                if not agent:
+                    # Only a real corpus layout names the agent dir; a Gradio
+                    # upload's parent is a cache hash and won't be in AGENTS —
+                    # diagnose() validates and asks for the override.
+                    agent = os.path.basename(os.path.dirname(src))
+
+            result = _attr.diagnose(agent=agent or None, instance_id=inst or None,
+                                    source_path=src or None, fmt=fmt,
+                                    expected_sha=src_sha,
+                                    argus_root=root or None)
+            html_out = build_attribution_html(asdict(result))
+            import html as _html
+            ident = _html.escape(f"{result.agent}/{result.instance_id}")
+            status = (
+                "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
+                f"Diagnosis complete &mdash; {ident}.</div>"
+                if result.available else
+                "<div style='color:var(--ov-muted);padding:0.5em;font-size:13px;'>"
+                "No gold-grounded attribution &mdash; see the note below.</div>")
+            return html_out, status
+
+        # Manual button: honors the override fields for the current file.
+        # concurrency_id serializes this with the autoload below (same queue), so
+        # a manual diagnosis and an autoload can never interleave/overwrite.
+        attr_run_btn.click(
+            fn=on_diagnose,
+            inputs=[state_raw, format_selector, attr_agent_override,
+                    attr_inst_override, attr_root_override],
+            outputs=[attr_result_html, attr_status_html],
+            concurrency_id="attribution",
+        )
+
+        # Clear stale attribution IMMEDIATELY when a new load starts (fast
+        # handler in parallel with do_load), so the previous run's diagnosis is
+        # never shown against a newly loaded trajectory even transiently.
+        def _clear_attribution():
+            return ("<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                    "Diagnosing the loaded trajectory&hellip;</div>",
+                    "")
+        # Same concurrency queue as the diagnose callbacks: total ordering means
+        # an in-flight (old) diagnosis always completes BEFORE this clear runs,
+        # so a stale result can never overwrite the new-load placeholder.
+        load_btn.click(fn=_clear_attribution,
+                       outputs=[attr_result_html, attr_status_html],
+                       concurrency_id="attribution")
+        file_upload.change(fn=_clear_attribution,
+                           outputs=[attr_result_html, attr_status_html],
+                           concurrency_id="attribution")
+
+        # Auto-populate on load, and IGNORE + clear the agent/instance override
+        # fields so a previous case's identity can never attribute a newly loaded
+        # one. The corpus root is sticky (it selects an environment, not a case).
+        def on_diagnose_autoload(overview_raw, fmt, root_override):
+            html_out, status = on_diagnose(overview_raw, fmt, "", "", root_override)
+            return html_out, status, "", ""   # last two clear the override fields
+
+        for _ev in (_load_ev, _upload_ev):
+            _ev.then(
+                fn=on_diagnose_autoload,
+                inputs=[state_raw, format_selector, attr_root_override],
+                outputs=[attr_result_html, attr_status_html,
+                         attr_agent_override, attr_inst_override],
+                concurrency_id="attribution",
+            )
 
         # -- Workflow filter callback --
         def do_filter_workflow(steps, filter_csv, keyword, current_toc):

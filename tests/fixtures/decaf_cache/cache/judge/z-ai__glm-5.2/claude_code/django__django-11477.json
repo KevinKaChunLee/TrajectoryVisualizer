@@ -1,0 +1,58 @@
+{
+  "instance_id": "django__django-11477",
+  "agent": "claude_code",
+  "model": "z-ai/glm-5.2",
+  "verdict": {
+    "requirement_understanding": {
+      "error_type": "none",
+      "confidence": "high",
+      "evidence_steps": [
+        22,
+        32,
+        59
+      ],
+      "rationale": "Agent correctly identified that optional named groups missing from a match yield None in groupdict, causing translate_url() to pass None kwargs to reverse(), producing incorrect URLs."
+    },
+    "task_planning": {
+      "error_type": "none",
+      "confidence": "high",
+      "evidence_steps": [
+        25,
+        30,
+        32,
+        35,
+        49,
+        56
+      ],
+      "rationale": "Agent traced code from translate_url to resolve to RegexPattern.match, identified root cause, applied fix in translate_url filtering None kwargs, then validated with targeted and broader tests."
+    }
+  },
+  "usage": {
+    "prompt_tokens": 1676,
+    "completion_tokens": 302,
+    "total_tokens": 1978,
+    "cost": 0.0020046,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0020046,
+      "upstream_inference_prompt_cost": 0.00127376,
+      "upstream_inference_completions_cost": 0.00073084
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 194,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "finish_reason": "stop",
+  "prompt_version": "6511d1a70c39",
+  "evidence_schema": 11,
+  "trajectory_sha256": "60d11fc23b231fe93d5c8ac6ba7cde340819c5007524519dd1f7971ccde0f61e",
+  "requirements_sha256": "68188191ed96472c43e458f096276fb72297709bf580b6976b8206270ce0570c"
+}

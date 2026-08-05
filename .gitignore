@@ -56,5 +56,10 @@ gradio_cached_examples/
 
 # Trajectory data (keep small samples, ignore large dumps)
 data/
+# ...but DO track the small, hermetic DECAF-attribution test fixture, whose
+# corpus lives under a required `data/` subdir (AWE_ARGUS_ROOT layout).
+!tests/fixtures/corpus/data/
+!tests/fixtures/corpus/data/**
 *.trajectory.json.gz
 example_data
+.hypothesis/

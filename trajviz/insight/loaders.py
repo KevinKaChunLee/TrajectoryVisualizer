@@ -1464,47 +1464,56 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
 
     # Handle Codex JSONL format
     if file_path.endswith(".jsonl"):
-        events = []
+        # ONE read: the sha256 is computed from exactly the bytes that are
+        # parsed/displayed (a second read could hash different bytes if the
+        # file is replaced mid-load — the TOCTOU the identity gate exists for).
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                pending: tuple[int, str] | None = None
-                for line_number, raw_line in enumerate(f, start=1):
-                    if not raw_line.strip():
-                        continue
-                    # Delay one non-empty line so only the true final line can
-                    # receive the append-in-progress tolerance below.
-                    if pending is None:
-                        pending = (line_number, raw_line)
-                        continue
-                    pending_number, pending_line = pending
-                    try:
-                        events.append(json.loads(pending_line))
-                    except json.JSONDecodeError as exc:
-                        return {"_error": f"Invalid JSONL at line {pending_number}: {exc.msg}"}
-                    pending = (line_number, raw_line)
-
-                if pending is not None:
-                    pending_number, pending_line = pending
-                    try:
-                        events.append(json.loads(pending_line))
-                    except json.JSONDecodeError as exc:
-                        # Rollouts are append-only. A missing newline on the final
-                        # object is the signal that the writer may still be appending.
-                        if pending_line.endswith(("\n", "\r")):
-                            return {"_error": f"Invalid JSONL at line {pending_number}: {exc.msg}"}
-        except OSError as exc:
+            with open(file_path, "rb") as f:
+                data = f.read()
+            text = data.decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
             return {"_error": str(exc)}
+        source_sha = _sha256_bytes(data)
+        events = []
+        pending: tuple[int, str] | None = None
+        for line_number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
+            if not raw_line.strip():
+                continue
+            # Delay one non-empty line so only the true final line can
+            # receive the append-in-progress tolerance below.
+            if pending is None:
+                pending = (line_number, raw_line)
+                continue
+            pending_number, pending_line = pending
+            try:
+                events.append(json.loads(pending_line))
+            except json.JSONDecodeError as exc:
+                return {"_error": f"Invalid JSONL at line {pending_number}: {exc.msg}"}
+            pending = (line_number, raw_line)
+
+        if pending is not None:
+            pending_number, pending_line = pending
+            try:
+                events.append(json.loads(pending_line))
+            except json.JSONDecodeError as exc:
+                # Rollouts are append-only. A missing newline on the final
+                # object is the signal that the writer may still be appending.
+                if pending_line.endswith(("\n", "\r")):
+                    return {"_error": f"Invalid JSONL at line {pending_number}: {exc.msg}"}
         if events and isinstance(events[0], dict) and events[0].get("type") == "session_meta":
             result = _convert_codex_to_internal(events)
             result["_source_path"] = file_path
+            result["_source_sha256"] = source_sha
             return result
         return {"_error": "Unsupported JSONL input; expected Codex JSONL format (leading session_meta event)."}
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        raw = json.loads(data)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
         return {"_error": str(exc)}
+    source_sha = _sha256_bytes(data)
 
     fmt = detect_format(raw)
     if fmt == "unknown" and format_hint in ("ccsession", "codearts", "opencode"):
@@ -1518,4 +1527,14 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
     else:
         result = raw
     result["_source_path"] = file_path
+    # The displayed content's immutable identity — the sha256 of the EXACT
+    # bytes parsed above (one read, one buffer): attribution requires the
+    # canonical corpus file to still have these bytes at diagnosis time
+    # (TOCTOU guard — never diagnose bytes the UI isn't showing).
+    result["_source_sha256"] = source_sha
     return result
+
+
+def _sha256_bytes(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()

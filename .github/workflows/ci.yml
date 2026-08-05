@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Proves TrajViz works WITHOUT DECAF (standalone): the core suite plus the
+  # fixture-hygiene and no-DECAF render/degradation checks. The attribution
+  # module's tests skip here by design (module-level skipif: no `awe`).
+  #
+  # This is the ONLY workflow that runs on pull_request: the DECAF integration
+  # needs a private-monorepo checkout, which must never coexist with
+  # PR-controlled code (see integration.yml — trusted main only).
+  standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: Test (standalone — DECAF absent)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run python -m pytest tests -q

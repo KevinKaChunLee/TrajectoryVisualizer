@@ -30,6 +30,17 @@ dependencies = [
     "requests>=2.0",
 ]
 
+[project.optional-dependencies]
+# Test runner (used by tests/, previously undeclared). Run under Python >=3.11.
+dev = [
+    "pytest>=7.0",
+]
+# NOTE (Attribution tab): the DECAF failure-attribution integration imports the
+# `awe` package from a DECAF checkout. DECAF is stdlib-only and not published to
+# PyPI, so there is intentionally NO pip extra for it — install is: clone DECAF
+# and set AWE_DECAF_PATH (default: a sibling ../DECAF checkout). See README
+# "Failure attribution (DECAF)" and docs/decaf-integration-plan.md.
+
 [project.scripts]
 trajviz = "trajviz.insight.__main__:main"
 

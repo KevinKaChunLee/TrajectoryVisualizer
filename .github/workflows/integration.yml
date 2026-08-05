@@ -1,0 +1,52 @@
+name: DECAF integration (trusted)
+
+# Runs the DECAF failure-attribution integration tests. DELIBERATELY NOT a
+# pull_request workflow, and HARD-GUARDED to main: the integration needs a
+# checkout of the private ARGUS monorepo, and a fetched Git pack contains
+# monorepo blobs beyond the sparse worktree — so no branch-controlled code
+# (install hooks, tests, or even this workflow file from a branch) may execute
+# alongside that checkout. workflow_dispatch from a non-main ref no-ops via the
+# job-level guard below; the trusted path is push-to-main (post-merge
+# verification) or dispatching ON main.
+# Requires the ARGUS_PAT secret: a READ-ONLY fine-grained PAT for rshu/ARGUS.
+# TRAJVIZ_REQUIRE_ATTRIBUTION=1 turns a missing environment into a hard failure,
+# so this workflow can never be green by silently skipping the integration tests.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    # Trusted main code ONLY — a dispatch from any other ref runs nothing.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check out DECAF (pinned, from the ARGUS monorepo)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: rshu/ARGUS
+          token: ${{ secrets.ARGUS_PAT }}
+          path: _argus
+          sparse-checkout: DECAF
+          persist-credentials: false
+          # rshu/ARGUS main @ merge of PR #13 (gold-reference fingerprint in
+          # trajsig cache + requirements_sha256 verdict stamps, v0.34.1).
+          # Bump deliberately on DECAF API change.
+          ref: 7db5295929b2d267336c3c102624b5c035ac8d24
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: Test (integration — DECAF present, no silent skips)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          AWE_DECAF_PATH: ${{ github.workspace }}/_argus/DECAF
+          TRAJVIZ_REQUIRE_ATTRIBUTION: "1"
+        run: uv run python -m pytest tests -q
