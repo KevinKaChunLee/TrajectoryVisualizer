@@ -35,12 +35,11 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
-# The DECAF failure-attribution integration (Attribution tab) imports the `awe`
-# package from the sibling DECAF project. DECAF is stdlib-only and not published
-# to PyPI, so it is resolved at runtime via the AWE_DECAF_PATH env var (default:
-# a sibling ../DECAF checkout) rather than a pip dependency — see
-# docs/decaf-integration-plan.md and trajviz/insight/attribution.py.
-attribution = []
+# NOTE (Attribution tab): the DECAF failure-attribution integration imports the
+# `awe` package from a DECAF checkout. DECAF is stdlib-only and not published to
+# PyPI, so there is intentionally NO pip extra for it — install is: clone DECAF
+# and set AWE_DECAF_PATH (default: a sibling ../DECAF checkout). See README
+# "Failure attribution (DECAF)" and docs/decaf-integration-plan.md.
 
 [project.scripts]
 trajviz = "trajviz.insight.__main__:main"

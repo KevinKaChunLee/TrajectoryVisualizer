@@ -975,13 +975,16 @@ def build_ui() -> gr.Blocks:
                 with gr.Row(equal_height=True):
                     attr_run_btn = gr.Button("Diagnose failure", variant="primary",
                                              size="sm", scale=1, min_width=140)
-                with gr.Accordion("Override agent / instance (for uploaded files)",
+                with gr.Accordion("Override agent / instance / corpus (for uploaded files)",
                                   open=False, elem_classes=["per-message-acc"]):
                     with gr.Row(equal_height=True):
                         attr_agent_override = gr.Textbox(
                             label="Agent", placeholder="auto-detected from path", scale=1)
                         attr_inst_override = gr.Textbox(
                             label="Instance id", placeholder="auto-detected from path", scale=2)
+                        attr_root_override = gr.Textbox(
+                            label="ARGUS corpus root",
+                            placeholder="default: sibling TraceProbe checkout", scale=2)
                 attr_result_html = gr.HTML("")
 
             # ===== Comparison Tab (Converge embedded) =====
@@ -1803,7 +1806,7 @@ def build_ui() -> gr.Blocks:
         # tuple. Diagnoses the DISPLAYED trajectory (via source_path + fmt), and
         # derives (agent, instance_id) from the source path for corpus files; the
         # override fields cover uploaded temp paths.
-        def on_diagnose(overview_raw, fmt, agent_override, inst_override):
+        def on_diagnose(overview_raw, fmt, agent_override, inst_override, root_override):
             from dataclasses import asdict
             from .rendering import build_attribution_html
             from . import attribution as _attr
@@ -1818,14 +1821,19 @@ def build_ui() -> gr.Blocks:
             src = overview_raw.get("_source_path", "") if isinstance(overview_raw, dict) else ""
             agent = (agent_override or "").strip()
             inst = (inst_override or "").strip()
+            root = (root_override or "").strip()
             if src:
                 if not inst:
                     inst = os.path.splitext(os.path.basename(src))[0]
                 if not agent:
+                    # Only a real corpus layout names the agent dir; a Gradio
+                    # upload's parent is a cache hash and won't be in AGENTS —
+                    # diagnose() validates and asks for the override.
                     agent = os.path.basename(os.path.dirname(src))
 
             result = _attr.diagnose(agent=agent or None, instance_id=inst or None,
-                                    source_path=src or None, fmt=fmt)
+                                    source_path=src or None, fmt=fmt,
+                                    argus_root=root or None)
             html_out = build_attribution_html(asdict(result))
             status = (
                 "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
@@ -1836,24 +1844,30 @@ def build_ui() -> gr.Blocks:
             return html_out, status
 
         # Manual button: honors the override fields for the current file.
+        # concurrency_id serializes this with the autoload below (same queue), so
+        # a manual diagnosis and an autoload can never interleave/overwrite.
         attr_run_btn.click(
             fn=on_diagnose,
-            inputs=[state_raw, format_selector, attr_agent_override, attr_inst_override],
+            inputs=[state_raw, format_selector, attr_agent_override,
+                    attr_inst_override, attr_root_override],
             outputs=[attr_result_html, attr_status_html],
+            concurrency_id="attribution",
         )
 
-        # Auto-populate on load, and IGNORE + clear the override fields so a
-        # previous case's identity can never attribute a newly loaded one.
-        def on_diagnose_autoload(overview_raw, fmt):
-            html_out, status = on_diagnose(overview_raw, fmt, "", "")
+        # Auto-populate on load, and IGNORE + clear the agent/instance override
+        # fields so a previous case's identity can never attribute a newly loaded
+        # one. The corpus root is sticky (it selects an environment, not a case).
+        def on_diagnose_autoload(overview_raw, fmt, root_override):
+            html_out, status = on_diagnose(overview_raw, fmt, "", "", root_override)
             return html_out, status, "", ""   # last two clear the override fields
 
         for _ev in (_load_ev, _upload_ev):
             _ev.then(
                 fn=on_diagnose_autoload,
-                inputs=[state_raw, format_selector],
+                inputs=[state_raw, format_selector, attr_root_override],
                 outputs=[attr_result_html, attr_status_html,
                          attr_agent_override, attr_inst_override],
+                concurrency_id="attribution",
             )
 
         # -- Workflow filter callback --

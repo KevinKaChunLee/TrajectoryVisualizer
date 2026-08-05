@@ -5,6 +5,9 @@ on:
     branches: [main, "feat/**", "fix/**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   # Proves TrajViz works WITHOUT DECAF (standalone): core suite + the
   # attribution degradation/render/construction tests that need no corpus.
@@ -13,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -26,17 +31,28 @@ jobs:
   # Runs the DECAF failure-attribution integration tests against the vendored
   # fixture. TRAJVIZ_REQUIRE_ATTRIBUTION=1 makes a missing environment a hard
   # failure, so the suite can never be green merely by skipping them.
+  #
+  # Credential hygiene: the DECAF checkout uses a read-only PAT
+  # (secrets.ARGUS_PAT) with persist-credentials disabled on BOTH checkouts, so
+  # no token is on disk while the PR-controlled install/tests execute, and the
+  # DECAF ref is PINNED to an immutable commit so PR code cannot influence which
+  # DECAF is used. Bump the pin deliberately when DECAF's API changes.
   integration:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check out DECAF (from the ARGUS monorepo)
+        with:
+          persist-credentials: false
+      - name: Check out DECAF (pinned, from the ARGUS monorepo)
         uses: actions/checkout@v4
         with:
           repository: rshu/ARGUS
-          token: ${{ secrets.ARGUS_PAT }}   # PAT with read access to the private monorepo
+          token: ${{ secrets.ARGUS_PAT }}   # read-only PAT for the private monorepo
           path: _argus
           sparse-checkout: DECAF
+          persist-credentials: false
+          # rshu/ARGUS main @ merge of PR #11 (case_record trajectory_override)
+          ref: fe20e68afba5ca0baebcb0b02b99267975bb1827
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
