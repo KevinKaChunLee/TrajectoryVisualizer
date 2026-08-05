@@ -218,7 +218,13 @@ def _llm_layer_policy(agent: str, instance_id: str, canon_sha: str):
     adjudicate = _AUTO
     adir = _arb.ARBITER_CACHE_DIR / _cfg.model_slug() / agent
     if adir.is_dir():
-        for f in adir.glob(f"{instance_id}*.json"):
+        # Match ONLY this instance's verdict files: exact legacy "{id}.json" or
+        # claim-keyed "{id}__{cap}__{et}.json". A bare "{id}*" prefix glob would
+        # also match a DIFFERENT instance whose id extends this one (e.g.
+        # proj-1147 matching proj-11477's files) and wrongly disable the arbiter.
+        candidates = (list(adir.glob(f"{instance_id}.json"))
+                      + list(adir.glob(f"{instance_id}__*.json")))
+        for f in candidates:
             try:
                 rec = _json.loads(f.read_text())
             except Exception:
@@ -307,6 +313,14 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     # says nothing if the file changed after the UI parsed it (TOCTOU).
     displayed_sha = expected_sha or (
         _sha256(Path(source_path)) if source_path is not None else None)
+    if source_path is not None and displayed_sha is None:
+        # A displayed source whose identity cannot be established (unreadable
+        # at load AND at diagnose time) must refuse, not silently skip the gate.
+        return AttributionResult(
+            False, mode="gold_free", agent=agent, instance_id=instance_id,
+            reason="cannot establish the displayed trajectory's content identity "
+                   "(source unreadable) — refusing rather than diagnosing "
+                   "unverified bytes")
     if displayed_sha is not None and displayed_sha != canon_sha:
         return AttributionResult(
             False, mode="gold_free", agent=agent, instance_id=instance_id,
@@ -336,6 +350,17 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
             False, mode="corpus", agent=agent, instance_id=instance_id,
             reason="this run resolved (or its outcome is unknown); DECAF attributes "
                    "failures only")
+    # Close the mid-diagnosis mutation window: case_record/detect re-read the
+    # corpus from disk AFTER the identity gate above, and an external writer
+    # (e.g. a git pull in the corpus) could swap the file in between — the
+    # result would describe bytes the gate never approved and the UI never
+    # displayed. Recompute the canonical hash after ALL reads and refuse on any
+    # change (the in-process lock cannot serialize other processes).
+    if _sha256(canon) != canon_sha:
+        return AttributionResult(
+            False, mode="corpus", agent=agent, instance_id=instance_id,
+            reason=f"the corpus trajectory for {agent}/{instance_id} changed "
+                   f"while the diagnosis was running — reload and retry")
     return _shape(rec, d.get("opportunities", {}), notes)
 
 

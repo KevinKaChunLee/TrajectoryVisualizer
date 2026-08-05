@@ -23,7 +23,11 @@ _CACHE = _FIX / "decaf_cache" / "cache"
 #    freezes ARGUS_ROOT at import; attribution.py's setdefault then no-ops).
 if (_CORPUS / "data" / "requirements").is_dir():
     os.environ["AWE_ARGUS_ROOT"] = str(_CORPUS)
-os.environ.setdefault("AWE_JUDGE_MODEL", "z-ai/glm-5.2")
+# FORCE (not setdefault) the judge-model namespace: the vendored verdicts live
+# under z-ai__glm-5.2, and an inherited shell AWE_JUDGE_MODEL would point the
+# cache lookups at an empty namespace, silently changing what the golden tests
+# exercise. Hermeticity beats the developer's environment here.
+os.environ["AWE_JUDGE_MODEL"] = "z-ai/glm-5.2"
 
 
 def _decaf_root():
@@ -39,14 +43,22 @@ if _DECAF and str(_DECAF) not in sys.path:
     sys.path.insert(0, str(_DECAF))
 
 # 2. Redirect DECAF's judge/arbiter caches to the vendored fixture caches, so the
-#    arbiter-dependent tests need no developer-local (gitignored) caches.
+#    arbiter-dependent tests need no developer-local (gitignored) caches — and
+#    redirect the normtraj/trajsig DISK caches to a throwaway tmp dir so
+#    fixture-corpus runs never write into (or thrash) DECAF's own study caches.
 _DECAF_OK = False
 try:
+    import tempfile
     from awe import config as _cfg
     import awe.arbiter as _arb
+    import awe.adapters as _ad
+    import awe.trajsignals as _ts
     if (_CACHE / "judge").is_dir():
         _cfg.JUDGE_CACHE_DIR = _CACHE / "judge"
         _arb.ARBITER_CACHE_DIR = _CACHE / "arbiter"
+    _TMP_CACHE = Path(tempfile.mkdtemp(prefix="trajviz-decaf-cache-"))
+    _ad._NORMTRAJ_CACHE = _TMP_CACHE / "normtraj"
+    _ts._CACHE = _TMP_CACHE / "trajsig"
     _DECAF_OK = True
 except Exception:
     _DECAF_OK = False

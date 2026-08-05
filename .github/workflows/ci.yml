@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  # Proves TrajViz works WITHOUT DECAF (standalone): core suite + the
-  # attribution degradation/render/construction tests that need no corpus.
-  # The DECAF integration tests skip here by design (no `awe` on the path).
+  # Proves TrajViz works WITHOUT DECAF (standalone): the core suite plus the
+  # fixture-hygiene and no-DECAF render/degradation checks. The attribution
+  # module's tests skip here by design (module-level skipif: no `awe`).
   #
   # This is the ONLY workflow that runs on pull_request: the DECAF integration
   # needs a private-monorepo checkout, which must never coexist with
@@ -28,4 +28,4 @@ jobs:
       - name: Test (standalone — DECAF absent)
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run python -m pytest -q
+        run: uv run python -m pytest tests -q

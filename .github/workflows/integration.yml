@@ -49,4 +49,4 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           AWE_DECAF_PATH: ${{ github.workspace }}/_argus/DECAF
           TRAJVIZ_REQUIRE_ATTRIBUTION: "1"
-        run: uv run python -m pytest -q
+        run: uv run python -m pytest tests -q

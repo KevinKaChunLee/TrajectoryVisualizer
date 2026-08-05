@@ -141,7 +141,7 @@ def test_changed_gold_invalidates_llm_verdicts(tmp_path):
     from awe import config as _cfg
     # clone the fixture corpus, then mutate ONLY the requirements (task) file
     root = tmp_path / "corpus"
-    shutil.copytree(_cfg.ARGUS_ROOT / "data", root / "data")
+    shutil.copytree(attribution._DEFAULT_ROOT / "data", root / "data")
     rp = root / "data" / "requirements" / f"{ARB_INST}.json"
     req = json.loads(rp.read_text())
     req["problem_statement"] = "A COMPLETELY DIFFERENT TASK STATEMENT."
@@ -164,7 +164,7 @@ def test_toctou_mutated_canonical_file_is_refused(tmp_path):
     would describe different bytes than the ones shown)."""
     from awe import config as _cfg
     root = tmp_path / "corpus"
-    shutil.copytree(_cfg.ARGUS_ROOT / "data", root / "data")
+    shutil.copytree(attribution._DEFAULT_ROOT / "data", root / "data")
     tpath = root / "data" / "trajectory" / "claude_code" / f"{GOLD_INST}.json"
     import hashlib
     loaded_sha = hashlib.sha256(tpath.read_bytes()).hexdigest()  # captured at "load"
@@ -252,7 +252,7 @@ def test_configure_clears_outcome_and_gold_caches(tmp_path):
     wrong symbol left stale outcomes active."""
     from awe import config
     from awe.outcomes import resolved
-    orig_root = config.ARGUS_ROOT
+    orig_root = attribution._DEFAULT_ROOT
     try:
         assert resolved(GOLD_AGENT, GOLD_INST) is False  # warm the cache
         empty = tmp_path / "empty_corpus"
