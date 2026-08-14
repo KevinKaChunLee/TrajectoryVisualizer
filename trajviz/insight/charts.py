@@ -1319,6 +1319,262 @@ def build_error_classification_chart(
     return fig
 
 
+_COMPACTION_KIND_LABEL = {
+    "compaction_part": "compacted",
+    "compaction_message": "compacted",
+    "summary": "compacted",
+    "compress_step": "compacted",
+    "tool_prune": "pruned",
+    "occupancy_drop": "compacted",
+}
+
+# Occupancy must not share Fresh Input's blue — after compaction the stack is
+# almost entirely fresh, and a blue occupancy line disappears into the fill.
+_OCCUPANCY_LINE_COLOR = "#7c3aed"
+_COMPACTION_MARKER_COLOR = "#e11d48"
+
+
+def _pressure_series_colors(agents: list[dict]) -> dict[str, str]:
+    """Distinct hue per pressure series, in first-appearance order."""
+    return {
+        agent.get("agent_id", ""): SESSION_COLORS[i % len(SESSION_COLORS)]
+        for i, agent in enumerate(agents)
+    }
+
+
+def build_context_pressure_chart(
+    steps: list[dict],
+    *,
+    agent_key: str | None = None,
+    raw: dict | None = None,
+    dark: bool = False,
+) -> go.Figure:
+    """Context-window occupancy over global step index, with compaction markers.
+
+    Overlay mode (two or more agents) draws one occupancy line per agent in a
+    distinct color. Compaction is drawn on that agent's series only — never as
+    a full-height line across every session. Single-agent mode stacks fresh vs
+    cache under an occupancy line and, when a window limit is known, adds
+    70%/90% bands.
+    """
+    from .diagnostics import context_pressure_series
+
+    series = context_pressure_series(steps, agent_key=agent_key, raw=raw)
+    agents = series.get("agents") or []
+    events = series.get("events") or []
+    window_limit = series.get("window_limit")
+    has_points = any(a.get("points") for a in agents)
+    if not has_points:
+        fig = _empty_figure(380, "No context occupancy data.")
+        _apply_dark(fig, dark)
+        return fig
+
+    fig = go.Figure()
+    single = len(agents) == 1
+    color_map = _pressure_series_colors(agents)
+    y_max = 0
+    for agent in agents:
+        for point in agent.get("points") or []:
+            y_max = max(y_max, int(point.get("occupancy") or 0))
+    if isinstance(window_limit, (int, float)) and window_limit > 0:
+        y_max = max(y_max, int(window_limit))
+
+    if single:
+        agent = agents[0]
+        color = _OCCUPANCY_LINE_COLOR
+        points = agent.get("points") or []
+        xs = [p["step"] for p in points]
+        fresh = [p["fresh"] for p in points]
+        cache = [p["cache_read"] for p in points]
+        occ = [p["occupancy"] for p in points]
+        turns = [p["local_turn"] for p in points]
+        pct_suffix = []
+        for occupancy in occ:
+            if isinstance(window_limit, (int, float)) and window_limit > 0:
+                pct_suffix.append(f"<br>Pressure: {100.0 * occupancy / window_limit:.1f}%")
+            else:
+                pct_suffix.append("")
+        fig.add_trace(go.Scatter(
+            x=xs, y=fresh, name="Fresh input",
+            mode="lines",
+            line=dict(width=0.5, color=TOKEN_COLORS["fresh_input"]),
+            stackgroup="occ",
+            fillcolor="rgba(59,130,246,0.35)",
+            hovertemplate=(
+                "Step %{x}<br>Turn %{customdata}<br>Fresh: %{y:,}<extra></extra>"
+            ),
+            customdata=turns,
+            legendgroup="tokens",
+        ))
+        fig.add_trace(go.Scatter(
+            x=xs, y=cache, name="Cache read",
+            mode="lines",
+            line=dict(width=0.5, color=TOKEN_COLORS["cache_read"]),
+            stackgroup="occ",
+            fillcolor="rgba(52,211,153,0.35)",
+            hovertemplate=(
+                "Step %{x}<br>Turn %{customdata}<br>Cache read: %{y:,}<extra></extra>"
+            ),
+            customdata=turns,
+            legendgroup="tokens",
+        ))
+        hover = [
+            f"{agent['label']}<br>Step {x}<br>Turn {turn}<br>Occupancy: {o:,}{pct}"
+            for x, turn, o, pct in zip(xs, turns, occ, pct_suffix, strict=False)
+        ]
+        fig.add_trace(go.Scatter(
+            x=xs, y=occ, name="Occupancy",
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=6, color=color),
+            hovertext=hover, hoverinfo="text",
+            legendgroup=agent.get("agent_id", ""),
+        ))
+    else:
+        for agent in agents:
+            points = agent.get("points") or []
+            if not points:
+                continue
+            agent_id = agent.get("agent_id", "")
+            color = color_map.get(agent_id, SESSION_COLORS[0])
+            xs = [p["step"] for p in points]
+            occ = [p["occupancy"] for p in points]
+            turns = [p["local_turn"] for p in points]
+            hover = []
+            for x, turn, o, p in zip(
+                xs, turns, occ, points, strict=False,
+            ):
+                pct = ""
+                if isinstance(window_limit, (int, float)) and window_limit > 0:
+                    pct = f"<br>Pressure: {100.0 * o / window_limit:.1f}%"
+                hover.append(
+                    f"{agent['label']}<br>Step {x}<br>Turn {turn}"
+                    f"<br>Occupancy: {o:,}<br>Fresh: {p['fresh']:,}"
+                    f"<br>Cache: {p['cache_read']:,}{pct}"
+                )
+            fig.add_trace(go.Scatter(
+                x=xs, y=occ, name=agent["label"],
+                mode="lines+markers",
+                line=dict(color=color, width=2.5),
+                marker=dict(size=6, color=color),
+                hovertext=hover, hoverinfo="text",
+                legendgroup=agent_id,
+            ))
+
+    _add_compaction_markers(
+        fig, events, agents=agents, color_map=color_map, y_max=y_max,
+        marker_color=_COMPACTION_MARKER_COLOR if single else None,
+    )
+
+    if isinstance(window_limit, (int, float)) and window_limit > 0:
+        fig.add_hline(
+            y=window_limit, line_dash="dash", line_color="#94a3b8",
+            annotation_text=f"Window {window_limit:,}",
+            annotation_position="top right",
+        )
+        if single:
+            fig.add_hrect(
+                y0=window_limit * 0.7, y1=window_limit * 0.9,
+                fillcolor="rgba(217,119,6,0.08)", line_width=0,
+            )
+            fig.add_hrect(
+                y0=window_limit * 0.9, y1=window_limit,
+                fillcolor="rgba(220,38,38,0.10)", line_width=0,
+            )
+
+    title = "Context Window Pressure"
+    if single:
+        title = f"Context Window Pressure — {agents[0]['label']}"
+    _apply_chart_layout(
+        fig, title,
+        xaxis="Step", yaxis="Tokens (occupancy)", height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.06,
+                    xanchor="center", x=0.5),
+    )
+    if y_max > 0:
+        fig.update_yaxes(range=[0, y_max * 1.08])
+    _add_legend_hint(fig)
+    _apply_dark(fig, dark)
+    return fig
+
+
+def _add_compaction_markers(
+    fig: go.Figure,
+    events: list[dict],
+    *,
+    agents: list[dict],
+    color_map: dict[str, str],
+    y_max: int,
+    marker_color: str | None = None,
+) -> None:
+    """Per-agent compaction diamonds and drop stems — not full-height vlines."""
+    if not events:
+        return
+    from .diagnostics import coalesce_compaction_events
+
+    labels = {a.get("agent_id", ""): a.get("label") or "main" for a in agents}
+    by_agent: dict[str, list[dict]] = {}
+    for event in events:
+        agent_id = event.get("agent", "")
+        if agent_id not in labels:
+            continue
+        by_agent.setdefault(agent_id, []).append(event)
+
+    for agent_id, agent_events in by_agent.items():
+        color = marker_color or color_map.get(agent_id) or SESSION_COLORS[0]
+        agent_label = labels.get(agent_id, "main")
+        coalesced = coalesce_compaction_events(agent_events)
+        xs: list[int] = []
+        ys: list[float] = []
+        hover: list[str] = []
+        for event in coalesced:
+            step = int(event.get("step") or 0)
+            kind = event.get("kind") or ""
+            kind_label = _COMPACTION_KIND_LABEL.get(kind, kind)
+            before = event.get("occupancy_before")
+            after = event.get("occupancy_after")
+            dropped = event.get("dropped")
+            y = before if isinstance(before, (int, float)) and before > 0 else after
+            if not isinstance(y, (int, float)) or y <= 0:
+                y = y_max * 0.5 if y_max else 0
+            drop_txt = f"<br>−{int(dropped):,} tokens" if dropped else ""
+            after_txt = (
+                f"<br>After: {int(after):,}"
+                if isinstance(after, (int, float)) and after > 0 else ""
+            )
+            hover.append(
+                f"{agent_label}<br>Step {step}<br>{kind_label}{drop_txt}{after_txt}"
+            )
+            xs.append(step)
+            ys.append(float(y))
+            if (
+                isinstance(before, (int, float)) and before > 0
+                and isinstance(after, (int, float)) and 0 < after < before
+            ):
+                fig.add_trace(go.Scatter(
+                    x=[step, step], y=[before, after],
+                    mode="lines",
+                    line=dict(color=color, width=2, dash="dash"),
+                    legendgroup=agent_id,
+                    showlegend=False,
+                    hoverinfo="skip",
+                    name=f"{agent_label} compact",
+                ))
+        if not xs:
+            continue
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys,
+            name=f"{agent_label} compact",
+            mode="markers",
+            marker=dict(
+                size=12, symbol="diamond", color=color,
+                line=dict(width=1.5, color="#fff"),
+            ),
+            legendgroup=agent_id,
+            hovertext=hover, hoverinfo="text",
+        ))
+
+
 # -- Task Mode Breakdown (#2) ------------------------------------------------
 
 # -- Duration vs True Cost Gap (#6) ------------------------------------------

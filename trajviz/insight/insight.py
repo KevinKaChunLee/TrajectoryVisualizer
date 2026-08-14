@@ -28,6 +28,9 @@ from .diagnostics import (
     cluster_errors,
     annotate_clusters_with_agents,
     compute_bottleneck_explanations,
+    context_pressure_series,
+    pressure_agent_choices,
+    PRESSURE_ALL_AGENTS,
 )
 from .charts import (
     build_token_chart, build_duration_chart, build_tool_chart,
@@ -44,6 +47,7 @@ from .charts import (
     build_plan_timeline_chart,
     build_error_classification_chart,
     build_context_growth_chart,
+    build_context_pressure_chart,
 )
 
 from .comparison import run_comparison
@@ -55,6 +59,7 @@ from .patterns import (
 from .help import HELP_TEXT
 from .loaders import detect_format, FORMAT_LABELS
 from .parser import load_labeled_json, aggregate_labels
+from .formatting import format_context_pressure_html
 from .rendering import (
     render_workflow_html, render_toc_sidebar, render_filter_chips,
     format_step_detail, render_agent_summary_cards,
@@ -545,6 +550,7 @@ def _build_diagnostics_outputs(
     steps: list[dict], step_analytics: list[dict],
     agent_summaries: list[dict], dark: bool = False,
     trajectory_format: str | None = None,
+    raw: dict | None = None,
 ) -> dict:
     """Build all diagnostics outputs: file interactions, failure chains, root causes, bottlenecks."""
     _empty_fig = go.Figure()
@@ -576,6 +582,22 @@ def _build_diagnostics_outputs(
     # Bottleneck explanation (explanations feed the summary line; UI cards removed)
     bottleneck_explanations = compute_bottleneck_explanations(steps, step_analytics)
 
+    pressure_series = context_pressure_series(
+        steps, agent_key=PRESSURE_ALL_AGENTS, raw=raw,
+    )
+    pressure_fig = build_context_pressure_chart(
+        steps, agent_key=PRESSURE_ALL_AGENTS, raw=raw, dark=dark,
+    )
+    pressure_html = format_context_pressure_html(pressure_series)
+    pressure_choices = pressure_agent_choices(steps)
+    # Hide the selector unless there is more than one agent to choose from
+    # (All agents + at least two agent entries).
+    pressure_dropdown = {
+        "choices": pressure_choices or [("All agents", PRESSURE_ALL_AGENTS)],
+        "value": PRESSURE_ALL_AGENTS,
+        "visible": len(pressure_choices) > 2,
+    }
+
     # Summary line
     parts = []
     if chain_metrics["total_chains"]:
@@ -587,6 +609,9 @@ def _build_diagnostics_outputs(
     if interactions:
         unique_files = len({i["path"] for i in interactions})
         parts.append(f"{unique_files} file(s) touched · {len(target_files)} edited")
+    compaction_count = len(pressure_series.get("events") or [])
+    if compaction_count:
+        parts.append(f"{compaction_count} compaction event(s)")
     summary = " &middot; ".join(parts) if parts else "No diagnostic issues detected."
     summary_html = (
         f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:8px;'>"
@@ -595,6 +620,9 @@ def _build_diagnostics_outputs(
 
     return {
         "diag_summary_html": summary_html,
+        "diag_pressure_html": pressure_html,
+        "diag_pressure_dropdown": pressure_dropdown,
+        "diag_pressure_chart": pressure_fig,
         "diag_file_chart": file_chart,
         "diag_rootcause_html": rootcause_html,
     }
@@ -866,9 +894,21 @@ def build_ui() -> gr.Blocks:
                                 agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
 
                         with gr.Column(visible=False) as diagnostics_section:
+                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>")
                             diag_summary_html = gr.HTML("")
                             diag_file_chart = gr.Plot(show_label=False, label="File Interaction Timeline",
                                                       elem_classes=["resizable-chart"])
+                            diag_pressure_html = gr.HTML("")
+                            diag_pressure_agent = gr.Dropdown(
+                                label="Agent",
+                                choices=[("All agents", PRESSURE_ALL_AGENTS)],
+                                value=PRESSURE_ALL_AGENTS,
+                                visible=False,
+                                interactive=True,
+                            )
+                            diag_pressure_chart = gr.Plot(
+                                show_label=False, label="Context Window Pressure",
+                            )
                             diag_rootcause_html = gr.HTML("")
                             with gr.Row(equal_height=True):
                                 error_class_chart = gr.Plot(show_label=False, label="Tool Error Classification")
@@ -1382,6 +1422,13 @@ def build_ui() -> gr.Blocks:
                 f,               # agent_token_chart
                 f,               # agent_swimlane_chart
                 "",              # diag_summary_html
+                "",              # diag_pressure_html
+                gr.update(
+                    choices=[("All agents", PRESSURE_ALL_AGENTS)],
+                    value=PRESSURE_ALL_AGENTS,
+                    visible=False,
+                ),               # diag_pressure_agent
+                f,               # diag_pressure_chart
                 f,               # diag_file_chart
                 "",              # diag_rootcause_html
                 # New diagnostic charts
@@ -1461,7 +1508,7 @@ def build_ui() -> gr.Blocks:
 
             # Delegate to focused builders
             dg = _build_diagnostics_outputs(steps, step_analytics, agent_summaries, dark=dark,
-                                            trajectory_format=detected)
+                                            trajectory_format=detected, raw=raw)
             ov = _build_overview_outputs(steps, raw, metrics, message_rows,
                                          verdicts, wfmt, file_path,
                                          trajectory_format=detected)
@@ -1510,6 +1557,13 @@ def build_ui() -> gr.Blocks:
                 ch["agent_tok_fig"],          # agent_token_chart
                 ch["swimlane_fig"],           # agent_swimlane_chart
                 dg["diag_summary_html"],      # diag_summary_html
+                dg["diag_pressure_html"],     # diag_pressure_html
+                gr.update(
+                    choices=dg["diag_pressure_dropdown"]["choices"],
+                    value=dg["diag_pressure_dropdown"]["value"],
+                    visible=dg["diag_pressure_dropdown"]["visible"],
+                ),                            # diag_pressure_agent
+                dg["diag_pressure_chart"],    # diag_pressure_chart
                 dg["diag_file_chart"],        # diag_file_chart
                 dg["diag_rootcause_html"],    # diag_rootcause_html
                 # New diagnostic charts
@@ -1566,6 +1620,9 @@ def build_ui() -> gr.Blocks:
             agent_token_chart,
             agent_swimlane_chart,
             diag_summary_html,
+            diag_pressure_html,
+            diag_pressure_agent,
+            diag_pressure_chart,
             diag_file_chart,
             diag_rootcause_html,
             # New diagnostic outputs
@@ -1598,6 +1655,34 @@ def build_ui() -> gr.Blocks:
             fn=do_load,
             inputs=[file_upload, state_dark, format_selector],
             outputs=all_outputs,
+        )
+
+        def on_pressure_agent_change(agent_key, steps, raw, dark):
+            """Rebuild the pressure chart for the selected agent/subagent."""
+            if not steps:
+                empty = go.Figure()
+                empty.update_layout(
+                    template="plotly_white", height=380,
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                )
+                return empty, ""
+            key = agent_key or PRESSURE_ALL_AGENTS
+            fig = build_context_pressure_chart(
+                steps, agent_key=key, raw=raw if isinstance(raw, dict) else None,
+                dark=bool(dark),
+            )
+            html_strip = format_context_pressure_html(
+                context_pressure_series(
+                    steps, agent_key=key,
+                    raw=raw if isinstance(raw, dict) else None,
+                )
+            )
+            return fig, html_strip
+
+        diag_pressure_agent.change(
+            fn=on_pressure_agent_change,
+            inputs=[diag_pressure_agent, state_steps, state_raw, state_dark],
+            outputs=[diag_pressure_chart, diag_pressure_html],
         )
 
         # -- Comparison callback --
