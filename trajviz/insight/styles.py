@@ -1039,6 +1039,105 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     }
 }
 
+/* ===== Run-group file coverage matrix ===== */
+.rg-file-scroll {
+    overflow-x: auto;
+    max-width: 100%;
+    margin: 0.25rem 0 0.75rem;
+}
+.rg-file-table .rg-file-path code {
+    font-size: 12px;
+    word-break: break-all;
+}
+.rg-badge {
+    display: inline-block;
+    min-width: 1.35em;
+    padding: 1px 5px;
+    margin: 0 1px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.4;
+    text-align: center;
+}
+.rg-badge-r {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+.rg-badge-w {
+    background: #ffedd5;
+    color: #c2410c;
+}
+.rg-file-empty {
+    color: var(--ov-muted);
+    font-size: 12px;
+}
+.rg-kind {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 6px;
+}
+.rg-kind-shared {
+    background: #d1fae5;
+    color: #047857;
+}
+.rg-kind-partial {
+    background: #e0e7ff;
+    color: #4338ca;
+}
+.rg-kind-unique {
+    background: #fef3c7;
+    color: #b45309;
+}
+.rg-cov {
+    font-size: 11px;
+    color: var(--ov-muted);
+}
+.rg-row-unique td {
+    background: rgba(245, 158, 11, 0.06);
+}
+.rg-row-consensus td {
+    background: rgba(5, 150, 105, 0.04);
+}
+.rg-action-hit {
+    color: var(--ov-success);
+    font-weight: 700;
+    font-size: 12px;
+}
+.rg-atype {
+    display: inline-block;
+    min-width: 3.2em;
+    padding: 1px 5px;
+    margin-right: 4px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-align: center;
+    vertical-align: middle;
+}
+.rg-atype-read { background: #dbeafe; color: #1d4ed8; }
+.rg-atype-write { background: #ffedd5; color: #c2410c; }
+.rg-atype-search { background: #ede9fe; color: #6d28d9; }
+.rg-atype-cmd { background: #e2e8f0; color: #334155; }
+.rg-atype-spawn { background: #fce7f3; color: #be185d; }
+.rg-atype-other { background: #f1f5f9; color: #475569; }
+@media (prefers-color-scheme: dark) {
+    .rg-badge-r { background: rgba(59,130,246,0.25); color: #93c5fd; }
+    .rg-badge-w { background: rgba(234,88,12,0.25); color: #fdba74; }
+    .rg-kind-shared { background: rgba(5,150,105,0.25); color: #6ee7b7; }
+    .rg-kind-partial { background: rgba(99,102,241,0.25); color: #a5b4fc; }
+    .rg-kind-unique { background: rgba(245,158,11,0.25); color: #fcd34d; }
+    .rg-atype-read { background: rgba(59,130,246,0.25); color: #93c5fd; }
+    .rg-atype-write { background: rgba(234,88,12,0.25); color: #fdba74; }
+    .rg-atype-search { background: rgba(139,92,246,0.25); color: #c4b5fd; }
+    .rg-atype-cmd { background: rgba(148,163,184,0.25); color: #cbd5e1; }
+    .rg-atype-spawn { background: rgba(236,72,153,0.25); color: #f9a8d4; }
+}
+
 /* ===== Converge comparison styles (merged) ===== */
 """ + _CONVERGE_CSS + """
 """

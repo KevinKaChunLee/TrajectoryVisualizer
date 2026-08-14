@@ -51,6 +51,11 @@ from .charts import (
 )
 
 from .comparison import run_comparison
+from .run_group import (
+    build_run_group_scorecard,
+    build_run_group_scorecard_html,
+    normalize_run_paths,
+)
 from .patterns import (
     detect_tool_sequences, detect_failure_patterns,
     extract_plan_history, compute_plan_metrics,
@@ -981,15 +986,56 @@ def build_ui() -> gr.Blocks:
                         placeholder="default: sibling TraceProbe checkout", scale=2)
                 attr_result_html = gr.HTML("")
 
-            # ===== Comparison Tab (Converge embedded) =====
+            # ===== Comparison Tab (Converge embedded + N-run scorecard) =====
             with gr.TabItem("Comparison"):
                 _cmp_placeholder = (
                     "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
                     "Load a trajectory in the Overview tab first &mdash; it will become the "
-                    "<b>compared</b> trajectory. Upload the <b>reference</b> (baseline) below.</div>"
+                    "<b>compared</b> trajectory. Upload the <b>reference</b> (baseline) below."
+                    "<br><span style='font-size:12px;'>"
+                    "Or use <b>Run group</b> to scorecard N trajectories of the same task."
+                    "</span></div>"
                 )
                 cmp_status_html = gr.HTML(_cmp_placeholder)
-                with gr.Accordion("Upload & Run", open=True, elem_classes=["per-message-acc"]):
+                with gr.Accordion("Run group (N trajectories)", open=True, elem_classes=["per-message-acc"]):
+                    gr.Markdown(
+                        "_Upload several runs of the **same task** (different models, "
+                        "harnesses, or prompts). Builds a metrics scorecard plus "
+                        "behavioral similarity, consensus/unique actions, and waste "
+                        "patterns vs the first run. For a full pairwise report, use "
+                        "**Pairwise comparison** below._",
+                    )
+                    with gr.Row(equal_height=True):
+                        rg_format_selector = gr.Dropdown(
+                            label="Format hint",
+                            choices=[
+                                ("Auto-detect", ""),
+                                ("Claude Code", "ccsession"),
+                                ("CodeArts", "codearts"),
+                                ("OpenCode", "opencode"),
+                                ("Codex CLI", "codex"),
+                            ],
+                            value="",
+                            interactive=True,
+                            scale=1,
+                            min_width=140,
+                        )
+                        rg_file_upload = gr.File(
+                            label="Trajectories (.json / .jsonl) — select multiple",
+                            file_types=[".json", ".jsonl"],
+                            file_count="multiple",
+                            scale=3,
+                        )
+                    with gr.Row(equal_height=False):
+                        rg_run_btn = gr.Button(
+                            "Build scorecard", variant="primary",
+                            size="sm", scale=0, min_width=140,
+                        )
+                    rg_scorecard_html = gr.HTML(
+                        "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                        "Upload two or more trajectories and click <b>Build scorecard</b>.</div>"
+                    )
+                with gr.Accordion("Pairwise comparison", open=False, elem_classes=["per-message-acc"]):
                     with gr.Row(equal_height=True):
                         cmp_format_selector = gr.Dropdown(
                             label="Format",
@@ -1023,7 +1069,6 @@ def build_ui() -> gr.Blocks:
                     with gr.Row(equal_height=False):
                         # Roles are fixed in the pipeline: the upload here is the
                         # reference/baseline, the Overview trajectory is compared.
-                        # (Replaced a Checkbox that was wired to nothing.)
                         gr.Markdown(
                             "_The uploaded trajectory is treated as the "
                             "**reference/baseline**; the trajectory loaded on the "
@@ -1033,10 +1078,10 @@ def build_ui() -> gr.Blocks:
                             "Run Comparison", variant="primary",
                             size="sm", scale=1, min_width=140,
                         )
-                cmp_report_html = gr.HTML("")
-                with gr.Row(equal_height=True):
-                    cmp_phase_count_chart = gr.Plot(show_label=False, label="Step Count by Phase — Reference vs Compared")
-                    cmp_phase_duration_chart = gr.Plot(show_label=False, label="Duration by Phase — Reference vs Compared")
+                    cmp_report_html = gr.HTML("")
+                    with gr.Row(equal_height=True):
+                        cmp_phase_count_chart = gr.Plot(show_label=False, label="Step Count by Phase — Reference vs Compared")
+                        cmp_phase_duration_chart = gr.Plot(show_label=False, label="Duration by Phase — Reference vs Compared")
 
             # ===== Workflow Tab =====
             with gr.TabItem("Workflow"):
@@ -1689,6 +1734,21 @@ def build_ui() -> gr.Blocks:
         # Semantics: the trajectory uploaded in this tab's file slot is the
         # **reference/baseline**; the trajectory loaded on the Overview tab
         # is the **compared** trajectory.
+        def on_run_group_scorecard(files, format_hint):
+            """Build an N-run scorecard from multi-file upload."""
+            paths = normalize_run_paths(files)
+            hint = format_hint or None
+            if hint == "":
+                hint = None
+            result = build_run_group_scorecard(paths, format_hint=hint)
+            return build_run_group_scorecard_html(result)
+
+        rg_run_btn.click(
+            fn=on_run_group_scorecard,
+            inputs=[rg_file_upload, rg_format_selector],
+            outputs=[rg_scorecard_html],
+        )
+
         def on_run_comparison(ref_file, anchor_file, ref_format,
                               ref_labels_file, cmp_labels_file,
                               overview_raw, dark):
