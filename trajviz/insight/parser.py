@@ -140,6 +140,7 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
             status = state.get("status", p.get("status", "?"))
             tool_input = state.get("input", p.get("input", p.get("arguments", {})))
             tool_output = state.get("output", p.get("output", ""))
+            compacted_at = safe_get(state, "time", "compacted", default=None)
             tc = {
                 "type": "tool_call", "tool_name": tool_name,
                 "tool_id": p.get("tool_id", p.get("callID", p.get("id", ""))), "status": status,
@@ -150,6 +151,7 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
                 "error_type": p.get("error_type"),
                 "time_start": safe_get(state, "time", "start", default=None),
                 "time_end": safe_get(state, "time", "end", default=None),
+                "time_compacted": compacted_at,
                 "duration_ms": safe_get(state, "metadata", "totalDurationMs", default=None),
                 "metadata": state.get("metadata", {}),
                 "part_id": p.get("id", ""),
@@ -177,6 +179,22 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
                 "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
                 "part_id": p.get("id", ""),
             })
+        elif ptype == "compaction":
+            summary_text = p.get("summary") or p.get("text") or ""
+            if not isinstance(summary_text, str):
+                summary_text = str(summary_text) if summary_text else ""
+            parts.append({
+                "type": "compaction",
+                "summary": summary_text,
+                "reason": p.get("reason", ""),
+                "recent": p.get("recent", ""),
+                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                "part_id": p.get("id", ""),
+                "session_id": p.get("sessionID", ""),
+                "message_id": p.get("messageID", ""),
+            })
+            if not text_preview and summary_text:
+                text_preview = summary_text
         elif ptype == "snapshot":
             parts.append({"type": "snapshot", "data": p.get("data", p.get("snapshot", {}))})
         elif ptype == "patch":
@@ -216,7 +234,14 @@ def parse_steps(raw: dict) -> list[dict]:
         if not isinstance(msg, dict):
             continue
         info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
-        role = msg.get("role") or safe_get(info, "role", default="?")
+        message_type = msg.get("type") or info.get("type") or ""
+        if not isinstance(message_type, str):
+            message_type = ""
+        is_compaction_checkpoint = message_type == "compaction"
+        role = msg.get("role") or safe_get(info, "role", default="")
+        if not role:
+            role = "compaction" if is_compaction_checkpoint else "?"
+        summary_flag = info.get("summary", False)
 
         tokens_info = safe_get(info, "tokens", default={})
         if not isinstance(tokens_info, dict):
@@ -270,6 +295,10 @@ def parse_steps(raw: dict) -> list[dict]:
             "parent_session_id": info.get("parentSessionID", ""),
             "session_depth": info.get("sessionDepth"),
             "session_title": info.get("sessionTitle", ""),
+            "summary": summary_flag,
+            "message_type": message_type,
+            "is_compaction_checkpoint": is_compaction_checkpoint,
+            "compaction_reason": info.get("reason", "") if is_compaction_checkpoint else "",
             "_metrics_unavailable_fields": metrics_unavailable_fields,
             "_metrics_source_format": metrics_source_format,
         })

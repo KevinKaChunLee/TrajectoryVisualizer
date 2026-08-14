@@ -358,3 +358,29 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
     return banner
 
 
+def format_context_pressure_html(series: dict) -> str:
+    """Stats strip for the Diagnostics context-pressure chart."""
+    from .diagnostics import context_pressure_stats
+
+    stats = context_pressure_stats(series)
+    peak = stats.get("peak_occupancy") or 0
+    chips = [_metric_chip("Peak occupancy", f"{peak:,}")]
+    peak_pct = stats.get("peak_pct")
+    if isinstance(peak_pct, (int, float)):
+        if peak_pct >= 90:
+            verdict = "bad"
+        elif peak_pct >= 70:
+            verdict = "warn"
+        else:
+            verdict = "good"
+        chips.append(_metric_chip("Peak pressure", f"{peak_pct:g}%", verdict=verdict))
+    chips.append(_metric_chip("Compactions", str(stats.get("compaction_count") or 0)))
+    drop = stats.get("largest_drop") or 0
+    chips.append(_metric_chip("Largest drop", f"-{drop:,}" if drop else "0"))
+    return (
+        "<div style='margin:4px 0 8px;'>"
+        + _metric_grid(chips)
+        + "</div>"
+    )
+
+
