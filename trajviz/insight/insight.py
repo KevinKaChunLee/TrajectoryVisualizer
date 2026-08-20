@@ -1001,9 +1001,9 @@ def build_ui() -> gr.Blocks:
                     gr.Markdown(
                         "_Upload several runs of the **same task** (different models, "
                         "harnesses, or prompts). Builds a metrics scorecard plus "
-                        "behavioral similarity, consensus/unique actions, and waste "
-                        "patterns vs the first run. For a full pairwise report, use "
-                        "**Pairwise comparison** below._",
+                        "behavioral similarity, tool/MCP/skill coverage, action/file "
+                        "matrices, and waste patterns vs the first run. For a full "
+                        "pairwise report, use **Pairwise comparison** below._",
                     )
                     with gr.Row(equal_height=True):
                         rg_format_selector = gr.Dropdown(

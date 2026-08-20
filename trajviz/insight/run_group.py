@@ -1,8 +1,9 @@
 """N-run scorecard + behavioral comparison for the same task.
 
 Phase 1 — per-run metrics side-by-side.
-Phase 2 — all-pairs alignment F1, consensus vs unique actions/files, and
-waste patterns relative to a baseline (first successfully loaded run).
+Phase 2 — all-pairs alignment F1, consensus vs unique actions/files, tool /
+MCP / skill coverage, and waste patterns relative to a baseline (first
+successfully loaded run).
 """
 
 from __future__ import annotations
@@ -131,6 +132,116 @@ def _fmt_signature(sig: tuple[str, str]) -> str:
     return f"{atype}({short})"
 
 
+_SKILL_TOOL_NAMES = frozenset({
+    "skill", "skills", "Skill", "Skills",
+    "invoke_skill", "InvokeSkill", "run_skill", "RunSkill",
+})
+
+
+def _parse_mcp_label(tool_name: str) -> str | None:
+    """Return a display label for MCP tools, or None if not MCP.
+
+    Claude Code / Agent SDK: ``mcp__server__tool`` or
+    ``mcp__plugin_<plugin>_<server>__tool``.
+    """
+    name = (tool_name or "").strip()
+    if not name:
+        return None
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        # ["mcp", server_or_plugin..., tool...]
+        if len(parts) >= 3:
+            server = parts[1]
+            tool = "__".join(parts[2:]) or "?"
+            return f"{server} / {tool}"
+        return name
+    lower = name.lower()
+    if lower.startswith("mcp_") or lower.startswith("mcp-"):
+        return name
+    return None
+
+
+def _parse_skill_name(tool_name: str, tool_input: Any) -> str | None:
+    """Return skill id when this call invokes a Skill tool."""
+    name_l = (tool_name or "").lower()
+    if name_l not in {n.lower() for n in _SKILL_TOOL_NAMES}:
+        return None
+    if isinstance(tool_input, dict):
+        for key in ("skill", "name", "skill_name", "skillName", "id", "skill_id"):
+            val = tool_input.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    if isinstance(tool_input, str) and tool_input.strip():
+        return tool_input.strip()
+    return "(unnamed skill)"
+
+
+def extract_capability_usage(steps: list[dict]) -> dict[str, Counter[str]]:
+    """Count tools, MCP tools, and skill triggers from parsed steps.
+
+    - ``tools``: non-MCP tool names (includes Skill as a tool type)
+    - ``mcps``: MCP tools as ``server / tool`` labels
+    - ``skills``: skill ids from Skill-tool invocations
+    """
+    tools: Counter[str] = Counter()
+    mcps: Counter[str] = Counter()
+    skills: Counter[str] = Counter()
+    for step in steps:
+        for tc in step.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            name = str(tc.get("tool_name") or "").strip()
+            if not name or name == "?":
+                continue
+            mcp_label = _parse_mcp_label(name)
+            if mcp_label:
+                mcps[mcp_label] += 1
+                continue
+            tools[name] += 1
+            skill = _parse_skill_name(name, tc.get("input"))
+            if skill:
+                skills[skill] += 1
+    return {"tools": tools, "mcps": mcps, "skills": skills}
+
+
+def _coverage_kind(n_runs: int, thresh: int) -> str:
+    if n_runs >= thresh:
+        return "consensus"
+    if n_runs == 1:
+        return "unique"
+    return "partial"
+
+
+def _build_count_matrix(
+    counts_by_run: dict[str, Counter[str]],
+    run_ids: list[str],
+    thresh: int,
+    *,
+    limit: int = 50,
+) -> tuple[list[dict], int]:
+    """Build presence/count matrix rows for string keys across runs."""
+    key_counts: Counter[str] = Counter()
+    for rid in run_ids:
+        for key in counts_by_run.get(rid, ()):
+            key_counts[key] += 1
+    kind_rank = {"consensus": 0, "partial": 1, "unique": 2}
+    rows: list[dict] = []
+    for key, n_runs in key_counts.items():
+        cells: dict[str, dict] = {}
+        for rid in run_ids:
+            count = int(counts_by_run.get(rid, Counter()).get(key, 0))
+            cells[rid] = {"present": count > 0, "count": count}
+        rows.append({
+            "key": key,
+            "short": _short_path(key, limit=64),
+            "kind": _coverage_kind(n_runs, thresh),
+            "n_runs": n_runs,
+            "cells": cells,
+        })
+    rows.sort(key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["key"].lower()))
+    return rows[:limit], len(rows)
+
+
 def build_run_scorecard_row(
     raw: dict,
     *,
@@ -214,7 +325,8 @@ def build_behavioral_comparison(
     """All-pairs F1, consensus/unique signatures, baseline-relative patterns.
 
     Each ``runs`` entry needs ``run_id``, ``label``, and ``actions``
-    (list[CanonicalAction]). Optional ``baseline_run_id`` is the first run.
+    (list[CanonicalAction]). Optional ``steps`` enables tool / MCP / skill
+    coverage matrices. Baseline is the first run.
     """
     if len(runs) < 2:
         return {}
@@ -261,12 +373,6 @@ def build_behavioral_comparison(
     action_rows: list[dict] = []
     for sig, n_runs in sig_counts.items():
         atype, target = sig
-        if n_runs >= thresh:
-            kind = "consensus"
-        elif n_runs == 1:
-            kind = "unique"
-        else:
-            kind = "partial"
         cells: dict[str, dict] = {}
         for rid in ids:
             count = int(sig_counts_by_run[rid].get(sig, 0))
@@ -276,7 +382,7 @@ def build_behavioral_comparison(
             "target": target,
             "short_target": _short_path(target, limit=48) if target != "*" else "",
             "label": _fmt_signature(sig),
-            "kind": kind,
+            "kind": _coverage_kind(n_runs, thresh),
             "n_runs": n_runs,
             "cells": cells,
         })
@@ -296,22 +402,28 @@ def build_behavioral_comparison(
                 n_runs += 1
             else:
                 cells_f[rid] = {"read": False, "write": False}
-        if n_runs >= thresh:
-            kind = "consensus"
-        elif n_runs == 1:
-            kind = "unique"
-        else:
-            kind = "partial"
         file_rows.append({
             "path": path,
             "short": _short_path(path),
-            "kind": kind,
+            "kind": _coverage_kind(n_runs, thresh),
             "n_runs": n_runs,
             "cells": cells_f,
         })
 
     file_rows.sort(key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["path"]))
     file_matrix = file_rows[:50]
+
+    # Tools / MCP / skills from parsed steps (when available)
+    usage_by_run = {
+        r["run_id"]: extract_capability_usage(r.get("steps") or [])
+        for r in runs
+    }
+    tool_counts = {rid: usage_by_run[rid]["tools"] for rid in ids}
+    mcp_counts = {rid: usage_by_run[rid]["mcps"] for rid in ids}
+    skill_counts = {rid: usage_by_run[rid]["skills"] for rid in ids}
+    tool_matrix, tool_total = _build_count_matrix(tool_counts, ids, thresh, limit=50)
+    mcp_matrix, mcp_total = _build_count_matrix(mcp_counts, ids, thresh, limit=40)
+    skill_matrix, skill_total = _build_count_matrix(skill_counts, ids, thresh, limit=40)
 
     # Waste patterns: each non-baseline run vs baseline alignment extras
     patterns_by_run: dict[str, list[dict]] = {baseline_id: []}
@@ -360,6 +472,12 @@ def build_behavioral_comparison(
         "action_matrix_total": len(action_rows),
         "file_matrix": file_matrix,
         "file_matrix_total": len(file_rows),
+        "tool_matrix": tool_matrix,
+        "tool_matrix_total": tool_total,
+        "mcp_matrix": mcp_matrix,
+        "mcp_matrix_total": mcp_total,
+        "skill_matrix": skill_matrix,
+        "skill_matrix_total": skill_total,
         "patterns_vs_baseline": patterns_by_run,
     }
 
@@ -421,6 +539,7 @@ def build_run_group_scorecard(
             "run_id": run_id,
             "label": row["label"],
             "actions": actions,
+            "steps": steps,
         })
 
     if not loaded_runs:
@@ -705,6 +824,77 @@ def _render_file_matrix_html(behavior: dict) -> str:
     return "".join(parts)
 
 
+def _render_count_matrix_html(
+    behavior: dict,
+    *,
+    matrix_key: str,
+    total_key: str,
+    title: str,
+    blurb: str,
+    empty: str,
+    noun: str,
+) -> str:
+    """Shared renderer for tool / MCP / skill presence matrices."""
+    ids = behavior.get("run_ids") or []
+    labels = behavior.get("labels") or {}
+    rows = behavior.get(matrix_key) or []
+    total = int(behavior.get(total_key) or len(rows))
+    n = len(ids)
+    parts = [
+        f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>{html.escape(title)}</h4>",
+        f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
+        f"{html.escape(blurb)}</div>",
+    ]
+    if not rows:
+        parts.append(
+            f"<div style='font-size:12px;color:var(--ov-muted);'>"
+            f"{html.escape(empty)}</div>"
+        )
+        return "".join(parts)
+
+    parts.append(
+        "<div class='rg-file-scroll'>"
+        "<table class='cvg-outcome-table rg-file-table'><thead><tr>"
+        f"<th>{html.escape(noun)}</th>"
+    )
+    for rid in ids:
+        parts.append(
+            f"<th style='text-align:center;'>"
+            f"{html.escape(str(labels.get(rid, rid)))}</th>"
+        )
+    parts.append("<th>Coverage</th></tr></thead><tbody>")
+
+    for row in rows:
+        key = str(row.get("key") or "")
+        short = str(row.get("short") or key)
+        kind = str(row.get("kind") or "partial")
+        n_runs = int(row.get("n_runs") or 0)
+        cells = row.get("cells") or {}
+        parts.append(f"<tr class='rg-row-{kind}'>")
+        parts.append(
+            f"<td class='rg-file-path' title='{html.escape(key)}'>"
+            f"<code>{html.escape(short)}</code></td>"
+        )
+        for rid in ids:
+            cell = cells.get(rid) or {"present": False, "count": 0}
+            parts.append(
+                f"<td style='text-align:center;white-space:nowrap;'>"
+                f"{_action_cell(cell)}</td>"
+            )
+        parts.append(
+            f"<td style='white-space:nowrap;'>"
+            f"{_kind_badge(kind, n_runs, n)}</td>"
+        )
+        parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+    if total > len(rows):
+        parts.append(
+            f"<div style='font-size:12px;color:var(--ov-muted);margin-top:4px;'>"
+            f"Showing {len(rows)} of {total} {html.escape(noun.lower())}s</div>"
+        )
+    return "".join(parts)
+
+
 def _render_behavior_html(behavior: dict | None) -> str:
     if not behavior:
         return ""
@@ -717,9 +907,36 @@ def _render_behavior_html(behavior: dict | None) -> str:
         "<h3 style='margin:0 0 0.35em;font-size:15px;'>Behavioral comparison</h3>",
         f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:8px;'>"
         f"Baseline for waste patterns: <b>{html.escape(str(base_label))}</b> "
-        f"(first loaded run). Consensus = action/file seen in ≥{thresh} runs."
+        f"(first loaded run). Consensus = item seen in ≥{thresh} runs."
         f"</div>",
         _render_similarity_html(behavior),
+        _render_count_matrix_html(
+            behavior,
+            matrix_key="tool_matrix",
+            total_key="tool_matrix_total",
+            title="Tool coverage",
+            blurb="Harness / built-in tools (MCP tools are listed separately below).",
+            empty="No non-MCP tools recorded across these runs.",
+            noun="Tool",
+        ),
+        _render_count_matrix_html(
+            behavior,
+            matrix_key="mcp_matrix",
+            total_key="mcp_matrix_total",
+            title="MCP coverage",
+            blurb="MCP tools as server / tool (from mcp__… names).",
+            empty="No MCP tools recorded across these runs.",
+            noun="MCP",
+        ),
+        _render_count_matrix_html(
+            behavior,
+            matrix_key="skill_matrix",
+            total_key="skill_matrix_total",
+            title="Skill coverage",
+            blurb="Skills triggered via the Skill tool (name from tool input).",
+            empty="No Skill-tool invocations recorded across these runs.",
+            noun="Skill",
+        ),
         _render_action_matrix_html(behavior),
         _render_file_matrix_html(behavior),
     ]

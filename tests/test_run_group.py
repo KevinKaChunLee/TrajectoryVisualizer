@@ -12,7 +12,10 @@ from trajviz.insight.run_group import (
     build_run_group_scorecard_html,
     build_run_scorecard_row,
     default_run_label,
+    extract_capability_usage,
     normalize_run_paths,
+    _parse_mcp_label,
+    _parse_skill_name,
 )
 
 
@@ -86,6 +89,64 @@ def _action(atype: str, target: str, step: int = 0) -> CanonicalAction:
     return CanonicalAction(step_index=step, action_type=atype, target=target, tool=atype)
 
 
+def _steps_with_tools(calls: list[tuple[str, dict | None]]) -> list[dict]:
+    """Minimal parsed steps carrying tool_calls for capability extraction."""
+    tool_calls = []
+    for i, (name, inp) in enumerate(calls):
+        tool_calls.append({
+            "tool_name": name,
+            "input": inp or {},
+            "status": "completed",
+        })
+    return [{
+        "index": 0,
+        "role": "assistant",
+        "tool_calls": tool_calls,
+        "tokens": {"total": 10, "input": 10, "output": 0, "reasoning": 0,
+                   "cache_read": 0, "cache_write": 0},
+    }]
+
+
+class CapabilityExtractionTests(unittest.TestCase):
+    def test_mcp_label(self):
+        self.assertEqual(
+            _parse_mcp_label("mcp__github__list_issues"),
+            "github / list_issues",
+        )
+        self.assertEqual(
+            _parse_mcp_label("mcp__plugin_asana_asana__create_task"),
+            "plugin_asana_asana / create_task",
+        )
+        self.assertIsNone(_parse_mcp_label("Read"))
+
+    def test_skill_name(self):
+        self.assertEqual(
+            _parse_skill_name("Skill", {"skill": "create-rule"}),
+            "create-rule",
+        )
+        self.assertEqual(
+            _parse_skill_name("skill", {"name": "canvas"}),
+            "canvas",
+        )
+        self.assertIsNone(_parse_skill_name("Bash", {"command": "ls"}))
+
+    def test_extract_splits_tools_mcps_skills(self):
+        steps = _steps_with_tools([
+            ("Read", {"file_path": "a.py"}),
+            ("mcp__slack__post_message", {"text": "hi"}),
+            ("Skill", {"skill": "create-hook"}),
+            ("Skill", {"skill": "create-hook"}),
+            ("Bash", {"command": "ls"}),
+        ])
+        usage = extract_capability_usage(steps)
+        self.assertEqual(usage["tools"]["Read"], 1)
+        self.assertEqual(usage["tools"]["Bash"], 1)
+        self.assertEqual(usage["tools"]["Skill"], 2)
+        self.assertNotIn("mcp__slack__post_message", usage["tools"])
+        self.assertEqual(usage["mcps"]["slack / post_message"], 1)
+        self.assertEqual(usage["skills"]["create-hook"], 2)
+
+
 class NormalizePathsTests(unittest.TestCase):
     def test_list_and_dedupe(self):
         self.assertEqual(normalize_run_paths(["a.json", "b.json", "a.json"]), ["a.json", "b.json"])
@@ -126,6 +187,11 @@ class BehavioralComparisonTests(unittest.TestCase):
                     _action("FILE_WRITE", "src/main.py", 2),
                     _action("SEARCH", "bug@src", 3),
                 ],
+                "steps": _steps_with_tools([
+                    ("Read", {}),
+                    ("Skill", {"skill": "shared-skill"}),
+                    ("mcp__github__list_issues", {}),
+                ]),
             },
             {
                 "run_id": "b",
@@ -135,6 +201,13 @@ class BehavioralComparisonTests(unittest.TestCase):
                     _action("FILE_WRITE", "src/main.py", 2),
                     _action("FILE_READ", "other.py", 3),
                 ],
+                "steps": _steps_with_tools([
+                    ("Read", {}),
+                    ("Write", {}),
+                    ("Skill", {"skill": "shared-skill"}),
+                    ("Skill", {"skill": "only-b"}),
+                    ("mcp__slack__post_message", {}),
+                ]),
             },
             {
                 "run_id": "c",
@@ -143,6 +216,10 @@ class BehavioralComparisonTests(unittest.TestCase):
                     _action("FILE_READ", "src/main.py", 1),
                     _action("FILE_WRITE", "src/main.py", 2),
                 ],
+                "steps": _steps_with_tools([
+                    ("Read", {}),
+                    ("Skill", {"skill": "shared-skill"}),
+                ]),
             },
         ]
         behavior = build_behavioral_comparison(runs)
@@ -170,6 +247,19 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertEqual(action_by_key[("FILE_READ", "other.py")]["kind"], "unique")
         self.assertTrue(action_by_key[("FILE_READ", "other.py")]["cells"]["b"]["present"])
         self.assertFalse(action_by_key[("FILE_READ", "other.py")]["cells"]["a"]["present"])
+
+        tools = {r["key"]: r for r in behavior["tool_matrix"]}
+        self.assertIn("Read", tools)
+        self.assertEqual(tools["Read"]["kind"], "consensus")
+        self.assertEqual(tools["Write"]["kind"], "unique")
+        mcps = {r["key"]: r for r in behavior["mcp_matrix"]}
+        self.assertIn("github / list_issues", mcps)
+        self.assertEqual(mcps["github / list_issues"]["kind"], "unique")
+        self.assertIn("slack / post_message", mcps)
+        skills = {r["key"]: r for r in behavior["skill_matrix"]}
+        self.assertEqual(skills["shared-skill"]["kind"], "consensus")
+        self.assertEqual(skills["only-b"]["kind"], "unique")
+
         # B and C have pattern slots vs baseline A
         self.assertIn("b", behavior["patterns_vs_baseline"])
         self.assertIn("c", behavior["patterns_vs_baseline"])
@@ -192,10 +282,14 @@ class BehavioralComparisonTests(unittest.TestCase):
         })
         self.assertIn("File coverage", html)
         self.assertIn("Action coverage", html)
+        self.assertIn("Tool coverage", html)
+        self.assertIn("MCP coverage", html)
+        self.assertIn("Skill coverage", html)
         self.assertIn("rg-badge-r", html)
         self.assertIn("rg-badge-w", html)
         self.assertIn("rg-atype-read", html)
         self.assertIn("other.py", html)
+        self.assertIn("shared-skill", html)
 
 
 class ScorecardGroupTests(unittest.TestCase):
