@@ -138,29 +138,6 @@ _SKILL_TOOL_NAMES = frozenset({
 })
 
 
-def _parse_mcp_label(tool_name: str) -> str | None:
-    """Return a display label for MCP tools, or None if not MCP.
-
-    Claude Code / Agent SDK: ``mcp__server__tool`` or
-    ``mcp__plugin_<plugin>_<server>__tool``.
-    """
-    name = (tool_name or "").strip()
-    if not name:
-        return None
-    if name.startswith("mcp__"):
-        parts = name.split("__")
-        # ["mcp", server_or_plugin..., tool...]
-        if len(parts) >= 3:
-            server = parts[1]
-            tool = "__".join(parts[2:]) or "?"
-            return f"{server} / {tool}"
-        return name
-    lower = name.lower()
-    if lower.startswith("mcp_") or lower.startswith("mcp-"):
-        return name
-    return None
-
-
 def _parse_skill_name(tool_name: str, tool_input: Any) -> str | None:
     """Return skill id when this call invokes a Skill tool."""
     name_l = (tool_name or "").lower()
@@ -177,14 +154,12 @@ def _parse_skill_name(tool_name: str, tool_input: Any) -> str | None:
 
 
 def extract_capability_usage(steps: list[dict]) -> dict[str, Counter[str]]:
-    """Count tools, MCP tools, and skill triggers from parsed steps.
+    """Count tools and skill triggers from parsed steps.
 
-    - ``tools``: non-MCP tool names (includes Skill as a tool type)
-    - ``mcps``: MCP tools as ``server / tool`` labels
+    - ``tools``: all tool names (includes MCP and Skill as tool types)
     - ``skills``: skill ids from Skill-tool invocations
     """
     tools: Counter[str] = Counter()
-    mcps: Counter[str] = Counter()
     skills: Counter[str] = Counter()
     for step in steps:
         for tc in step.get("tool_calls") or []:
@@ -193,15 +168,11 @@ def extract_capability_usage(steps: list[dict]) -> dict[str, Counter[str]]:
             name = str(tc.get("tool_name") or "").strip()
             if not name or name == "?":
                 continue
-            mcp_label = _parse_mcp_label(name)
-            if mcp_label:
-                mcps[mcp_label] += 1
-                continue
             tools[name] += 1
             skill = _parse_skill_name(name, tc.get("input"))
             if skill:
                 skills[skill] += 1
-    return {"tools": tools, "mcps": mcps, "skills": skills}
+    return {"tools": tools, "skills": skills}
 
 
 def _coverage_kind(n_runs: int, thresh: int) -> str:
@@ -413,16 +384,14 @@ def build_behavioral_comparison(
     file_rows.sort(key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["path"]))
     file_matrix = file_rows[:50]
 
-    # Tools / MCP / skills from parsed steps (when available)
+    # Tools / skills from parsed steps (when available)
     usage_by_run = {
         r["run_id"]: extract_capability_usage(r.get("steps") or [])
         for r in runs
     }
     tool_counts = {rid: usage_by_run[rid]["tools"] for rid in ids}
-    mcp_counts = {rid: usage_by_run[rid]["mcps"] for rid in ids}
     skill_counts = {rid: usage_by_run[rid]["skills"] for rid in ids}
     tool_matrix, tool_total = _build_count_matrix(tool_counts, ids, thresh, limit=50)
-    mcp_matrix, mcp_total = _build_count_matrix(mcp_counts, ids, thresh, limit=40)
     skill_matrix, skill_total = _build_count_matrix(skill_counts, ids, thresh, limit=40)
 
     # Waste patterns: each non-baseline run vs baseline alignment extras
@@ -474,8 +443,6 @@ def build_behavioral_comparison(
         "file_matrix_total": len(file_rows),
         "tool_matrix": tool_matrix,
         "tool_matrix_total": tool_total,
-        "mcp_matrix": mcp_matrix,
-        "mcp_matrix_total": mcp_total,
         "skill_matrix": skill_matrix,
         "skill_matrix_total": skill_total,
         "patterns_vs_baseline": patterns_by_run,
@@ -488,19 +455,41 @@ def build_run_group_scorecard(
     labels: list[str] | None = None,
     format_hint: str | None = None,
     fuzzy: bool = False,
+    baseline_raw: dict | None = None,
+    baseline_label: str | None = None,
 ) -> dict:
     """Load N trajectories, scorecard rows, and behavioral comparison.
 
-    Returns ``{"rows", "behavior", "ok", "error"}``.
+    When ``baseline_raw`` is provided (e.g. the Overview trajectory), it is
+    always the first run and the baseline for waste patterns. Uploaded
+    ``paths`` are additional comparison runs — only one upload is required
+    in that case.
+
+    Returns ``{"rows", "behavior", "timeline_runs", "ok", "error"}``.
     """
-    if not paths:
+    paths = list(paths or [])
+    has_baseline = isinstance(baseline_raw, dict) and baseline_raw and "_error" not in baseline_raw
+    # Need ≥2 runs total: baseline+≥1 path, or ≥2 paths with no baseline
+    min_paths = 1 if has_baseline else 2
+    if not has_baseline and not paths:
         return {
-            "rows": [], "behavior": None, "ok": False,
-            "error": "Upload at least two trajectory files.",
+            "rows": [], "behavior": None, "timeline_runs": [], "ok": False,
+            "error": (
+                "Load a trajectory in Overview (baseline), then upload at least "
+                "one more run — or upload two or more trajectories here."
+            ),
         }
-    if len(paths) < 2:
+    if len(paths) < min_paths:
+        if has_baseline:
+            return {
+                "rows": [], "behavior": None, "timeline_runs": [], "ok": False,
+                "error": (
+                    "Upload at least one comparison trajectory "
+                    "(Overview is already included as the baseline)."
+                ),
+            }
         return {
-            "rows": [], "behavior": None, "ok": False,
+            "rows": [], "behavior": None, "timeline_runs": [], "ok": False,
             "error": "Upload at least two trajectories to build a run-group scorecard.",
         }
 
@@ -508,14 +497,15 @@ def build_run_group_scorecard(
     loaded_runs: list[dict] = []
     used_ids: set[str] = set()
 
-    for i, path in enumerate(paths):
-        label = None
-        if labels and i < len(labels) and labels[i]:
-            label = labels[i]
-        raw = load_trajectory(path, format_hint=format_hint)
-        base_id = default_run_label(path) or f"run-{i + 1}"
+    def _append_raw(
+        raw: dict,
+        *,
+        path: str,
+        label: str | None,
+        prefer_id: str | None = None,
+    ) -> None:
+        base_id = prefer_id or default_run_label(path) or f"run-{len(used_ids) + 1}"
         run_id = base_id
-        # Disambiguate duplicate basenames
         suffix = 2
         while run_id in used_ids:
             run_id = f"{base_id}-{suffix}"
@@ -526,7 +516,7 @@ def build_run_group_scorecard(
             rows.append(build_run_scorecard_row(
                 raw, path=path, label=label or run_id, run_id=run_id,
             ))
-            continue
+            return
 
         steps = parse_steps(raw)
         row = build_run_scorecard_row(
@@ -542,17 +532,62 @@ def build_run_group_scorecard(
             "steps": steps,
         })
 
+    if has_baseline:
+        src = str(baseline_raw.get("_source_path") or "")
+        if baseline_label:
+            blabel = baseline_label
+        elif src:
+            blabel = f"{default_run_label(src)} (baseline)"
+        else:
+            blabel = "Overview (baseline)"
+        prefer_id = (default_run_label(src) if src else None) or "overview"
+        _append_raw(
+            baseline_raw,
+            path=src or "(overview)",
+            label=blabel,
+            prefer_id=prefer_id,
+        )
+
+    for i, path in enumerate(paths):
+        label = None
+        # labels list aligns with uploaded paths only (not baseline)
+        if labels and i < len(labels) and labels[i]:
+            label = labels[i]
+        raw = load_trajectory(path, format_hint=format_hint)
+        _append_raw(raw, path=path, label=label)
+
     if not loaded_runs:
         return {
-            "rows": rows, "behavior": None, "ok": False,
-            "error": "None of the uploaded trajectories could be loaded.",
+            "rows": rows, "behavior": None, "timeline_runs": [], "ok": False,
+            "error": "None of the trajectories could be loaded.",
         }
 
-    behavior = None
-    if len(loaded_runs) >= 2:
-        behavior = build_behavioral_comparison(loaded_runs, fuzzy=fuzzy)
+    if len(loaded_runs) < 2:
+        return {
+            "rows": rows, "behavior": None, "timeline_runs": [], "ok": False,
+            "error": (
+                "Need at least two successfully loaded runs "
+                "(Overview baseline + one comparison, or two uploads)."
+            ),
+        }
 
-    return {"rows": rows, "behavior": behavior, "ok": True, "error": None}
+    behavior = build_behavioral_comparison(loaded_runs, fuzzy=fuzzy)
+
+    timeline_runs = [
+        {
+            "run_id": r["run_id"],
+            "label": r["label"],
+            "steps": r.get("steps") or [],
+        }
+        for r in loaded_runs
+    ]
+    return {
+        "rows": rows,
+        "behavior": behavior,
+        "timeline_runs": timeline_runs,
+        "ok": True,
+        "error": None,
+    }
 
 
 def _best_worst_flags(rows: list[dict]) -> dict[str, dict[str, set[str]]]:
@@ -915,18 +950,9 @@ def _render_behavior_html(behavior: dict | None) -> str:
             matrix_key="tool_matrix",
             total_key="tool_matrix_total",
             title="Tool coverage",
-            blurb="Harness / built-in tools (MCP tools are listed separately below).",
-            empty="No non-MCP tools recorded across these runs.",
+            blurb="All tool names used across runs (including MCP tools).",
+            empty="No tools recorded across these runs.",
             noun="Tool",
-        ),
-        _render_count_matrix_html(
-            behavior,
-            matrix_key="mcp_matrix",
-            total_key="mcp_matrix_total",
-            title="MCP coverage",
-            blurb="MCP tools as server / tool (from mcp__… names).",
-            empty="No MCP tools recorded across these runs.",
-            noun="MCP",
         ),
         _render_count_matrix_html(
             behavior,
@@ -979,8 +1005,12 @@ def _render_behavior_html(behavior: dict | None) -> str:
     return "".join(parts)
 
 
-def build_run_group_scorecard_html(result: dict) -> str:
-    """Render scorecard table plus behavioral comparison sections."""
+def build_run_group_scorecard_html(
+    result: dict,
+    *,
+    include_behavior: bool = True,
+) -> str:
+    """Render scorecard table, optionally plus behavioral comparison sections."""
     error = result.get("error")
     rows = result.get("rows") or []
     if error and not rows:
@@ -1062,5 +1092,11 @@ def build_run_group_scorecard_html(result: dict) -> str:
         parts.append("</tr>")
 
     parts.append("</tbody></table>")
-    parts.append(_render_behavior_html(result.get("behavior")))
+    if include_behavior:
+        parts.append(_render_behavior_html(result.get("behavior")))
     return "".join(parts)
+
+
+def build_run_group_behavior_html(result: dict) -> str:
+    """Render behavioral comparison sections for a scorecard result."""
+    return _render_behavior_html(result.get("behavior") if result else None)

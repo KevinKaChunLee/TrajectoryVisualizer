@@ -594,6 +594,120 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     return fig
 
 
+def build_run_group_agent_timeline(
+    runs: list[dict],
+    *,
+    dark: bool = False,
+) -> go.Figure:
+    """Compact N-run agent timeline: one horizontal lane per run.
+
+    Each run dict needs ``label`` (or ``run_id``) and ``steps`` (parsed).
+    Segments within a lane are colored by ``effective_agent``; the same
+    agent id shares a color across runs. Empty agent → ``main``.
+    """
+    usable = [
+        r for r in runs
+        if isinstance(r, dict) and (r.get("steps") or [])
+    ]
+    if not usable:
+        fig = _empty_figure(200, "No agent activity across runs.")
+        _apply_dark(fig, dark)
+        return fig
+
+    # Shared palette: main first, then agents in first-seen order across runs
+    color_map: dict[str, int] = {"": 0}
+    next_idx = 1
+    for run in usable:
+        for s in run.get("steps") or []:
+            if not isinstance(s, dict):
+                continue
+            agent = _effective_agent(s)
+            if agent and agent not in color_map:
+                color_map[agent] = next_idx
+                next_idx += 1
+
+    def _agent_label(agent_id: str) -> str:
+        if not agent_id:
+            return "main"
+        short = agent_id[:16] if len(agent_id) > 16 else agent_id
+        return f"sub {short}"
+
+    fig = go.Figure()
+    legend_seen: set[str] = set()
+    y_labels: list[str] = []
+
+    # First loaded run at top
+    for run in reversed(usable):
+        label = str(run.get("label") or run.get("run_id") or "run")
+        y_labels.append(label)
+        steps = run.get("steps") or []
+
+        # Contiguous same-agent segments
+        segments: list[tuple[str, int, int, int, int]] = []
+        cur_agent: str | None = None
+        start = end = tok = tools = 0
+        for s in steps:
+            if not isinstance(s, dict):
+                continue
+            agent = _effective_agent(s)
+            idx = int(s.get("index") if s.get("index") is not None else 0)
+            stok = int((s.get("tokens") or {}).get("total") or 0)
+            stools = int(s.get("tool_call_count") or 0)
+            if cur_agent is None:
+                cur_agent, start, end, tok, tools = agent, idx, idx, stok, stools
+            elif agent == cur_agent and idx == end + 1:
+                end, tok, tools = idx, tok + stok, tools + stools
+            else:
+                segments.append((cur_agent, start, end, tok, tools))
+                cur_agent, start, end, tok, tools = agent, idx, idx, stok, stools
+        if cur_agent is not None:
+            segments.append((cur_agent, start, end, tok, tools))
+
+        for agent, seg_start, seg_end, seg_tok, seg_tools in segments:
+            width = seg_end - seg_start + 1
+            pal_i = color_map.get(agent, 0)
+            hex_c = SESSION_COLORS[pal_i % len(SESSION_COLORS)]
+            alabel = _agent_label(agent)
+            show_leg = alabel not in legend_seen
+            if show_leg:
+                legend_seen.add(alabel)
+            fig.add_trace(go.Bar(
+                y=[label],
+                x=[width],
+                orientation="h",
+                base=seg_start,
+                marker_color=hex_c,
+                name=alabel,
+                legendgroup=alabel,
+                showlegend=show_leg,
+                hovertext=(
+                    f"<b>{label}</b><br>{alabel}<br>"
+                    f"steps {seg_start}–{seg_end} ({width})<br>"
+                    f"{seg_tok:,} tokens, {seg_tools} tool calls"
+                ),
+                hoverinfo="text",
+            ))
+
+    n = len(usable)
+    _apply_chart_layout(
+        fig, "Agent timeline (by run)",
+        xaxis="Step Index",
+        height=max(220, 56 * n + 100),
+        barmode="overlay",
+        margin=dict(l=120, r=20, t=90, b=40),
+        legend=dict(orientation="h", y=1.08, x=0.5, xanchor="center"),
+    )
+    fig.update_layout(
+        yaxis=dict(
+            categoryorder="array",
+            categoryarray=y_labels,
+            automargin=True,
+        ),
+    )
+    _apply_dark(fig, dark)
+    return fig
+
+
 # -- New chart types -------------------------------------------------------
 
 def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Figure:

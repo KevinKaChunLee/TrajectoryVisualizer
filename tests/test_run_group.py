@@ -6,15 +6,16 @@ import tempfile
 import unittest
 
 from trajviz.converge.canonical import CanonicalAction
+from trajviz.insight.charts import build_run_group_agent_timeline
 from trajviz.insight.run_group import (
     build_behavioral_comparison,
     build_run_group_scorecard,
     build_run_group_scorecard_html,
+    build_run_group_behavior_html,
     build_run_scorecard_row,
     default_run_label,
     extract_capability_usage,
     normalize_run_paths,
-    _parse_mcp_label,
     _parse_skill_name,
 )
 
@@ -108,17 +109,6 @@ def _steps_with_tools(calls: list[tuple[str, dict | None]]) -> list[dict]:
 
 
 class CapabilityExtractionTests(unittest.TestCase):
-    def test_mcp_label(self):
-        self.assertEqual(
-            _parse_mcp_label("mcp__github__list_issues"),
-            "github / list_issues",
-        )
-        self.assertEqual(
-            _parse_mcp_label("mcp__plugin_asana_asana__create_task"),
-            "plugin_asana_asana / create_task",
-        )
-        self.assertIsNone(_parse_mcp_label("Read"))
-
     def test_skill_name(self):
         self.assertEqual(
             _parse_skill_name("Skill", {"skill": "create-rule"}),
@@ -130,7 +120,7 @@ class CapabilityExtractionTests(unittest.TestCase):
         )
         self.assertIsNone(_parse_skill_name("Bash", {"command": "ls"}))
 
-    def test_extract_splits_tools_mcps_skills(self):
+    def test_extract_tools_and_skills(self):
         steps = _steps_with_tools([
             ("Read", {"file_path": "a.py"}),
             ("mcp__slack__post_message", {"text": "hi"}),
@@ -142,9 +132,9 @@ class CapabilityExtractionTests(unittest.TestCase):
         self.assertEqual(usage["tools"]["Read"], 1)
         self.assertEqual(usage["tools"]["Bash"], 1)
         self.assertEqual(usage["tools"]["Skill"], 2)
-        self.assertNotIn("mcp__slack__post_message", usage["tools"])
-        self.assertEqual(usage["mcps"]["slack / post_message"], 1)
+        self.assertEqual(usage["tools"]["mcp__slack__post_message"], 1)
         self.assertEqual(usage["skills"]["create-hook"], 2)
+        self.assertNotIn("mcps", usage)
 
 
 class NormalizePathsTests(unittest.TestCase):
@@ -252,10 +242,9 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertIn("Read", tools)
         self.assertEqual(tools["Read"]["kind"], "consensus")
         self.assertEqual(tools["Write"]["kind"], "unique")
-        mcps = {r["key"]: r for r in behavior["mcp_matrix"]}
-        self.assertIn("github / list_issues", mcps)
-        self.assertEqual(mcps["github / list_issues"]["kind"], "unique")
-        self.assertIn("slack / post_message", mcps)
+        self.assertEqual(tools["mcp__github__list_issues"]["kind"], "unique")
+        self.assertEqual(tools["mcp__slack__post_message"]["kind"], "unique")
+        self.assertNotIn("mcp_matrix", behavior)
         skills = {r["key"]: r for r in behavior["skill_matrix"]}
         self.assertEqual(skills["shared-skill"]["kind"], "consensus")
         self.assertEqual(skills["only-b"]["kind"], "unique")
@@ -283,7 +272,7 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertIn("File coverage", html)
         self.assertIn("Action coverage", html)
         self.assertIn("Tool coverage", html)
-        self.assertIn("MCP coverage", html)
+        self.assertNotIn("MCP coverage", html)
         self.assertIn("Skill coverage", html)
         self.assertIn("rg-badge-r", html)
         self.assertIn("rg-badge-w", html)
@@ -297,7 +286,36 @@ class ScorecardGroupTests(unittest.TestCase):
         result = build_run_group_scorecard([])
         self.assertFalse(result["ok"])
         html = build_run_group_scorecard_html(result)
-        self.assertIn("two", html.lower())
+        self.assertTrue(
+            "two" in html.lower() or "overview" in html.lower(),
+            html,
+        )
+
+    def test_overview_baseline_plus_one_upload(self):
+        baseline = _minimal_raw(steps=4, tokens_each=200, read_path="shared.py")
+        baseline["_source_path"] = "/tmp/overview-run.json"
+        other = _minimal_raw(
+            steps=4, tokens_each=80, read_path="shared.py", extra_search=True,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path_b = os.path.join(tmp, "alt-model.json")
+            with open(path_b, "w", encoding="utf-8") as f:
+                json.dump(other, f)
+            # One upload is enough when Overview baseline is present
+            result = build_run_group_scorecard(
+                [path_b],
+                baseline_raw=baseline,
+            )
+            self.assertTrue(result["ok"], result.get("error"))
+            self.assertEqual(len(result["rows"]), 2)
+            self.assertIn("baseline", result["rows"][0]["label"].lower())
+            self.assertEqual(
+                result["behavior"]["baseline_run_id"],
+                result["rows"][0]["run_id"],
+            )
+            # Without baseline, one path is not enough
+            alone = build_run_group_scorecard([path_b])
+            self.assertFalse(alone["ok"])
 
     def test_two_temp_files_include_behavior(self):
         raw_a = _minimal_raw(steps=4, tokens_each=200, read_path="shared.py")
@@ -317,13 +335,19 @@ class ScorecardGroupTests(unittest.TestCase):
             )
             self.assertTrue(result["ok"], result.get("error"))
             self.assertIsNotNone(result.get("behavior"))
+            self.assertEqual(len(result.get("timeline_runs") or []), 2)
             behavior = result["behavior"]
             self.assertEqual(behavior["labels"]["model-a"], "Model A")
             self.assertIn("model-b", behavior["similarity"]["model-a"])
-            html = build_run_group_scorecard_html(result)
-            self.assertIn("Behavioral similarity", html)
+            html = build_run_group_scorecard_html(result, include_behavior=False)
             self.assertIn("Model A", html)
-            self.assertIn("Consensus", html)
+            self.assertNotIn("Behavioral similarity", html)
+            behavior_html = build_run_group_behavior_html(result)
+            self.assertIn("Behavioral similarity", behavior_html)
+            self.assertIn("Consensus", behavior_html)
+            fig = build_run_group_agent_timeline(result["timeline_runs"])
+            self.assertGreater(len(fig.data), 0)
+            self.assertIn("Agent timeline", fig.layout.title.text)
 
     def test_fixture_plus_copy(self):
         fixture = os.path.join(
@@ -343,6 +367,48 @@ class ScorecardGroupTests(unittest.TestCase):
             self.assertEqual(len(ids), 2)
             f1 = result["behavior"]["similarity"][ids[0]][ids[1]]
             self.assertGreaterEqual(f1, 0.9)
+
+
+class AgentTimelineChartTests(unittest.TestCase):
+    def test_one_lane_per_run_colored_by_agent(self):
+        runs = [
+            {
+                "run_id": "a",
+                "label": "Run A",
+                "steps": [
+                    {"index": 0, "role": "user", "agent": "",
+                     "tokens": {"total": 0}, "tool_call_count": 0},
+                    {"index": 1, "role": "assistant", "agent": "",
+                     "tokens": {"total": 10}, "tool_call_count": 1},
+                    {"index": 2, "role": "assistant", "agent": "explore",
+                     "tokens": {"total": 20}, "tool_call_count": 2},
+                    {"index": 3, "role": "assistant", "agent": "explore",
+                     "tokens": {"total": 5}, "tool_call_count": 0},
+                ],
+            },
+            {
+                "run_id": "b",
+                "label": "Run B",
+                "steps": [
+                    {"index": 0, "role": "assistant", "agent": "",
+                     "tokens": {"total": 8}, "tool_call_count": 1},
+                    {"index": 1, "role": "assistant", "agent": "",
+                     "tokens": {"total": 8}, "tool_call_count": 0},
+                ],
+            },
+        ]
+        fig = build_run_group_agent_timeline(runs)
+        # At least one bar segment per run; legend includes main
+        self.assertGreaterEqual(len(fig.data), 2)
+        y_vals = {t.y[0] for t in fig.data if t.y}
+        self.assertEqual(y_vals, {"Run A", "Run B"})
+        legend_names = {t.name for t in fig.data if t.showlegend}
+        self.assertIn("main", legend_names)
+        self.assertTrue(any(n.startswith("sub ") for n in legend_names))
+
+    def test_empty_runs(self):
+        fig = build_run_group_agent_timeline([])
+        self.assertEqual(len(fig.data), 0)
 
 
 if __name__ == "__main__":
