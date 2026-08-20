@@ -120,8 +120,8 @@ def _short_path(path: str, limit: int = 56) -> str:
     if len(path) <= limit:
         return path
     if len(base) + 3 >= limit:
-        return "…" + base[-(limit - 1):]
-    return "…" + path[-(limit - 1):]
+        return "…" + base[-(limit - 1) :]
+    return "…" + path[-(limit - 1) :]
 
 
 def _fmt_signature(sig: tuple[str, str]) -> str:
@@ -132,10 +132,18 @@ def _fmt_signature(sig: tuple[str, str]) -> str:
     return f"{atype}({short})"
 
 
-_SKILL_TOOL_NAMES = frozenset({
-    "skill", "skills", "Skill", "Skills",
-    "invoke_skill", "InvokeSkill", "run_skill", "RunSkill",
-})
+_SKILL_TOOL_NAMES = frozenset(
+    {
+        "skill",
+        "skills",
+        "Skill",
+        "Skills",
+        "invoke_skill",
+        "InvokeSkill",
+        "run_skill",
+        "RunSkill",
+    }
+)
 
 
 def _parse_skill_name(tool_name: str, tool_input: Any) -> str | None:
@@ -202,13 +210,15 @@ def _build_count_matrix(
         for rid in run_ids:
             count = int(counts_by_run.get(rid, Counter()).get(key, 0))
             cells[rid] = {"present": count > 0, "count": count}
-        rows.append({
-            "key": key,
-            "short": _short_path(key, limit=64),
-            "kind": _coverage_kind(n_runs, thresh),
-            "n_runs": n_runs,
-            "cells": cells,
-        })
+        rows.append(
+            {
+                "key": key,
+                "short": _short_path(key, limit=64),
+                "kind": _coverage_kind(n_runs, thresh),
+                "n_runs": n_runs,
+                "cells": cells,
+            }
+        )
     rows.sort(key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["key"].lower()))
     return rows[:limit], len(rows)
 
@@ -311,16 +321,14 @@ def build_behavioral_comparison(
     matrix: dict[str, dict[str, float]] = {i: {} for i in ids}
     for i, a in enumerate(ids):
         matrix[a][a] = 1.0
-        for b in ids[i + 1:]:
+        for b in ids[i + 1 :]:
             f1 = _pair_f1(actions_by_id[a], actions_by_id[b], fuzzy=fuzzy)
             matrix[a][b] = f1
             matrix[b][a] = f1
 
     # Consensus / unique on action signatures and files
     sig_sets = {rid: _signature_set(actions_by_id[rid]) for rid in ids}
-    sig_counts_by_run: dict[str, Counter[tuple[str, str]]] = {
-        rid: Counter() for rid in ids
-    }
+    sig_counts_by_run: dict[str, Counter[tuple[str, str]]] = {rid: Counter() for rid in ids}
     for rid, actions in actions_by_id.items():
         for action in actions:
             sig = _action_signature(action)
@@ -348,15 +356,17 @@ def build_behavioral_comparison(
         for rid in ids:
             count = int(sig_counts_by_run[rid].get(sig, 0))
             cells[rid] = {"present": count > 0, "count": count}
-        action_rows.append({
-            "type": atype,
-            "target": target,
-            "short_target": _short_path(target, limit=48) if target != "*" else "",
-            "label": _fmt_signature(sig),
-            "kind": _coverage_kind(n_runs, thresh),
-            "n_runs": n_runs,
-            "cells": cells,
-        })
+        action_rows.append(
+            {
+                "type": atype,
+                "target": target,
+                "short_target": _short_path(target, limit=48) if target != "*" else "",
+                "label": _fmt_signature(sig),
+                "kind": _coverage_kind(n_runs, thresh),
+                "n_runs": n_runs,
+                "cells": cells,
+            }
+        )
     action_rows.sort(
         key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["type"], r["target"]),
     )
@@ -373,22 +383,21 @@ def build_behavioral_comparison(
                 n_runs += 1
             else:
                 cells_f[rid] = {"read": False, "write": False}
-        file_rows.append({
-            "path": path,
-            "short": _short_path(path),
-            "kind": _coverage_kind(n_runs, thresh),
-            "n_runs": n_runs,
-            "cells": cells_f,
-        })
+        file_rows.append(
+            {
+                "path": path,
+                "short": _short_path(path),
+                "kind": _coverage_kind(n_runs, thresh),
+                "n_runs": n_runs,
+                "cells": cells_f,
+            }
+        )
 
     file_rows.sort(key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["path"]))
     file_matrix = file_rows[:50]
 
     # Tools / skills from parsed steps (when available)
-    usage_by_run = {
-        r["run_id"]: extract_capability_usage(r.get("steps") or [])
-        for r in runs
-    }
+    usage_by_run = {r["run_id"]: extract_capability_usage(r.get("steps") or []) for r in runs}
     tool_counts = {rid: usage_by_run[rid]["tools"] for rid in ids}
     skill_counts = {rid: usage_by_run[rid]["skills"] for rid in ids}
     tool_matrix, tool_total = _build_count_matrix(tool_counts, ids, thresh, limit=50)
@@ -408,9 +417,7 @@ def build_behavioral_comparison(
             for j in alignment["extra"]
             if j < len(cmp_actions) and cmp_actions[j].action_type != "REASON"
         ]
-        matched_actions = [
-            cmp_actions[j] for j in sorted(matched_cmp) if j < len(cmp_actions)
-        ]
+        matched_actions = [cmp_actions[j] for j in sorted(matched_cmp) if j < len(cmp_actions)]
         patterns = classify_divergences(
             extras,
             matched_actions,
@@ -473,7 +480,10 @@ def build_run_group_scorecard(
     min_paths = 1 if has_baseline else 2
     if not has_baseline and not paths:
         return {
-            "rows": [], "behavior": None, "timeline_runs": [], "ok": False,
+            "rows": [],
+            "behavior": None,
+            "timeline_runs": [],
+            "ok": False,
             "error": (
                 "Load a trajectory in Overview (baseline), then upload at least "
                 "one more run — or upload two or more trajectories here."
@@ -482,14 +492,17 @@ def build_run_group_scorecard(
     if len(paths) < min_paths:
         if has_baseline:
             return {
-                "rows": [], "behavior": None, "timeline_runs": [], "ok": False,
-                "error": (
-                    "Upload at least one comparison trajectory "
-                    "(Overview is already included as the baseline)."
-                ),
+                "rows": [],
+                "behavior": None,
+                "timeline_runs": [],
+                "ok": False,
+                "error": ("Upload at least one comparison trajectory (Overview is already included as the baseline)."),
             }
         return {
-            "rows": [], "behavior": None, "timeline_runs": [], "ok": False,
+            "rows": [],
+            "behavior": None,
+            "timeline_runs": [],
+            "ok": False,
             "error": "Upload at least two trajectories to build a run-group scorecard.",
         }
 
@@ -513,24 +526,35 @@ def build_run_group_scorecard(
         used_ids.add(run_id)
 
         if "_error" in raw:
-            rows.append(build_run_scorecard_row(
-                raw, path=path, label=label or run_id, run_id=run_id,
-            ))
+            rows.append(
+                build_run_scorecard_row(
+                    raw,
+                    path=path,
+                    label=label or run_id,
+                    run_id=run_id,
+                )
+            )
             return
 
         steps = parse_steps(raw)
         row = build_run_scorecard_row(
-            raw, path=path, label=label or run_id, run_id=run_id, steps=steps,
+            raw,
+            path=path,
+            label=label or run_id,
+            run_id=run_id,
+            steps=steps,
         )
         rows.append(row)
         actions = canonicalize_steps(steps)
         assign_effect_labels(actions, steps, None)
-        loaded_runs.append({
-            "run_id": run_id,
-            "label": row["label"],
-            "actions": actions,
-            "steps": steps,
-        })
+        loaded_runs.append(
+            {
+                "run_id": run_id,
+                "label": row["label"],
+                "actions": actions,
+                "steps": steps,
+            }
+        )
 
     if has_baseline:
         src = str(baseline_raw.get("_source_path") or "")
@@ -558,16 +582,21 @@ def build_run_group_scorecard(
 
     if not loaded_runs:
         return {
-            "rows": rows, "behavior": None, "timeline_runs": [], "ok": False,
+            "rows": rows,
+            "behavior": None,
+            "timeline_runs": [],
+            "ok": False,
             "error": "None of the trajectories could be loaded.",
         }
 
     if len(loaded_runs) < 2:
         return {
-            "rows": rows, "behavior": None, "timeline_runs": [], "ok": False,
+            "rows": rows,
+            "behavior": None,
+            "timeline_runs": [],
+            "ok": False,
             "error": (
-                "Need at least two successfully loaded runs "
-                "(Overview baseline + one comparison, or two uploads)."
+                "Need at least two successfully loaded runs (Overview baseline + one comparison, or two uploads)."
             ),
         }
 
@@ -598,11 +627,7 @@ def _best_worst_flags(rows: list[dict]) -> dict[str, dict[str, set[str]]]:
     higher_better = ("tool_success_pct",)
 
     def _collect(key: str, prefer_low: bool) -> None:
-        vals = [
-            (r["run_id"], r[key])
-            for r in usable
-            if isinstance(r.get(key), (int, float))
-        ]
+        vals = [(r["run_id"], r[key]) for r in usable if isinstance(r.get(key), (int, float))]
         if len(vals) < 2:
             return
         numbers = [v for _, v in vals]
@@ -665,9 +690,7 @@ def _render_similarity_html(behavior: dict) -> str:
         for b in ids:
             f1 = float((matrix.get(a) or {}).get(b) or 0.0)
             style = _f1_bg(f1)
-            parts.append(
-                f"<td style='text-align:center;{style}'>{f1:.2f}</td>"
-            )
+            parts.append(f"<td style='text-align:center;{style}'>{f1:.2f}</td>")
         parts.append("</tr>")
     parts.append("</tbody></table>")
     return "".join(parts)
@@ -694,10 +717,7 @@ def _kind_badge(kind: str, n_runs: int, n_total: int) -> str:
         "unique": ("unique", "rg-kind-unique"),
     }
     text, cls = labels.get(kind, (kind, "rg-kind-partial"))
-    return (
-        f"<span class='rg-kind {cls}'>{html.escape(text)}</span>"
-        f"<span class='rg-cov'>{n_runs}/{n_total}</span>"
-    )
+    return f"<span class='rg-kind {cls}'>{html.escape(text)}</span><span class='rg-cov'>{n_runs}/{n_total}</span>"
 
 
 def _action_type_badge(atype: str) -> str:
@@ -718,9 +738,7 @@ def _action_cell(cell: dict) -> str:
     count = int(cell.get("count") or 1)
     if count <= 1:
         return "<span class='rg-action-hit' title='Present'>✓</span>"
-    return (
-        f"<span class='rg-action-hit' title='{count} times'>✓×{count}</span>"
-    )
+    return f"<span class='rg-action-hit' title='{count} times'>✓×{count}</span>"
 
 
 def _render_action_matrix_html(behavior: dict) -> str:
@@ -739,21 +757,15 @@ def _render_action_matrix_html(behavior: dict) -> str:
     ]
     if not rows:
         parts.append(
-            "<div style='font-size:12px;color:var(--ov-muted);'>"
-            "No non-REASON actions across these runs.</div>"
+            "<div style='font-size:12px;color:var(--ov-muted);'>No non-REASON actions across these runs.</div>"
         )
         return "".join(parts)
 
     parts.append(
-        "<div class='rg-file-scroll'>"
-        "<table class='cvg-outcome-table rg-file-table'><thead><tr>"
-        "<th>Action</th>"
+        "<div class='rg-file-scroll'><table class='cvg-outcome-table rg-file-table'><thead><tr><th>Action</th>"
     )
     for rid in ids:
-        parts.append(
-            f"<th style='text-align:center;'>"
-            f"{html.escape(str(labels.get(rid, rid)))}</th>"
-        )
+        parts.append(f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>")
     parts.append("<th>Coverage</th></tr></thead><tbody>")
 
     for row in rows:
@@ -765,25 +777,16 @@ def _render_action_matrix_html(behavior: dict) -> str:
         cells = row.get("cells") or {}
         full = str(row.get("label") or _fmt_signature((atype, target)))
         target_html = (
-            f"<code title='{html.escape(target)}'>{html.escape(short)}</code>"
-            if target and target != "*"
-            else ""
+            f"<code title='{html.escape(target)}'>{html.escape(short)}</code>" if target and target != "*" else ""
         )
         parts.append(f"<tr class='rg-row-{kind}'>")
         parts.append(
-            f"<td class='rg-file-path' title='{html.escape(full)}'>"
-            f"{_action_type_badge(atype)} {target_html}</td>"
+            f"<td class='rg-file-path' title='{html.escape(full)}'>{_action_type_badge(atype)} {target_html}</td>"
         )
         for rid in ids:
             cell = cells.get(rid) or {"present": False, "count": 0}
-            parts.append(
-                f"<td style='text-align:center;white-space:nowrap;'>"
-                f"{_action_cell(cell)}</td>"
-            )
-        parts.append(
-            f"<td style='white-space:nowrap;'>"
-            f"{_kind_badge(kind, n_runs, n)}</td>"
-        )
+            parts.append(f"<td style='text-align:center;white-space:nowrap;'>{_action_cell(cell)}</td>")
+        parts.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td>")
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
     if total > len(rows):
@@ -809,22 +812,12 @@ def _render_file_matrix_html(behavior: dict) -> str:
         "</div>",
     ]
     if not rows:
-        parts.append(
-            "<div style='font-size:12px;color:var(--ov-muted);'>"
-            "No file reads/writes across these runs.</div>"
-        )
+        parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No file reads/writes across these runs.</div>")
         return "".join(parts)
 
-    parts.append(
-        "<div class='rg-file-scroll'>"
-        "<table class='cvg-outcome-table rg-file-table'><thead><tr>"
-        "<th>File</th>"
-    )
+    parts.append("<div class='rg-file-scroll'><table class='cvg-outcome-table rg-file-table'><thead><tr><th>File</th>")
     for rid in ids:
-        parts.append(
-            f"<th style='text-align:center;'>"
-            f"{html.escape(str(labels.get(rid, rid)))}</th>"
-        )
+        parts.append(f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>")
     parts.append("<th>Coverage</th></tr></thead><tbody>")
 
     for row in rows:
@@ -835,20 +828,11 @@ def _render_file_matrix_html(behavior: dict) -> str:
         cells = row.get("cells") or {}
         row_cls = f"rg-row-{kind}"
         parts.append(f"<tr class='{row_cls}'>")
-        parts.append(
-            f"<td class='rg-file-path' title='{html.escape(path)}'>"
-            f"<code>{html.escape(short)}</code></td>"
-        )
+        parts.append(f"<td class='rg-file-path' title='{html.escape(path)}'><code>{html.escape(short)}</code></td>")
         for rid in ids:
             cell = cells.get(rid) or {"read": False, "write": False}
-            parts.append(
-                f"<td style='text-align:center;white-space:nowrap;'>"
-                f"{_rw_badges(cell)}</td>"
-            )
-        parts.append(
-            f"<td style='white-space:nowrap;'>"
-            f"{_kind_badge(kind, n_runs, n)}</td>"
-        )
+            parts.append(f"<td style='text-align:center;white-space:nowrap;'>{_rw_badges(cell)}</td>")
+        parts.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td>")
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
     if total > len(rows):
@@ -877,14 +861,10 @@ def _render_count_matrix_html(
     n = len(ids)
     parts = [
         f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>{html.escape(title)}</h4>",
-        f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        f"{html.escape(blurb)}</div>",
+        f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>{html.escape(blurb)}</div>",
     ]
     if not rows:
-        parts.append(
-            f"<div style='font-size:12px;color:var(--ov-muted);'>"
-            f"{html.escape(empty)}</div>"
-        )
+        parts.append(f"<div style='font-size:12px;color:var(--ov-muted);'>{html.escape(empty)}</div>")
         return "".join(parts)
 
     parts.append(
@@ -893,10 +873,7 @@ def _render_count_matrix_html(
         f"<th>{html.escape(noun)}</th>"
     )
     for rid in ids:
-        parts.append(
-            f"<th style='text-align:center;'>"
-            f"{html.escape(str(labels.get(rid, rid)))}</th>"
-        )
+        parts.append(f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>")
     parts.append("<th>Coverage</th></tr></thead><tbody>")
 
     for row in rows:
@@ -906,20 +883,11 @@ def _render_count_matrix_html(
         n_runs = int(row.get("n_runs") or 0)
         cells = row.get("cells") or {}
         parts.append(f"<tr class='rg-row-{kind}'>")
-        parts.append(
-            f"<td class='rg-file-path' title='{html.escape(key)}'>"
-            f"<code>{html.escape(short)}</code></td>"
-        )
+        parts.append(f"<td class='rg-file-path' title='{html.escape(key)}'><code>{html.escape(short)}</code></td>")
         for rid in ids:
             cell = cells.get(rid) or {"present": False, "count": 0}
-            parts.append(
-                f"<td style='text-align:center;white-space:nowrap;'>"
-                f"{_action_cell(cell)}</td>"
-            )
-        parts.append(
-            f"<td style='white-space:nowrap;'>"
-            f"{_kind_badge(kind, n_runs, n)}</td>"
-        )
+            parts.append(f"<td style='text-align:center;white-space:nowrap;'>{_action_cell(cell)}</td>")
+        parts.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td>")
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
     if total > len(rows):
@@ -990,17 +958,10 @@ def _render_behavior_html(behavior: dict | None) -> str:
             )
             continue
         any_pat = True
-        bits = ", ".join(
-            f"{html.escape(p['label'])} ×{p['count']}" for p in plist[:6]
-        )
-        parts.append(
-            f"<div style='font-size:13px;margin:0.35em 0;'>"
-            f"<b>{html.escape(str(label))}</b> — {bits}</div>"
-        )
+        bits = ", ".join(f"{html.escape(p['label'])} ×{p['count']}" for p in plist[:6])
+        parts.append(f"<div style='font-size:13px;margin:0.35em 0;'><b>{html.escape(str(label))}</b> — {bits}</div>")
     if not any_pat and len(behavior.get("run_ids") or []) <= 1:
-        parts.append(
-            "<div style='font-size:12px;color:var(--ov-muted);'>No other runs.</div>"
-        )
+        parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No other runs.</div>")
 
     return "".join(parts)
 
@@ -1014,10 +975,7 @@ def build_run_group_scorecard_html(
     error = result.get("error")
     rows = result.get("rows") or []
     if error and not rows:
-        return (
-            f"<div style='color:var(--ov-warn);padding:1em;text-align:center;'>"
-            f"{html.escape(str(error))}</div>"
-        )
+        return f"<div style='color:var(--ov-warn);padding:1em;text-align:center;'>{html.escape(str(error))}</div>"
     if not rows:
         return (
             "<div style='padding:1.5em;color:var(--ov-muted);text-align:center;'>"
@@ -1027,10 +985,7 @@ def build_run_group_scorecard_html(
     flags = _best_worst_flags(rows)
     parts: list[str] = []
     if error:
-        parts.append(
-            f"<div style='color:var(--ov-warn);margin-bottom:0.5em;'>"
-            f"{html.escape(str(error))}</div>"
-        )
+        parts.append(f"<div style='color:var(--ov-warn);margin-bottom:0.5em;'>{html.escape(str(error))}</div>")
     n_ok = sum(1 for r in rows if not r.get("error"))
     parts.append(
         f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
@@ -1041,8 +996,16 @@ def build_run_group_scorecard_html(
     )
     parts.append('<table class="cvg-outcome-table"><thead><tr>')
     headers = [
-        "Condition", "Format", "Finished", "Steps", "Time", "Tokens",
-        "Tools", "Success %", "Peak ctx", "Compacts",
+        "Condition",
+        "Format",
+        "Finished",
+        "Steps",
+        "Time",
+        "Tokens",
+        "Tools",
+        "Success %",
+        "Peak ctx",
+        "Compacts",
     ]
     for h in headers:
         parts.append(f"<th>{html.escape(h)}</th>")
@@ -1076,15 +1039,12 @@ def build_run_group_scorecard_html(
             (html.escape(str(row.get("format") or "—")), ""),
             (finished, fin_style),
             (f"{row.get('steps') or 0}", _cell_class(rid, "steps", flags)),
-            (html.escape(str(row.get("wall_clock_fmt") or "—")),
-             _cell_class(rid, "wall_clock_s", flags)),
+            (html.escape(str(row.get("wall_clock_fmt") or "—")), _cell_class(rid, "wall_clock_s", flags)),
             (f"{row.get('tokens') or 0:,}", _cell_class(rid, "tokens", flags)),
             (f"{row.get('tool_calls') or 0}", ""),
-            (f"{row.get('tool_success_pct') or 0:g}%",
-             _cell_class(rid, "tool_success_pct", flags)),
+            (f"{row.get('tool_success_pct') or 0:g}%", _cell_class(rid, "tool_success_pct", flags)),
             (html.escape(peak_txt), _cell_class(rid, "peak_occupancy", flags)),
-            (f"{row.get('compactions') or 0}",
-             _cell_class(rid, "compactions", flags)),
+            (f"{row.get('compactions') or 0}", _cell_class(rid, "compactions", flags)),
         ]
         parts.append("<tr>")
         for text, style in cells:

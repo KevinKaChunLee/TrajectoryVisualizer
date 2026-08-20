@@ -51,29 +51,33 @@ def _minimal_raw(
             info["agent"] = "build"
         parts: list[dict] = [{"type": "text", "text": f"msg {i}"}]
         if role == "assistant" and i == 1:
-            parts.append({
-                "type": "tool",
-                "tool": "read",
-                "callID": "c1",
-                "state": {
-                    "status": "completed",
-                    "input": {"filePath": read_path},
-                    "output": "ok",
-                    "time": {"start": t, "end": t + 100},
-                },
-            })
-            if extra_search:
-                parts.append({
+            parts.append(
+                {
                     "type": "tool",
-                    "tool": "grep",
-                    "callID": "c2",
+                    "tool": "read",
+                    "callID": "c1",
                     "state": {
                         "status": "completed",
-                        "input": {"pattern": "TODO", "path": "src"},
-                        "output": "hits",
-                        "time": {"start": t, "end": t + 120},
+                        "input": {"filePath": read_path},
+                        "output": "ok",
+                        "time": {"start": t, "end": t + 100},
                     },
-                })
+                }
+            )
+            if extra_search:
+                parts.append(
+                    {
+                        "type": "tool",
+                        "tool": "grep",
+                        "callID": "c2",
+                        "state": {
+                            "status": "completed",
+                            "input": {"pattern": "TODO", "path": "src"},
+                            "output": "hits",
+                            "time": {"start": t, "end": t + 120},
+                        },
+                    }
+                )
         messages.append({"info": info, "parts": parts})
         t += 1000
     return {
@@ -93,19 +97,22 @@ def _action(atype: str, target: str, step: int = 0) -> CanonicalAction:
 def _steps_with_tools(calls: list[tuple[str, dict | None]]) -> list[dict]:
     """Minimal parsed steps carrying tool_calls for capability extraction."""
     tool_calls = []
-    for i, (name, inp) in enumerate(calls):
-        tool_calls.append({
-            "tool_name": name,
-            "input": inp or {},
-            "status": "completed",
-        })
-    return [{
-        "index": 0,
-        "role": "assistant",
-        "tool_calls": tool_calls,
-        "tokens": {"total": 10, "input": 10, "output": 0, "reasoning": 0,
-                   "cache_read": 0, "cache_write": 0},
-    }]
+    for _i, (name, inp) in enumerate(calls):
+        tool_calls.append(
+            {
+                "tool_name": name,
+                "input": inp or {},
+                "status": "completed",
+            }
+        )
+    return [
+        {
+            "index": 0,
+            "role": "assistant",
+            "tool_calls": tool_calls,
+            "tokens": {"total": 10, "input": 10, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0},
+        }
+    ]
 
 
 class CapabilityExtractionTests(unittest.TestCase):
@@ -121,13 +128,15 @@ class CapabilityExtractionTests(unittest.TestCase):
         self.assertIsNone(_parse_skill_name("Bash", {"command": "ls"}))
 
     def test_extract_tools_and_skills(self):
-        steps = _steps_with_tools([
-            ("Read", {"file_path": "a.py"}),
-            ("mcp__slack__post_message", {"text": "hi"}),
-            ("Skill", {"skill": "create-hook"}),
-            ("Skill", {"skill": "create-hook"}),
-            ("Bash", {"command": "ls"}),
-        ])
+        steps = _steps_with_tools(
+            [
+                ("Read", {"file_path": "a.py"}),
+                ("mcp__slack__post_message", {"text": "hi"}),
+                ("Skill", {"skill": "create-hook"}),
+                ("Skill", {"skill": "create-hook"}),
+                ("Bash", {"command": "ls"}),
+            ]
+        )
         usage = extract_capability_usage(steps)
         self.assertEqual(usage["tools"]["Read"], 1)
         self.assertEqual(usage["tools"]["Bash"], 1)
@@ -177,11 +186,13 @@ class BehavioralComparisonTests(unittest.TestCase):
                     _action("FILE_WRITE", "src/main.py", 2),
                     _action("SEARCH", "bug@src", 3),
                 ],
-                "steps": _steps_with_tools([
-                    ("Read", {}),
-                    ("Skill", {"skill": "shared-skill"}),
-                    ("mcp__github__list_issues", {}),
-                ]),
+                "steps": _steps_with_tools(
+                    [
+                        ("Read", {}),
+                        ("Skill", {"skill": "shared-skill"}),
+                        ("mcp__github__list_issues", {}),
+                    ]
+                ),
             },
             {
                 "run_id": "b",
@@ -191,13 +202,15 @@ class BehavioralComparisonTests(unittest.TestCase):
                     _action("FILE_WRITE", "src/main.py", 2),
                     _action("FILE_READ", "other.py", 3),
                 ],
-                "steps": _steps_with_tools([
-                    ("Read", {}),
-                    ("Write", {}),
-                    ("Skill", {"skill": "shared-skill"}),
-                    ("Skill", {"skill": "only-b"}),
-                    ("mcp__slack__post_message", {}),
-                ]),
+                "steps": _steps_with_tools(
+                    [
+                        ("Read", {}),
+                        ("Write", {}),
+                        ("Skill", {"skill": "shared-skill"}),
+                        ("Skill", {"skill": "only-b"}),
+                        ("mcp__slack__post_message", {}),
+                    ]
+                ),
             },
             {
                 "run_id": "c",
@@ -206,10 +219,12 @@ class BehavioralComparisonTests(unittest.TestCase):
                     _action("FILE_READ", "src/main.py", 1),
                     _action("FILE_WRITE", "src/main.py", 2),
                 ],
-                "steps": _steps_with_tools([
-                    ("Read", {}),
-                    ("Skill", {"skill": "shared-skill"}),
-                ]),
+                "steps": _steps_with_tools(
+                    [
+                        ("Read", {}),
+                        ("Skill", {"skill": "shared-skill"}),
+                    ]
+                ),
             },
         ]
         behavior = build_behavioral_comparison(runs)
@@ -217,10 +232,7 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertEqual(behavior["similarity"]["a"]["a"], 1.0)
         self.assertGreater(behavior["similarity"]["a"]["c"], 0.5)
         self.assertTrue(
-            any(
-                r["type"] == "FILE_READ" and r["target"] == "src/main.py"
-                for r in behavior["action_matrix"]
-            )
+            any(r["type"] == "FILE_READ" and r["target"] == "src/main.py" for r in behavior["action_matrix"])
         )
         paths = {r["path"]: r for r in behavior["file_matrix"]}
         self.assertIn("src/main.py", paths)
@@ -231,9 +243,7 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertEqual(paths["other.py"]["kind"], "unique")
         self.assertTrue(paths["other.py"]["cells"]["b"]["read"])
         self.assertFalse(paths["other.py"]["cells"]["a"]["read"])
-        action_by_key = {
-            (r["type"], r["target"]): r for r in behavior["action_matrix"]
-        }
+        action_by_key = {(r["type"], r["target"]): r for r in behavior["action_matrix"]}
         self.assertEqual(action_by_key[("FILE_READ", "other.py")]["kind"], "unique")
         self.assertTrue(action_by_key[("FILE_READ", "other.py")]["cells"]["b"]["present"])
         self.assertFalse(action_by_key[("FILE_READ", "other.py")]["cells"]["a"]["present"])
@@ -252,23 +262,47 @@ class BehavioralComparisonTests(unittest.TestCase):
         # B and C have pattern slots vs baseline A
         self.assertIn("b", behavior["patterns_vs_baseline"])
         self.assertIn("c", behavior["patterns_vs_baseline"])
-        html = build_run_group_scorecard_html({
-            "rows": [
-                {"run_id": "a", "label": "A", "error": None, "finished": True,
-                 "steps": 1, "wall_clock_s": 1, "wall_clock_fmt": "1s",
-                 "tokens": 1, "tool_calls": 1, "tool_success_pct": 100,
-                 "peak_occupancy": 0, "peak_pct": None, "compactions": 0,
-                 "format": "test"},
-                {"run_id": "b", "label": "B", "error": None, "finished": True,
-                 "steps": 2, "wall_clock_s": 2, "wall_clock_fmt": "2s",
-                 "tokens": 2, "tool_calls": 2, "tool_success_pct": 100,
-                 "peak_occupancy": 0, "peak_pct": None, "compactions": 0,
-                 "format": "test"},
-            ],
-            "behavior": behavior,
-            "ok": True,
-            "error": None,
-        })
+        html = build_run_group_scorecard_html(
+            {
+                "rows": [
+                    {
+                        "run_id": "a",
+                        "label": "A",
+                        "error": None,
+                        "finished": True,
+                        "steps": 1,
+                        "wall_clock_s": 1,
+                        "wall_clock_fmt": "1s",
+                        "tokens": 1,
+                        "tool_calls": 1,
+                        "tool_success_pct": 100,
+                        "peak_occupancy": 0,
+                        "peak_pct": None,
+                        "compactions": 0,
+                        "format": "test",
+                    },
+                    {
+                        "run_id": "b",
+                        "label": "B",
+                        "error": None,
+                        "finished": True,
+                        "steps": 2,
+                        "wall_clock_s": 2,
+                        "wall_clock_fmt": "2s",
+                        "tokens": 2,
+                        "tool_calls": 2,
+                        "tool_success_pct": 100,
+                        "peak_occupancy": 0,
+                        "peak_pct": None,
+                        "compactions": 0,
+                        "format": "test",
+                    },
+                ],
+                "behavior": behavior,
+                "ok": True,
+                "error": None,
+            }
+        )
         self.assertIn("File coverage", html)
         self.assertIn("Action coverage", html)
         self.assertIn("Tool coverage", html)
@@ -295,7 +329,10 @@ class ScorecardGroupTests(unittest.TestCase):
         baseline = _minimal_raw(steps=4, tokens_each=200, read_path="shared.py")
         baseline["_source_path"] = "/tmp/overview-run.json"
         other = _minimal_raw(
-            steps=4, tokens_each=80, read_path="shared.py", extra_search=True,
+            steps=4,
+            tokens_each=80,
+            read_path="shared.py",
+            extra_search=True,
         )
         with tempfile.TemporaryDirectory() as tmp:
             path_b = os.path.join(tmp, "alt-model.json")
@@ -320,7 +357,10 @@ class ScorecardGroupTests(unittest.TestCase):
     def test_two_temp_files_include_behavior(self):
         raw_a = _minimal_raw(steps=4, tokens_each=200, read_path="shared.py")
         raw_b = _minimal_raw(
-            steps=4, tokens_each=80, read_path="shared.py", extra_search=True,
+            steps=4,
+            tokens_each=80,
+            read_path="shared.py",
+            extra_search=True,
         )
         with tempfile.TemporaryDirectory() as tmp:
             path_a = os.path.join(tmp, "model-a.json")
@@ -351,7 +391,9 @@ class ScorecardGroupTests(unittest.TestCase):
 
     def test_fixture_plus_copy(self):
         fixture = os.path.join(
-            os.path.dirname(__file__), "fixtures", "codearts_minimal.json",
+            os.path.dirname(__file__),
+            "fixtures",
+            "codearts_minimal.json",
         )
         if not os.path.isfile(fixture):
             self.skipTest("codearts_minimal.json missing")
@@ -376,24 +418,24 @@ class AgentTimelineChartTests(unittest.TestCase):
                 "run_id": "a",
                 "label": "Run A",
                 "steps": [
-                    {"index": 0, "role": "user", "agent": "",
-                     "tokens": {"total": 0}, "tool_call_count": 0},
-                    {"index": 1, "role": "assistant", "agent": "",
-                     "tokens": {"total": 10}, "tool_call_count": 1},
-                    {"index": 2, "role": "assistant", "agent": "explore",
-                     "tokens": {"total": 20}, "tool_call_count": 2},
-                    {"index": 3, "role": "assistant", "agent": "explore",
-                     "tokens": {"total": 5}, "tool_call_count": 0},
+                    {"index": 0, "role": "user", "agent": "", "tokens": {"total": 0}, "tool_call_count": 0},
+                    {"index": 1, "role": "assistant", "agent": "", "tokens": {"total": 10}, "tool_call_count": 1},
+                    {
+                        "index": 2,
+                        "role": "assistant",
+                        "agent": "explore",
+                        "tokens": {"total": 20},
+                        "tool_call_count": 2,
+                    },
+                    {"index": 3, "role": "assistant", "agent": "explore", "tokens": {"total": 5}, "tool_call_count": 0},
                 ],
             },
             {
                 "run_id": "b",
                 "label": "Run B",
                 "steps": [
-                    {"index": 0, "role": "assistant", "agent": "",
-                     "tokens": {"total": 8}, "tool_call_count": 1},
-                    {"index": 1, "role": "assistant", "agent": "",
-                     "tokens": {"total": 8}, "tool_call_count": 0},
+                    {"index": 0, "role": "assistant", "agent": "", "tokens": {"total": 8}, "tool_call_count": 1},
+                    {"index": 1, "role": "assistant", "agent": "", "tokens": {"total": 8}, "tool_call_count": 0},
                 ],
             },
         ]

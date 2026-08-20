@@ -14,9 +14,14 @@ import plotly.graph_objects as go
 from .parser import infer_non_cache_input
 from .metrics import effective_agent
 from .palette import (
-    TOKEN_COLORS, SESSION_COLORS, LABEL_PHASE_COLORS,
-    AGENT_COLORS, ROLE_COLORS, TOOL_OUTCOME_COLORS,
-    CHART_ACCENT, PLOTLY_DARK_TEMPLATE,
+    TOKEN_COLORS,
+    SESSION_COLORS,
+    LABEL_PHASE_COLORS,
+    AGENT_COLORS,
+    ROLE_COLORS,
+    TOOL_OUTCOME_COLORS,
+    CHART_ACCENT,
+    PLOTLY_DARK_TEMPLATE,
 )
 
 
@@ -48,7 +53,6 @@ def build_agent_color_map(steps: list[dict]) -> dict[str, int]:
     return mapping
 
 
-
 # -- Layout helpers -------------------------------------------------------
 
 _TPL = "plotly_white"
@@ -58,15 +62,14 @@ def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
     """Return a blank Plotly figure, optionally with a centered message."""
     fig = go.Figure()
     if message:
-        fig.add_annotation(text=message, xref="paper", yref="paper",
-                           x=0.5, y=0.5, showarrow=False, font_size=16)
+        fig.add_annotation(text=message, xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=16)
     fig.update_layout(template=_TPL, height=height)
     return fig
 
 
-def _apply_chart_layout(fig: go.Figure, title: str,
-                         xaxis: str | None = None, yaxis: str | None = None,
-                         height: int = 380, **kwargs) -> None:
+def _apply_chart_layout(
+    fig: go.Figure, title: str, xaxis: str | None = None, yaxis: str | None = None, height: int = 380, **kwargs
+) -> None:
     """Apply standard chart layout (template + margins + responsive sizing).
 
     The title is centered horizontally (``x=0.5``, ``xanchor="center"``) and
@@ -80,9 +83,7 @@ def _apply_chart_layout(fig: go.Figure, title: str,
     left-aligned title.
     """
     layout = dict(
-        title=dict(text=title, y=0.99, x=0.5,
-                   xanchor="center", yanchor="top",
-                   font=dict(size=16)),
+        title=dict(text=title, y=0.99, x=0.5, xanchor="center", yanchor="top", font=dict(size=16)),
         template=_TPL,
         height=height,
         autosize=True,
@@ -100,8 +101,12 @@ def _add_legend_hint(fig: go.Figure) -> None:
     """Add a subtle 'click legend to toggle' hint at the bottom-right."""
     fig.add_annotation(
         text="Click legend items to show/hide series",
-        xref="paper", yref="paper", x=1.0, y=-0.12,
-        showarrow=False, font=dict(size=9, color="#9ca3af"),
+        xref="paper",
+        yref="paper",
+        x=1.0,
+        y=-0.12,
+        showarrow=False,
+        font=dict(size=9, color="#9ca3af"),
         xanchor="right",
     )
 
@@ -109,12 +114,18 @@ def _add_legend_hint(fig: go.Figure) -> None:
 # -- Reusable trace helpers ------------------------------------------------
 
 
-def _add_token_bar_traces(fig: go.Figure, x_values: list,
-                          fresh_input: list, cache_read: list,
-                          output: list, reasoning: list,
-                          *, cache_write: list | None = None,
-                          include_empty: bool = False,
-                          x_label: str = "Step") -> None:
+def _add_token_bar_traces(
+    fig: go.Figure,
+    x_values: list,
+    fresh_input: list,
+    cache_read: list,
+    output: list,
+    reasoning: list,
+    *,
+    cache_write: list | None = None,
+    include_empty: bool = False,
+    x_label: str = "Step",
+) -> None:
     """Add token category bar traces to a figure.
 
     By default only adds traces that have non-zero data to avoid misleading legends
@@ -137,14 +148,18 @@ def _add_token_bar_traces(fig: go.Figure, x_values: list,
         traces.append(("Cache Write", cache_write, TOKEN_COLORS["cache_write"]))
     for name, values, color in traces:
         if include_empty or any(v > 0 for v in values):
-            fig.add_trace(go.Bar(
-                x=x_values, y=values, name=name, marker_color=color,
-                hovertemplate=f"{(x_label + ' ') if x_label else ''}%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=x_values,
+                    y=values,
+                    name=name,
+                    marker_color=color,
+                    hovertemplate=f"{(x_label + ' ') if x_label else ''}%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
+                )
+            )
 
 
 # -- Annotation utilities ------------------------------------------------
-
 
 
 def _detect_outliers(values: list[float], threshold: float = 2.0) -> list[tuple[int, float, str]]:
@@ -168,12 +183,10 @@ def _detect_outliers(values: list[float], threshold: float = 2.0) -> list[tuple[
     return outliers
 
 
-
 # -- Chart builders -------------------------------------------------------
 
 
-def build_token_chart(steps: list[dict], dark: bool = False,
-                      *, format: str | None = None) -> go.Figure:
+def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | None = None) -> go.Figure:
     """Stacked bar of token breakdown over steps (non-overlapping segments).
 
     Default segments: fresh_input + cache_read
@@ -206,14 +219,12 @@ def build_token_chart(steps: list[dict], dark: bool = False,
     ]
     reasoning_t = [s["tokens"]["reasoning"] for s in steps]
     output_t = [s["tokens"]["output"] for s in steps]
-    net_output = [max(0, output - reasoning)
-                  for output, reasoning in zip(output_t, reasoning_t, strict=False)]
+    net_output = [max(0, output - reasoning) for output, reasoning in zip(output_t, reasoning_t, strict=False)]
     cache_w = [s["tokens"].get("cache_write", 0) or 0 for s in steps]
 
     # Detect if token breakdown is available (any non-zero input/output/cache)
     has_breakdown = any(
-        s["tokens"]["input"] > 0 or s["tokens"]["output"] > 0 or s["tokens"]["cache_read"] > 0
-        for s in steps
+        s["tokens"]["input"] > 0 or s["tokens"]["output"] > 0 or s["tokens"]["cache_read"] > 0 for s in steps
     )
 
     fig = go.Figure()
@@ -222,22 +233,30 @@ def build_token_chart(steps: list[dict], dark: bool = False,
         # zero traces into the legend so no existing legend item disappears.
         # These formats report output and reasoning as disjoint fields, so use
         # the raw output value instead of subtracting reasoning a second time.
-        _add_token_bar_traces(fig, indices, fresh_input, cache_r, output_t, reasoning_t,
-                              cache_write=cache_w, include_empty=True)
+        _add_token_bar_traces(
+            fig, indices, fresh_input, cache_r, output_t, reasoning_t, cache_write=cache_w, include_empty=True
+        )
     elif has_breakdown:
         _add_token_bar_traces(fig, indices, fresh_input, cache_r, net_output, reasoning_t)
     else:
         # No breakdown available — single "Total" trace.
         totals = [s["tokens"]["total"] for s in steps]
-        fig.add_trace(go.Bar(
-            x=indices, y=totals, name="Total",
-            marker_color=CHART_ACCENT,
-            hovertemplate="Step %{x}<br>Total: %{y:,.0f}<extra></extra>",
-        ))
+        fig.add_trace(
+            go.Bar(
+                x=indices,
+                y=totals,
+                name="Total",
+                marker_color=CHART_ACCENT,
+                hovertemplate="Step %{x}<br>Total: %{y:,.0f}<extra></extra>",
+            )
+        )
 
     _apply_chart_layout(
-        fig, "Token Usage by Step",
-        xaxis="Step", yaxis="Tokens", height=380,
+        fig,
+        "Token Usage by Step",
+        xaxis="Step",
+        yaxis="Tokens",
+        height=380,
         barmode="stack",
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
     )
@@ -246,11 +265,12 @@ def build_token_chart(steps: list[dict], dark: bool = False,
     return fig
 
 
-def build_duration_chart(steps: list[dict],
-                         phases: list[dict] | None = None,
-                         dark: bool = False,
-                         compression_steps: list[int] | None = None,
-                         ) -> go.Figure:
+def build_duration_chart(
+    steps: list[dict],
+    phases: list[dict] | None = None,
+    dark: bool = False,
+    compression_steps: list[int] | None = None,
+) -> go.Figure:
     """Bar chart of step durations with average line.
 
     Error steps are highlighted in red; all others use a uniform blue.
@@ -280,21 +300,29 @@ def build_duration_chart(steps: list[dict],
     bar_width = 0.8  # consistent width for both traces
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=normal_x, y=normal_y, name="Normal",
-        legendgroup="Normal",
-        marker_color="#3b82f6",
-        width=bar_width,
-        hovertemplate="Step %{x}<br>%{y:.1f}s<extra></extra>",
-    ))
-    if error_x:
-        fig.add_trace(go.Bar(
-            x=error_x, y=error_y, name="Error",
-            legendgroup="Error",
-            marker_color=ROLE_COLORS["error"],
+    fig.add_trace(
+        go.Bar(
+            x=normal_x,
+            y=normal_y,
+            name="Normal",
+            legendgroup="Normal",
+            marker_color="#3b82f6",
             width=bar_width,
-            hovertemplate="Step %{x}<br>%{y:.1f}s (error)<extra></extra>",
-        ))
+            hovertemplate="Step %{x}<br>%{y:.1f}s<extra></extra>",
+        )
+    )
+    if error_x:
+        fig.add_trace(
+            go.Bar(
+                x=error_x,
+                y=error_y,
+                name="Error",
+                legendgroup="Error",
+                marker_color=ROLE_COLORS["error"],
+                width=bar_width,
+                hovertemplate="Step %{x}<br>%{y:.1f}s (error)<extra></extra>",
+            )
+        )
 
     # Spike labels as scatter traces — grouped with their bar trace so they
     # show/hide together when the legend is toggled.
@@ -303,25 +331,39 @@ def build_duration_chart(steps: list[dict],
         spike_y = [gy[j] for j in range(len(gx)) if gx[j] in outlier_set]
         spike_text = [f"{v:.1f}s" for v in spike_y]
         if spike_x:
-            fig.add_trace(go.Scatter(
-                x=spike_x, y=spike_y,
-                mode="text", text=spike_text,
-                textposition="top center",
-                textfont=dict(size=9, color="#dc2626"),
-                legendgroup=group, showlegend=False,
-                hoverinfo="skip",
-                cliponaxis=False,  # allow text to extend past the right edge
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=spike_x,
+                    y=spike_y,
+                    mode="text",
+                    text=spike_text,
+                    textposition="top center",
+                    textfont=dict(size=9, color="#dc2626"),
+                    legendgroup=group,
+                    showlegend=False,
+                    hoverinfo="skip",
+                    cliponaxis=False,  # allow text to extend past the right edge
+                )
+            )
     # Avg line — dashed, lighter
-    fig.add_hline(y=avg_d, line_dash="dash", line_color="#94a3b8", line_width=1,
-                  annotation_text=f"Avg: {avg_d:.1f}s",
-                  annotation_position="top left",
-                  annotation_font=dict(color="#64748b", size=11))
-    _apply_chart_layout(fig, "Step Duration", xaxis="Step", yaxis="Duration (s)",
-                         height=400,
-                         barmode="overlay",
-                         legend=dict(orientation="h", yanchor="bottom", y=1.06,
-                                     xanchor="center", x=0.5, itemclick="toggleothers"))
+    fig.add_hline(
+        y=avg_d,
+        line_dash="dash",
+        line_color="#94a3b8",
+        line_width=1,
+        annotation_text=f"Avg: {avg_d:.1f}s",
+        annotation_position="top left",
+        annotation_font=dict(color="#64748b", size=11),
+    )
+    _apply_chart_layout(
+        fig,
+        "Step Duration",
+        xaxis="Step",
+        yaxis="Duration (s)",
+        height=400,
+        barmode="overlay",
+        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5, itemclick="toggleothers"),
+    )
     fig.update_layout(margin=dict(t=70))  # extra top margin for spike labels
     fig.update_xaxes(range=[-0.5, len(steps) - 0.5])
 
@@ -329,8 +371,12 @@ def build_duration_chart(steps: list[dict],
     if compression_steps:
         for step_idx in compression_steps:
             fig.add_vline(
-                x=step_idx, line_dash="dot", line_color="#dc2626", line_width=1.5,
-                annotation_text="compressed", annotation_position="top",
+                x=step_idx,
+                line_dash="dot",
+                line_color="#dc2626",
+                line_width=1.5,
+                annotation_text="compressed",
+                annotation_position="top",
                 annotation_font=dict(size=8, color="#dc2626"),
             )
 
@@ -345,6 +391,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
 
     # Per-agent per-tool breakdown
     from collections import defaultdict
+
     agent_tool: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     all_tools: dict[str, int] = defaultdict(int)
     for s in steps:
@@ -362,7 +409,6 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
     sorted_tools = sorted(all_tools.keys(), key=lambda t: all_tools[t])
     display_names = [n if len(n) <= 30 else n[:27] + "..." for n in sorted_tools]
 
-
     fig = go.Figure()
     if has_agents:
         # Stacked bars per agent, matching Context Growth labeling
@@ -374,40 +420,48 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
                 label = f"sub {short}"
             color = SESSION_COLORS[i % len(SESSION_COLORS)]
             counts = [agent_tool[agent_id].get(t, 0) for t in sorted_tools]
-            fig.add_trace(go.Bar(
-                y=display_names, x=counts, orientation="h",
-                name=label,
-                marker_color=color,
-                hovertemplate=f"{label}: " + "%{x} call(s)<extra></extra>",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    y=display_names,
+                    x=counts,
+                    orientation="h",
+                    name=label,
+                    marker_color=color,
+                    hovertemplate=f"{label}: " + "%{x} call(s)<extra></extra>",
+                )
+            )
     else:
         counts = [all_tools[t] for t in sorted_tools]
-        fig.add_trace(go.Bar(
-            y=display_names, x=counts, orientation="h", marker_color=CHART_ACCENT,
-            text=[str(c) for c in counts], textposition="outside",
-            cliponaxis=False,
-            customdata=sorted_tools,
-            hovertemplate="%{customdata}: %{x} call(s)<extra></extra>",
-        ))
+        fig.add_trace(
+            go.Bar(
+                y=display_names,
+                x=counts,
+                orientation="h",
+                marker_color=CHART_ACCENT,
+                text=[str(c) for c in counts],
+                textposition="outside",
+                cliponaxis=False,
+                customdata=sorted_tools,
+                hovertemplate="%{customdata}: %{x} call(s)<extra></extra>",
+            )
+        )
 
     max_label = max(len(n) for n in display_names)
     _apply_chart_layout(
-        fig, "Tool Call Frequency" + (" by Agent" if has_agents else ""),
+        fig,
+        "Tool Call Frequency" + (" by Agent" if has_agents else ""),
         xaxis="Count",
         height=max(250, 50 * len(sorted_tools)),
         barmode="stack" if has_agents else "relative",
         margin=dict(l=max(140, max_label * 7 + 20), r=60, t=50, b=40),
     )
     if has_agents:
-        fig.update_layout(legend=dict(orientation="h", yanchor="bottom",
-                                       y=1.02, xanchor="center", x=0.5))
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
     _apply_dark(fig, dark)
     return fig
 
 
-def build_context_growth_chart(rows: list[dict],
-                               phases: list[dict] | None = None,
-                               dark: bool = False) -> go.Figure:
+def build_context_growth_chart(rows: list[dict], phases: list[dict] | None = None, dark: bool = False) -> go.Figure:
     """Cumulative input tokens (context pressure) with cache-read overlay."""
     if not rows:
         fig = _empty_figure(340)
@@ -430,31 +484,47 @@ def build_context_growth_chart(rows: list[dict],
         cum_cache.append(rc)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=indices, y=cum_input, name="Cumulative Input",
-        mode="lines+markers",
-        line=dict(color="#2563eb", width=2),
-        marker=dict(size=5),
-        fill="tozeroy", fillcolor="rgba(37,99,235,0.08)",
-        hovertemplate="Step %{x}<br>Cumul. Input: %{y:,}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=indices, y=cum_fresh, name="Cumul. Fresh Input",
-        mode="lines+markers",
-        line=dict(color="#dc2626", width=2, dash="dot"),
-        marker=dict(size=4),
-        hovertemplate="Step %{x}<br>Cumul. Fresh: %{y:,}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=indices, y=cum_cache, name="Cumul. Cache Read",
-        mode="lines+markers",
-        line=dict(color="#059669", width=2, dash="dash"),
-        marker=dict(size=4),
-        hovertemplate="Step %{x}<br>Cumul. Cache: %{y:,}<extra></extra>",
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=indices,
+            y=cum_input,
+            name="Cumulative Input",
+            mode="lines+markers",
+            line=dict(color="#2563eb", width=2),
+            marker=dict(size=5),
+            fill="tozeroy",
+            fillcolor="rgba(37,99,235,0.08)",
+            hovertemplate="Step %{x}<br>Cumul. Input: %{y:,}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=indices,
+            y=cum_fresh,
+            name="Cumul. Fresh Input",
+            mode="lines+markers",
+            line=dict(color="#dc2626", width=2, dash="dot"),
+            marker=dict(size=4),
+            hovertemplate="Step %{x}<br>Cumul. Fresh: %{y:,}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=indices,
+            y=cum_cache,
+            name="Cumul. Cache Read",
+            mode="lines+markers",
+            line=dict(color="#059669", width=2, dash="dash"),
+            marker=dict(size=4),
+            hovertemplate="Step %{x}<br>Cumul. Cache: %{y:,}<extra></extra>",
+        )
+    )
     _apply_chart_layout(
-        fig, "Context Growth (Cumulative Input Tokens)",
-        xaxis="Step", yaxis="Tokens (count)", height=340,
+        fig,
+        "Context Growth (Cumulative Input Tokens)",
+        xaxis="Step",
+        yaxis="Tokens (count)",
+        height=340,
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
     )
     _add_legend_hint(fig)
@@ -476,26 +546,26 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
         return fig
 
     labels = [a["label"] for a in agent_summaries]
-    has_breakdown = any(a["input_tokens"] > 0 or a["output_tokens"] > 0
-                        for a in agent_summaries)
+    has_breakdown = any(a["input_tokens"] > 0 or a["output_tokens"] > 0 for a in agent_summaries)
 
     fig = go.Figure()
     if has_breakdown:
         from .parser import infer_non_cache_input
+
         # Schema-tolerant fresh-input: handles both Claude Code (input includes
         # cache) and OpenCode (input is already cache-excluded).
         fresh_input = [
             infer_non_cache_input(
-                a["total_tokens"], a["input_tokens"], a["output_tokens"],
-                a["reasoning_tokens"], a["cache_read_tokens"],
+                a["total_tokens"],
+                a["input_tokens"],
+                a["output_tokens"],
+                a["reasoning_tokens"],
+                a["cache_read_tokens"],
             )
             for a in agent_summaries
         ]
         cache_read = [a["cache_read_tokens"] for a in agent_summaries]
-        output = [
-            max(0, a["output_tokens"] - a["reasoning_tokens"])
-            for a in agent_summaries
-        ]
+        output = [max(0, a["output_tokens"] - a["reasoning_tokens"]) for a in agent_summaries]
         reasoning = [a["reasoning_tokens"] for a in agent_summaries]
         _add_token_bar_traces(fig, labels, fresh_input, cache_read, output, reasoning, x_label="")
     else:
@@ -503,20 +573,27 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
         session_palette = AGENT_COLORS  # shared palette so agent colors match across views
         totals = [a["total_tokens"] for a in agent_summaries]
         colors = [session_palette[i % len(session_palette)] for i in range(len(labels))]
-        fig.add_trace(go.Bar(
-            x=labels, y=totals, name="Total Tokens",
-            marker_color=colors,
-            text=[f"{t:,}" for t in totals], textposition="outside",
-            cliponaxis=False,
-            hovertemplate="%{x}<br>%{y:,.0f} tokens<extra></extra>",
-        ))
+        fig.add_trace(
+            go.Bar(
+                x=labels,
+                y=totals,
+                name="Total Tokens",
+                marker_color=colors,
+                text=[f"{t:,}" for t in totals],
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="%{x}<br>%{y:,.0f} tokens<extra></extra>",
+            )
+        )
 
     _apply_chart_layout(
-        fig, "Token Breakdown by Agent" if has_breakdown else "Total Tokens by Agent",
-        xaxis="Agent", yaxis="Tokens (count)",
-        height=320, barmode="group",
-        legend=dict(orientation="h", yanchor="bottom", y=1.06,
-                    xanchor="center", x=0.5),
+        fig,
+        "Token Breakdown by Agent" if has_breakdown else "Total Tokens by Agent",
+        xaxis="Agent",
+        yaxis="Tokens (count)",
+        height=320,
+        barmode="group",
+        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
     )
     fig.update_layout(margin=dict(t=70))
     _apply_dark(fig, dark)
@@ -540,6 +617,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     fig = go.Figure()
     # Group steps by agent and find contiguous runs
     from collections import defaultdict
+
     agent_runs: dict[str, list[tuple[int, int, int, int]]] = defaultdict(list)
     prev: dict[str, int | None] = {}
 
@@ -569,23 +647,26 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
         hex_c = SESSION_COLORS[i % len(SESSION_COLORS)]
         for start, end, tok, tools in agent_runs.get(agent_id, []):
             width = end - start + 1
-            fig.add_trace(go.Bar(
-                y=[label], x=[width], orientation="h",
-                base=start,
-                marker_color=hex_c,
-                name=label,
-                showlegend=False,
-                text=f"{width} steps, {tok:,} tok",
-                textposition="inside",
-                hovertext=(
-                    f"{label}: steps {start}–{end}<br>"
-                    f"{tok:,} tokens, {tools} tool calls"
-                ),
-                hoverinfo="text",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    y=[label],
+                    x=[width],
+                    orientation="h",
+                    base=start,
+                    marker_color=hex_c,
+                    name=label,
+                    showlegend=False,
+                    text=f"{width} steps, {tok:,} tok",
+                    textposition="inside",
+                    hovertext=(f"{label}: steps {start}–{end}<br>{tok:,} tokens, {tools} tool calls"),
+                    hoverinfo="text",
+                )
+            )
 
     _apply_chart_layout(
-        fig, "Agent Swimlane", xaxis="Step Index",
+        fig,
+        "Agent Swimlane",
+        xaxis="Step Index",
         height=max(160, 80 * max(1, lane_count)),
         barmode="overlay",
         margin=dict(l=100, r=20, t=40, b=30),
@@ -605,10 +686,7 @@ def build_run_group_agent_timeline(
     Segments within a lane are colored by ``effective_agent``; the same
     agent id shares a color across runs. Empty agent → ``main``.
     """
-    usable = [
-        r for r in runs
-        if isinstance(r, dict) and (r.get("steps") or [])
-    ]
+    usable = [r for r in runs if isinstance(r, dict) and (r.get("steps") or [])]
     if not usable:
         fig = _empty_figure(200, "No agent activity across runs.")
         _apply_dark(fig, dark)
@@ -671,26 +749,29 @@ def build_run_group_agent_timeline(
             show_leg = alabel not in legend_seen
             if show_leg:
                 legend_seen.add(alabel)
-            fig.add_trace(go.Bar(
-                y=[label],
-                x=[width],
-                orientation="h",
-                base=seg_start,
-                marker_color=hex_c,
-                name=alabel,
-                legendgroup=alabel,
-                showlegend=show_leg,
-                hovertext=(
-                    f"<b>{label}</b><br>{alabel}<br>"
-                    f"steps {seg_start}–{seg_end} ({width})<br>"
-                    f"{seg_tok:,} tokens, {seg_tools} tool calls"
-                ),
-                hoverinfo="text",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    y=[label],
+                    x=[width],
+                    orientation="h",
+                    base=seg_start,
+                    marker_color=hex_c,
+                    name=alabel,
+                    legendgroup=alabel,
+                    showlegend=show_leg,
+                    hovertext=(
+                        f"<b>{label}</b><br>{alabel}<br>"
+                        f"steps {seg_start}–{seg_end} ({width})<br>"
+                        f"{seg_tok:,} tokens, {seg_tools} tool calls"
+                    ),
+                    hoverinfo="text",
+                )
+            )
 
     n = len(usable)
     _apply_chart_layout(
-        fig, "Agent timeline (by run)",
+        fig,
+        "Agent timeline (by run)",
         xaxis="Step Index",
         height=max(220, 56 * n + 100),
         barmode="overlay",
@@ -709,6 +790,7 @@ def build_run_group_agent_timeline(
 
 
 # -- New chart types -------------------------------------------------------
+
 
 def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Figure:
     """Scatter plot showing tool call outcomes (success/failure) across steps."""
@@ -740,24 +822,34 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
 
     fig = go.Figure()
     if success_x:
-        fig.add_trace(go.Scatter(
-            x=success_x, y=success_y, mode="markers",
-            name="Success",
-            marker=dict(color=TOOL_OUTCOME_COLORS["success"], size=8, symbol="circle"),
-            hovertemplate="Step %{x}<br>%{y}<br>Success<extra></extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=success_x,
+                y=success_y,
+                mode="markers",
+                name="Success",
+                marker=dict(color=TOOL_OUTCOME_COLORS["success"], size=8, symbol="circle"),
+                hovertemplate="Step %{x}<br>%{y}<br>Success<extra></extra>",
+            )
+        )
     if failure_x:
-        fig.add_trace(go.Scatter(
-            x=failure_x, y=failure_y, mode="markers",
-            name="Failure",
-            marker=dict(color=TOOL_OUTCOME_COLORS["failure"], size=8, symbol="x"),
-            hovertemplate="Step %{x}<br>%{y}<br>Failure<extra></extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=failure_x,
+                y=failure_y,
+                mode="markers",
+                name="Failure",
+                marker=dict(color=TOOL_OUTCOME_COLORS["failure"], size=8, symbol="x"),
+                hovertemplate="Step %{x}<br>%{y}<br>Failure<extra></extra>",
+            )
+        )
 
     all_tools = sorted(set(success_y + failure_y))
     _apply_chart_layout(
-        fig, "Tool Outcome Timeline",
-        xaxis="Step", height=max(300, 30 * len(all_tools)),
+        fig,
+        "Tool Outcome Timeline",
+        xaxis="Step",
+        height=max(300, 30 * len(all_tools)),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
     _apply_dark(fig, dark)
@@ -775,11 +867,15 @@ def _add_phase_legend(fig: go.Figure, phases_used: set[str]) -> None:
     canonical = ["understand", "plan", "implement", "debug", "validate", "report"]
     for phase in canonical:
         if phase in phases_used:
-            fig.add_trace(go.Bar(
-                x=[None], y=[None],
-                marker_color=LABEL_PHASE_COLORS.get(phase, "#6b7280"),
-                name=phase, showlegend=True,
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=[None],
+                    y=[None],
+                    marker_color=LABEL_PHASE_COLORS.get(phase, "#6b7280"),
+                    name=phase,
+                    showlegend=True,
+                )
+            )
 
 
 def _build_label_bar_chart(
@@ -830,8 +926,10 @@ def _build_label_bar_chart(
     # Build bar trace kwargs
     bar_kwargs: dict = dict(
         marker_color=colors,
-        text=texts, textposition="outside",
-        cliponaxis=False, textfont=_LABEL_FONT,
+        text=texts,
+        textposition="outside",
+        cliponaxis=False,
+        textfont=_LABEL_FONT,
         showlegend=False,
     )
 
@@ -840,7 +938,9 @@ def _build_label_bar_chart(
         if action_to_phase:
             phases = [action_to_phase.get(a, "") for a in labels]
             bar_kwargs["customdata"] = phases
-            bar_kwargs["hovertemplate"] = "%{y} (%{customdata}): %{x" + (f":{value_format}" if value_format else "") + "}<extra></extra>"
+            bar_kwargs["hovertemplate"] = (
+                "%{y} (%{customdata}): %{x" + (f":{value_format}" if value_format else "") + "}<extra></extra>"
+            )
         else:
             bar_kwargs["hovertemplate"] = "%{y}: %{x}<extra></extra>"
     else:
@@ -870,8 +970,7 @@ def _build_label_bar_chart(
         if action_to_phase:
             layout_kwargs.update(
                 showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom",
-                            y=1.02, xanchor="center", x=0.5),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
             )
     else:
         layout_kwargs["height"] = 380
@@ -883,14 +982,14 @@ def _build_label_bar_chart(
 _CANONICAL_PHASES = ["understand", "plan", "implement", "debug", "validate", "report"]
 
 
-def build_label_phase_count_chart(phase_counts: dict[str, int],
-                                   dark: bool = False) -> go.Figure:
+def build_label_phase_count_chart(phase_counts: dict[str, int], dark: bool = False) -> go.Figure:
     """Bar chart of step counts per phase (level 1)."""
     fig = _build_label_bar_chart(
         phase_counts,
         color_fn=lambda p: LABEL_PHASE_COLORS.get(p, "#6b7280"),
         title="Step Count by Phase",
-        xaxis="Phase", yaxis="Steps",
+        xaxis="Phase",
+        yaxis="Steps",
         empty_message="No phase data",
         canonical_order=_CANONICAL_PHASES,
     )
@@ -898,15 +997,16 @@ def build_label_phase_count_chart(phase_counts: dict[str, int],
     return fig
 
 
-def build_label_action_count_chart(action_counts: dict[str, int],
-                                    action_to_phase: dict[str, str],
-                                    dark: bool = False) -> go.Figure:
+def build_label_action_count_chart(
+    action_counts: dict[str, int], action_to_phase: dict[str, str], dark: bool = False
+) -> go.Figure:
     """Bar chart of step counts per action (level 2), colored by parent phase."""
     fig = _build_label_bar_chart(
         action_counts,
         color_fn=lambda a: LABEL_PHASE_COLORS.get(action_to_phase.get(a, ""), "#6b7280"),
         title="Step Count by Action",
-        orientation="h", xaxis="Steps",
+        orientation="h",
+        xaxis="Steps",
         empty_message="No action data",
         action_to_phase=action_to_phase,
     )
@@ -914,15 +1014,15 @@ def build_label_action_count_chart(action_counts: dict[str, int],
     return fig
 
 
-def build_label_phase_duration_chart(phase_durations: dict[str, float],
-                                      dark: bool = False) -> go.Figure:
+def build_label_phase_duration_chart(phase_durations: dict[str, float], dark: bool = False) -> go.Figure:
     """Bar chart of summed duration per phase (level 1)."""
     fig = _build_label_bar_chart(
         phase_durations,
         color_fn=lambda p: LABEL_PHASE_COLORS.get(p, "#6b7280"),
         title="Duration by Phase",
         value_format=".1f",
-        xaxis="Phase", yaxis="Duration (s)",
+        xaxis="Phase",
+        yaxis="Duration (s)",
         empty_message="No phase duration data",
         canonical_order=_CANONICAL_PHASES,
     )
@@ -930,15 +1030,16 @@ def build_label_phase_duration_chart(phase_durations: dict[str, float],
     return fig
 
 
-def build_label_action_duration_chart(action_durations: dict[str, float],
-                                       action_to_phase: dict[str, str],
-                                       dark: bool = False) -> go.Figure:
+def build_label_action_duration_chart(
+    action_durations: dict[str, float], action_to_phase: dict[str, str], dark: bool = False
+) -> go.Figure:
     """Bar chart of summed duration per action (level 2), colored by parent phase."""
     fig = _build_label_bar_chart(
         action_durations,
         color_fn=lambda a: LABEL_PHASE_COLORS.get(action_to_phase.get(a, ""), "#6b7280"),
         title="Duration by Action",
-        orientation="h", value_format=".1f",
+        orientation="h",
+        value_format=".1f",
         xaxis="Duration (s)",
         empty_message="No action duration data",
         action_to_phase=action_to_phase,
@@ -967,8 +1068,7 @@ def _build_phase_comparison_chart(
         if p not in phases:
             phases.append(p)
     # Filter phases that appear in at least one side
-    phases = [p for p in phases
-              if ref_phase_values.get(p, 0) or cmp_phase_values.get(p, 0)]
+    phases = [p for p in phases if ref_phase_values.get(p, 0) or cmp_phase_values.get(p, 0)]
     if not phases:
         fig = _empty_figure(380, "Upload labeled JSONs for both trajectories to see phase comparison")
         _apply_dark(fig, dark)
@@ -978,28 +1078,40 @@ def _build_phase_comparison_chart(
     cmp_vals = [cmp_phase_values.get(p, 0) for p in phases]
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=phases, y=ref_vals, name=ref_label,
-        marker_color="#1d4ed8",
-        text=[format(v, value_format) if v else "" for v in ref_vals],
-        textposition="outside",
-        cliponaxis=False,
-    ))
-    fig.add_trace(go.Bar(
-        x=phases, y=cmp_vals, name=cmp_label,
-        marker_color="#dc2626",
-        text=[format(v, value_format) if v else "" for v in cmp_vals],
-        textposition="outside",
-        cliponaxis=False,
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=phases,
+            y=ref_vals,
+            name=ref_label,
+            marker_color="#1d4ed8",
+            text=[format(v, value_format) if v else "" for v in ref_vals],
+            textposition="outside",
+            cliponaxis=False,
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=phases,
+            y=cmp_vals,
+            name=cmp_label,
+            marker_color="#dc2626",
+            text=[format(v, value_format) if v else "" for v in cmp_vals],
+            textposition="outside",
+            cliponaxis=False,
+        )
+    )
     # Pad y-axis headroom so outside labels on the tallest bars don't collide
     # with the legend sitting just above the plot area.
     max_val = max([*ref_vals, *cmp_vals, 0])
     _apply_chart_layout(
-        fig, title, xaxis="Phase", yaxis=y_title, height=380,
-        barmode="group", showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="center", x=0.5),
+        fig,
+        title,
+        xaxis="Phase",
+        yaxis=y_title,
+        height=380,
+        barmode="group",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
     if max_val > 0:
         fig.update_yaxes(range=[0, max_val * 1.12])
@@ -1016,9 +1128,14 @@ def build_phase_count_comparison_chart(
 ) -> go.Figure:
     """Grouped bar chart: step count per phase for reference vs compared."""
     return _build_phase_comparison_chart(
-        ref_phase_counts, cmp_phase_counts, ref_label, cmp_label,
+        ref_phase_counts,
+        cmp_phase_counts,
+        ref_label,
+        cmp_label,
         title="Step Count by Phase — Reference vs Compared",
-        y_title="Steps", value_format=",", dark=dark,
+        y_title="Steps",
+        value_format=",",
+        dark=dark,
     )
 
 
@@ -1031,9 +1148,14 @@ def build_phase_duration_comparison_chart(
 ) -> go.Figure:
     """Grouped bar chart: total duration (s) per phase for reference vs compared."""
     return _build_phase_comparison_chart(
-        ref_phase_durations, cmp_phase_durations, ref_label, cmp_label,
+        ref_phase_durations,
+        cmp_phase_durations,
+        ref_label,
+        cmp_label,
         title="Duration by Phase — Reference vs Compared",
-        y_title="Duration (s)", value_format=".1f", dark=dark,
+        y_title="Duration (s)",
+        value_format=".1f",
+        dark=dark,
     )
 
 
@@ -1044,8 +1166,8 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
         _apply_dark(fig, dark)
         return fig
 
-    _USER_COLOR = "#d1d5db"       # grey fill for user prompt bar
-    _USER_BORDER = "#9ca3af"      # darker border
+    _USER_COLOR = "#d1d5db"  # grey fill for user prompt bar
+    _USER_BORDER = "#9ca3af"  # darker border
 
     step_indices = [s.get("index", i) for i, s in enumerate(steps)]
     step_labels = [str(idx) for idx in step_indices]
@@ -1059,54 +1181,67 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
     # --- Assistant bars (only non-user rows; user rows get 0) ---
     asst_durations = [d if r != "user" else 0 for d, r in zip(durations, roles, strict=False)]
     asst_colors = [LABEL_PHASE_COLORS.get(p, "#6b7280") for p in phases]
-    asst_text = [
-        f"{a}  ({d:.1f}s)" if r != "user" else ""
-        for r, a, d in zip(roles, actions, durations, strict=False)
-    ]
+    asst_text = [f"{a}  ({d:.1f}s)" if r != "user" else "" for r, a, d in zip(roles, actions, durations, strict=False)]
     asst_hover = [
-        (f"<b>Step {step_indices[i]}</b><br>"
-         f"Phase: {phases[i]}<br>"
-         f"Action: {actions[i]}<br>"
-         f"Duration: {durations[i]:.1f}s<br>"
-         f"Tokens: {s.get('tokens_total', 0):,}")
-        if roles[i] != "user" else ""
+        (
+            f"<b>Step {step_indices[i]}</b><br>"
+            f"Phase: {phases[i]}<br>"
+            f"Action: {actions[i]}<br>"
+            f"Duration: {durations[i]:.1f}s<br>"
+            f"Tokens: {s.get('tokens_total', 0):,}"
+        )
+        if roles[i] != "user"
+        else ""
         for i, s in enumerate(steps)
     ]
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=asst_durations, y=y_pos, orientation="h",
-        marker_color=asst_colors,
-        text=asst_text, textposition="outside",
-        outsidetextfont=dict(size=11),
-        textangle=0, cliponaxis=False,
-        hovertext=asst_hover, hoverinfo="text",
-        showlegend=False,
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=asst_durations,
+            y=y_pos,
+            orientation="h",
+            marker_color=asst_colors,
+            text=asst_text,
+            textposition="outside",
+            outsidetextfont=dict(size=11),
+            textangle=0,
+            cliponaxis=False,
+            hovertext=asst_hover,
+            hoverinfo="text",
+            showlegend=False,
+        )
+    )
 
     # --- User prompt bars (small fixed-width marker + label) ---
     user_bar_width = max_dur * 0.04
     user_indices = [i for i, r in enumerate(roles) if r == "user"]
     if user_indices:
         user_hover = [
-            f"<b>Step {step_indices[i]} — user prompt</b><br>"
-            f"{steps[i].get('text_preview', '')[:120]}"
+            f"<b>Step {step_indices[i]} — user prompt</b><br>{steps[i].get('text_preview', '')[:120]}"
             for i in user_indices
         ]
-        fig.add_trace(go.Bar(
-            x=[user_bar_width] * len(user_indices),
-            y=user_indices, orientation="h",
-            width=0.8,  # match agent bar height
-            marker_color=_USER_COLOR,
-            marker_line=dict(color=_USER_BORDER, width=1),
-            hovertext=user_hover, hoverinfo="text",
-            showlegend=False,
-        ))
+        fig.add_trace(
+            go.Bar(
+                x=[user_bar_width] * len(user_indices),
+                y=user_indices,
+                orientation="h",
+                width=0.8,  # match agent bar height
+                marker_color=_USER_COLOR,
+                marker_line=dict(color=_USER_BORDER, width=1),
+                hovertext=user_hover,
+                hoverinfo="text",
+                showlegend=False,
+            )
+        )
         for yi in user_indices:
             fig.add_annotation(
-                x=user_bar_width, y=yi,
+                x=user_bar_width,
+                y=yi,
                 text="<i>user prompt</i>",
-                showarrow=False, xanchor="left", xshift=6,
+                showarrow=False,
+                xanchor="left",
+                xshift=6,
                 font=dict(size=10, color="#6b7280"),
             )
 
@@ -1116,13 +1251,16 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
         key = "user" if role == "user" else phase
         if key and key not in seen:
             seen.add(key)
-            fig.add_trace(go.Bar(
-                x=[None], y=[None], orientation="h",
-                marker_color=_USER_COLOR if key == "user"
-                    else LABEL_PHASE_COLORS.get(key, "#6b7280"),
-                name="user prompt" if key == "user" else key,
-                showlegend=True,
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=[None],
+                    y=[None],
+                    orientation="h",
+                    marker_color=_USER_COLOR if key == "user" else LABEL_PHASE_COLORS.get(key, "#6b7280"),
+                    name="user prompt" if key == "user" else key,
+                    showlegend=True,
+                )
+            )
 
     chart_height = max(450, 28 * len(steps))
     top_margin = 90  # title (~25 px) + small gap + legend (~25 px) + breathing room
@@ -1130,27 +1268,35 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
     # constant pixel offsets so the title sits on top with the legend just below
     # it, regardless of how tall the chart is. yref="container" keeps both in
     # the same coordinate system so they don't collide.
-    title_offset_px = 8     # title top, ~8 px below figure top
-    legend_offset_px = 45   # legend top, ~45 px below figure top (just under title)
+    title_offset_px = 8  # title top, ~8 px below figure top
+    legend_offset_px = 45  # legend top, ~45 px below figure top (just under title)
     title_y = 1 - title_offset_px / chart_height
     legend_y = 1 - legend_offset_px / chart_height
     _apply_chart_layout(
-        fig, "Step Timeline (colored by phase, labeled by action)",
-        xaxis="Duration (s)", yaxis="Step",
+        fig,
+        "Step Timeline (colored by phase, labeled by action)",
+        xaxis="Duration (s)",
+        yaxis="Step",
         height=chart_height,
         margin=dict(l=70, r=200, t=top_margin, b=40),
-        showlegend=True, barmode="overlay",
-        legend=dict(orientation="h", yref="container", yanchor="top",
-                    y=legend_y, xanchor="center", x=0.5),
+        showlegend=True,
+        barmode="overlay",
+        legend=dict(orientation="h", yref="container", yanchor="top", y=legend_y, xanchor="center", x=0.5),
     )
     # Pin the title above the legend in container coords.
-    fig.update_layout(title=dict(
-        text="Step Timeline (colored by phase, labeled by action)",
-        y=title_y, yref="container", yanchor="top",
-        x=0.5, xanchor="center",
-    ))
+    fig.update_layout(
+        title=dict(
+            text="Step Timeline (colored by phase, labeled by action)",
+            y=title_y,
+            yref="container",
+            yanchor="top",
+            x=0.5,
+            xanchor="center",
+        )
+    )
     fig.update_yaxes(
-        tickvals=y_pos, ticktext=step_labels,
+        tickvals=y_pos,
+        ticktext=step_labels,
         autorange="reversed",
     )
     _apply_dark(fig, dark)
@@ -1160,8 +1306,8 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
 # -- File Interaction Timeline -----------------------------------------------
 
 _FILE_INTERACTION_COLORS = {
-    "read": "#3b82f6",    # blue
-    "write": "#10b981",   # green
+    "read": "#3b82f6",  # blue
+    "write": "#10b981",  # green
     "search": "#f59e0b",  # orange
 }
 
@@ -1207,26 +1353,26 @@ def build_file_interaction_chart(
         x = [i["step"] for i in group]
         y = [i["path"] for i in group]
         is_target = [_norm(i["path"]) in norm_targets for i in group]
-        hover = [
-            f"Step {i['step']}: {i['tool']}({i['path']})"
-            for i in group
-        ]
-        border_colors = [
-            "#dc2626" if t else color for t in is_target
-        ]
+        hover = [f"Step {i['step']}: {i['tool']}({i['path']})" for i in group]
+        border_colors = ["#dc2626" if t else color for t in is_target]
         border_widths = [2 if t else 0 for t in is_target]
 
-        fig.add_trace(go.Scatter(
-            x=x, y=y, mode="markers",
-            name=itype,
-            marker=dict(
-                color=color, size=9,
-                symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
-                line=dict(color=border_colors, width=border_widths),
-            ),
-            hovertext=hover,
-            hoverinfo="text",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=y,
+                mode="markers",
+                name=itype,
+                marker=dict(
+                    color=color,
+                    size=9,
+                    symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
+                    line=dict(color=border_colors, width=border_widths),
+                ),
+                hovertext=hover,
+                hoverinfo="text",
+            )
+        )
 
     # Dynamic height — scale with file count so all files are visible.
     # Drag-to-pan on y-axis is still enabled for very large trajectories.
@@ -1244,13 +1390,14 @@ def build_file_interaction_chart(
     fig_width = left_margin + 600 + 20  # left margin + plot area + right margin
 
     _apply_chart_layout(
-        fig, "File Interaction Timeline",
-        xaxis="Step", yaxis="File",
+        fig,
+        "File Interaction Timeline",
+        xaxis="Step",
+        yaxis="File",
         height=chart_height,
         margin=dict(l=left_margin, r=20, t=50, b=40),
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="center", x=0.5),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
     fig.update_layout(width=fig_width, autosize=False)
     # Enable drag-to-pan/zoom on both axes so users can also navigate via mouse.
@@ -1267,6 +1414,7 @@ def build_file_interaction_chart(
 
 
 # -- Plan Progress Timeline -----------------------------------------------
+
 
 def build_plan_timeline_chart(
     plan_history: list[dict],
@@ -1293,6 +1441,7 @@ def build_plan_timeline_chart(
     def _sort_key(it: dict) -> tuple[int, int]:
         s = it.get("start_step")
         return (0, s) if s is not None else (1, 0)
+
     items = sorted(items, key=_sort_key, reverse=True)
 
     fig = go.Figure()
@@ -1309,51 +1458,81 @@ def build_plan_timeline_chart(
         if start is not None and end is not None:
             color = "#dc2626" if is_stalled else "#059669"
             width = end - start
-            fig.add_trace(go.Bar(
-                y=[short], x=[max(width, 1)], orientation="h",
-                base=start, marker_color=color, showlegend=False,
-                hovertext=f"{content}<br>Steps {start}→{end} ({width} steps)",
-                hoverinfo="text",
-                text=f"{width} steps", textposition="inside",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    y=[short],
+                    x=[max(width, 1)],
+                    orientation="h",
+                    base=start,
+                    marker_color=color,
+                    showlegend=False,
+                    hovertext=f"{content}<br>Steps {start}→{end} ({width} steps)",
+                    hoverinfo="text",
+                    text=f"{width} steps",
+                    textposition="inside",
+                )
+            )
         elif start is not None:
-            fig.add_trace(go.Bar(
-                y=[short], x=[1], orientation="h",
-                base=start, marker_color="#d97706", showlegend=False,
-                hovertext=f"{content}<br>Started at step {start}, not completed",
-                hoverinfo="text",
-                text="stalled", textposition="inside",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    y=[short],
+                    x=[1],
+                    orientation="h",
+                    base=start,
+                    marker_color="#d97706",
+                    showlegend=False,
+                    hovertext=f"{content}<br>Started at step {start}, not completed",
+                    hoverinfo="text",
+                    text="stalled",
+                    textposition="inside",
+                )
+            )
         elif end is not None:
             # Item went straight to "completed" without ever being marked
             # in_progress (common for OpenCode todo lists). Show a thin marker
             # at the completion step so the row isn't blank.
-            fig.add_trace(go.Bar(
-                y=[short], x=[1], orientation="h",
-                base=max(0, end - 1), marker_color="#3b82f6", showlegend=False,
-                hovertext=f"{content}<br>Completed at step {end} (no in_progress recorded)",
-                hoverinfo="text",
-                text="completed", textposition="inside",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    y=[short],
+                    x=[1],
+                    orientation="h",
+                    base=max(0, end - 1),
+                    marker_color="#3b82f6",
+                    showlegend=False,
+                    hovertext=f"{content}<br>Completed at step {end} (no in_progress recorded)",
+                    hoverinfo="text",
+                    text="completed",
+                    textposition="inside",
+                )
+            )
         else:
             # Never started or completed — show a grey placeholder at x=0 so
             # the row appears in the y-axis instead of being silently dropped.
-            fig.add_trace(go.Bar(
-                y=[short], x=[0.5], orientation="h",
-                base=0, marker_color="#9ca3af", showlegend=False,
-                hovertext=f"{content}<br>Never started",
-                hoverinfo="text",
-                text="not started", textposition="outside",
-                cliponaxis=False,
-            ))
+            fig.add_trace(
+                go.Bar(
+                    y=[short],
+                    x=[0.5],
+                    orientation="h",
+                    base=0,
+                    marker_color="#9ca3af",
+                    showlegend=False,
+                    hovertext=f"{content}<br>Never started",
+                    hoverinfo="text",
+                    text="not started",
+                    textposition="outside",
+                    cliponaxis=False,
+                )
+            )
 
     # Compact bar height (22px each + 90px padding) keeps the chart from
     # ballooning vertically when only a few items have explicit timing.
     chart_height = max(220, 22 * len(items) + 90)
 
     _apply_chart_layout(
-        fig, "Plan Progress Timeline",
-        xaxis="Step", height=chart_height,
+        fig,
+        "Plan Progress Timeline",
+        xaxis="Step",
+        height=chart_height,
         margin=dict(l=max(200, max((len(lbl) for lbl in y_labels), default=10) * 6 + 20), r=40, t=50, b=40),
     )
     # Tighter bar gap so individual items don't visually balloon when the
@@ -1365,6 +1544,7 @@ def build_plan_timeline_chart(
 
 # -- Error Classification Chart --------------------------------------------
 
+
 def build_error_classification_chart(
     steps: list[dict],
     dark: bool = False,
@@ -1372,6 +1552,7 @@ def build_error_classification_chart(
     """Horizontal bar chart of error types classified from tool output."""
     from collections import Counter
     from .loaders import _classify_tool_error
+
     error_types: Counter = Counter()
     error_steps: dict[str, list[int]] = {}
 
@@ -1395,18 +1576,18 @@ def build_error_classification_chart(
         return fig
 
     _LABELS = {
-        "platform_error":   "Platform Error",
+        "platform_error": "Platform Error",
         "permission_error": "Permission / Policy",
-        "missing_file":     "Missing File",
-        "bad_input":        "Bad Input",
-        "tool_error":       "Other Tool Error",
+        "missing_file": "Missing File",
+        "bad_input": "Bad Input",
+        "tool_error": "Other Tool Error",
     }
     _COLORS = {
-        "platform_error":   "#dc2626",
+        "platform_error": "#dc2626",
         "permission_error": "#d97706",
-        "missing_file":     "#6366f1",
-        "bad_input":        "#0891b2",
-        "tool_error":       "#6b7280",
+        "missing_file": "#6366f1",
+        "bad_input": "#0891b2",
+        "tool_error": "#6b7280",
     }
 
     sorted_types = sorted(error_types.keys(), key=lambda t: error_types[t])
@@ -1418,15 +1599,24 @@ def build_error_classification_chart(
         for t in sorted_types
     ]
 
-    fig = go.Figure(go.Bar(
-        y=labels, x=counts, orientation="h",
-        marker_color=colors, showlegend=False,
-        text=[str(c) for c in counts], textposition="outside",
-        hovertext=hover, hoverinfo="text",
-    ))
+    fig = go.Figure(
+        go.Bar(
+            y=labels,
+            x=counts,
+            orientation="h",
+            marker_color=colors,
+            showlegend=False,
+            text=[str(c) for c in counts],
+            textposition="outside",
+            hovertext=hover,
+            hoverinfo="text",
+        )
+    )
     _apply_chart_layout(
-        fig, "Tool Error Classification",
-        xaxis="Count", height=max(200, 40 * len(sorted_types)),
+        fig,
+        "Tool Error Classification",
+        xaxis="Count",
+        height=max(200, 40 * len(sorted_types)),
         margin=dict(l=max(140, max((len(lbl) for lbl in labels), default=10) * 7 + 20), r=60, t=50, b=40),
     )
     _apply_dark(fig, dark)
@@ -1450,10 +1640,7 @@ _COMPACTION_MARKER_COLOR = "#e11d48"
 
 def _pressure_series_colors(agents: list[dict]) -> dict[str, str]:
     """Distinct hue per pressure series, in first-appearance order."""
-    return {
-        agent.get("agent_id", ""): SESSION_COLORS[i % len(SESSION_COLORS)]
-        for i, agent in enumerate(agents)
-    }
+    return {agent.get("agent_id", ""): SESSION_COLORS[i % len(SESSION_COLORS)] for i, agent in enumerate(agents)}
 
 
 def build_context_pressure_chart(
@@ -1508,42 +1695,51 @@ def build_context_pressure_chart(
                 pct_suffix.append(f"<br>Pressure: {100.0 * occupancy / window_limit:.1f}%")
             else:
                 pct_suffix.append("")
-        fig.add_trace(go.Scatter(
-            x=xs, y=fresh, name="Fresh input",
-            mode="lines",
-            line=dict(width=0.5, color=TOKEN_COLORS["fresh_input"]),
-            stackgroup="occ",
-            fillcolor="rgba(59,130,246,0.35)",
-            hovertemplate=(
-                "Step %{x}<br>Turn %{customdata}<br>Fresh: %{y:,}<extra></extra>"
-            ),
-            customdata=turns,
-            legendgroup="tokens",
-        ))
-        fig.add_trace(go.Scatter(
-            x=xs, y=cache, name="Cache read",
-            mode="lines",
-            line=dict(width=0.5, color=TOKEN_COLORS["cache_read"]),
-            stackgroup="occ",
-            fillcolor="rgba(52,211,153,0.35)",
-            hovertemplate=(
-                "Step %{x}<br>Turn %{customdata}<br>Cache read: %{y:,}<extra></extra>"
-            ),
-            customdata=turns,
-            legendgroup="tokens",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=fresh,
+                name="Fresh input",
+                mode="lines",
+                line=dict(width=0.5, color=TOKEN_COLORS["fresh_input"]),
+                stackgroup="occ",
+                fillcolor="rgba(59,130,246,0.35)",
+                hovertemplate=("Step %{x}<br>Turn %{customdata}<br>Fresh: %{y:,}<extra></extra>"),
+                customdata=turns,
+                legendgroup="tokens",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=cache,
+                name="Cache read",
+                mode="lines",
+                line=dict(width=0.5, color=TOKEN_COLORS["cache_read"]),
+                stackgroup="occ",
+                fillcolor="rgba(52,211,153,0.35)",
+                hovertemplate=("Step %{x}<br>Turn %{customdata}<br>Cache read: %{y:,}<extra></extra>"),
+                customdata=turns,
+                legendgroup="tokens",
+            )
+        )
         hover = [
             f"{agent['label']}<br>Step {x}<br>Turn {turn}<br>Occupancy: {o:,}{pct}"
             for x, turn, o, pct in zip(xs, turns, occ, pct_suffix, strict=False)
         ]
-        fig.add_trace(go.Scatter(
-            x=xs, y=occ, name="Occupancy",
-            mode="lines+markers",
-            line=dict(color=color, width=2.5),
-            marker=dict(size=6, color=color),
-            hovertext=hover, hoverinfo="text",
-            legendgroup=agent.get("agent_id", ""),
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=occ,
+                name="Occupancy",
+                mode="lines+markers",
+                line=dict(color=color, width=2.5),
+                marker=dict(size=6, color=color),
+                hovertext=hover,
+                hoverinfo="text",
+                legendgroup=agent.get("agent_id", ""),
+            )
+        )
     else:
         for agent in agents:
             points = agent.get("points") or []
@@ -1556,7 +1752,11 @@ def build_context_pressure_chart(
             turns = [p["local_turn"] for p in points]
             hover = []
             for x, turn, o, p in zip(
-                xs, turns, occ, points, strict=False,
+                xs,
+                turns,
+                occ,
+                points,
+                strict=False,
             ):
                 pct = ""
                 if isinstance(window_limit, (int, float)) and window_limit > 0:
@@ -1566,44 +1766,61 @@ def build_context_pressure_chart(
                     f"<br>Occupancy: {o:,}<br>Fresh: {p['fresh']:,}"
                     f"<br>Cache: {p['cache_read']:,}{pct}"
                 )
-            fig.add_trace(go.Scatter(
-                x=xs, y=occ, name=agent["label"],
-                mode="lines+markers",
-                line=dict(color=color, width=2.5),
-                marker=dict(size=6, color=color),
-                hovertext=hover, hoverinfo="text",
-                legendgroup=agent_id,
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=xs,
+                    y=occ,
+                    name=agent["label"],
+                    mode="lines+markers",
+                    line=dict(color=color, width=2.5),
+                    marker=dict(size=6, color=color),
+                    hovertext=hover,
+                    hoverinfo="text",
+                    legendgroup=agent_id,
+                )
+            )
 
     _add_compaction_markers(
-        fig, events, agents=agents, color_map=color_map, y_max=y_max,
+        fig,
+        events,
+        agents=agents,
+        color_map=color_map,
+        y_max=y_max,
         marker_color=_COMPACTION_MARKER_COLOR if single else None,
     )
 
     if isinstance(window_limit, (int, float)) and window_limit > 0:
         fig.add_hline(
-            y=window_limit, line_dash="dash", line_color="#94a3b8",
+            y=window_limit,
+            line_dash="dash",
+            line_color="#94a3b8",
             annotation_text=f"Window {window_limit:,}",
             annotation_position="top right",
         )
         if single:
             fig.add_hrect(
-                y0=window_limit * 0.7, y1=window_limit * 0.9,
-                fillcolor="rgba(217,119,6,0.08)", line_width=0,
+                y0=window_limit * 0.7,
+                y1=window_limit * 0.9,
+                fillcolor="rgba(217,119,6,0.08)",
+                line_width=0,
             )
             fig.add_hrect(
-                y0=window_limit * 0.9, y1=window_limit,
-                fillcolor="rgba(220,38,38,0.10)", line_width=0,
+                y0=window_limit * 0.9,
+                y1=window_limit,
+                fillcolor="rgba(220,38,38,0.10)",
+                line_width=0,
             )
 
     title = "Context Window Pressure"
     if single:
         title = f"Context Window Pressure — {agents[0]['label']}"
     _apply_chart_layout(
-        fig, title,
-        xaxis="Step", yaxis="Tokens (occupancy)", height=400,
-        legend=dict(orientation="h", yanchor="bottom", y=1.06,
-                    xanchor="center", x=0.5),
+        fig,
+        title,
+        xaxis="Step",
+        yaxis="Tokens (occupancy)",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
     )
     if y_max > 0:
         fig.update_yaxes(range=[0, y_max * 1.08])
@@ -1652,44 +1869,49 @@ def _add_compaction_markers(
             if not isinstance(y, (int, float)) or y <= 0:
                 y = y_max * 0.5 if y_max else 0
             drop_txt = f"<br>−{int(dropped):,} tokens" if dropped else ""
-            after_txt = (
-                f"<br>After: {int(after):,}"
-                if isinstance(after, (int, float)) and after > 0 else ""
-            )
-            hover.append(
-                f"{agent_label}<br>Step {step}<br>{kind_label}{drop_txt}{after_txt}"
-            )
+            after_txt = f"<br>After: {int(after):,}" if isinstance(after, (int, float)) and after > 0 else ""
+            hover.append(f"{agent_label}<br>Step {step}<br>{kind_label}{drop_txt}{after_txt}")
             xs.append(step)
             ys.append(float(y))
             if (
-                isinstance(before, (int, float)) and before > 0
-                and isinstance(after, (int, float)) and 0 < after < before
+                isinstance(before, (int, float))
+                and before > 0
+                and isinstance(after, (int, float))
+                and 0 < after < before
             ):
-                fig.add_trace(go.Scatter(
-                    x=[step, step], y=[before, after],
-                    mode="lines",
-                    line=dict(color=color, width=2, dash="dash"),
-                    legendgroup=agent_id,
-                    showlegend=False,
-                    hoverinfo="skip",
-                    name=f"{agent_label} compact",
-                ))
+                fig.add_trace(
+                    go.Scatter(
+                        x=[step, step],
+                        y=[before, after],
+                        mode="lines",
+                        line=dict(color=color, width=2, dash="dash"),
+                        legendgroup=agent_id,
+                        showlegend=False,
+                        hoverinfo="skip",
+                        name=f"{agent_label} compact",
+                    )
+                )
         if not xs:
             continue
-        fig.add_trace(go.Scatter(
-            x=xs, y=ys,
-            name=f"{agent_label} compact",
-            mode="markers",
-            marker=dict(
-                size=12, symbol="diamond", color=color,
-                line=dict(width=1.5, color="#fff"),
-            ),
-            legendgroup=agent_id,
-            hovertext=hover, hoverinfo="text",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                name=f"{agent_label} compact",
+                mode="markers",
+                marker=dict(
+                    size=12,
+                    symbol="diamond",
+                    color=color,
+                    line=dict(width=1.5, color="#fff"),
+                ),
+                legendgroup=agent_id,
+                hovertext=hover,
+                hoverinfo="text",
+            )
+        )
 
 
 # -- Task Mode Breakdown (#2) ------------------------------------------------
 
 # -- Duration vs True Cost Gap (#6) ------------------------------------------
-
