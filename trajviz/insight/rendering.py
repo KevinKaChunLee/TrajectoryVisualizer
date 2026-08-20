@@ -9,7 +9,7 @@ from pygments import highlight as _pygments_highlight
 from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
-from .charts import build_agent_color_map
+from .charts import bind_timeline_agents
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
 from .styles import WORKFLOW_CSS
 
@@ -273,7 +273,7 @@ def render_workflow_html(steps: list[dict]) -> str:
         return "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>No steps to display.</div>"
 
     css = WORKFLOW_CSS
-    color_map = build_agent_color_map(steps)
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
     has_agents = len(color_map) > 1
 
     cards_html = []
@@ -297,19 +297,16 @@ def render_workflow_html(steps: list[dict]) -> str:
         tc_info = f'<span>{step["tool_call_count"]} tool(s)</span>' if step["tool_call_count"] else ''
         err_info = f'<span style="color:var(--wf-border-error)">{step["error_count"]} err</span>' if step["error_count"] else ''
 
-        # Agent badge with per-agent color
+        # Agent badge with per-agent color (same identity as swimlane / tool chart)
         agent_badge = ''
         agent_left_border = ""
-        # Use effective agent (session_id for CodeArts sub-agents)
-        agent_id = step.get("agent", "")
-        if not agent_id and step.get("is_sub_agent") and step.get("session_id"):
-            agent_id = step["session_id"]
         if has_agents:
-            aidx = color_map.get(agent_id, 0)
+            aid = agent_id_of(step)
+            aidx = color_map.get(aid, 0)
             agent_bg, agent_border = AGENT_CSS_COLORS[aidx % len(AGENT_CSS_COLORS)]
             agent_hex = AGENT_COLORS[aidx % len(AGENT_COLORS)]
             agent_left_border = f"border-left:4px solid {agent_hex};"
-            agent_label = "main" if not agent_id else (agent_id[:8] + "\u2026" if len(agent_id) > 8 else agent_id)
+            agent_label = labels.get(aid) or (aid or "main")
             agent_badge = (
                 f'<span class="wf-badge" style="background:{agent_bg};color:{agent_border};'
                 f'border:1px solid {agent_border};font-size:9px;">{html.escape(agent_label)}</span>'

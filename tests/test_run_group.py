@@ -6,7 +6,12 @@ import tempfile
 import unittest
 
 from trajviz.converge.canonical import CanonicalAction
-from trajviz.insight.charts import build_run_group_agent_timeline
+from trajviz.insight.charts import (
+    bind_timeline_agents,
+    build_run_group_agent_timeline,
+    build_tool_chart,
+)
+from trajviz.insight.rendering import render_workflow_html
 from trajviz.insight.run_group import (
     build_behavioral_comparison,
     build_run_group_scorecard,
@@ -231,12 +236,8 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertEqual(behavior["baseline_run_id"], "a")
         self.assertEqual(behavior["similarity"]["a"]["a"], 1.0)
         self.assertGreater(behavior["similarity"]["a"]["c"], 0.5)
-        self.assertTrue(
-            any(r["type"] == "SEARCH" and r["target"] == "bug@src" for r in behavior["action_matrix"])
-        )
-        self.assertFalse(
-            any(r["type"] in ("FILE_READ", "FILE_WRITE") for r in behavior["action_matrix"])
-        )
+        self.assertTrue(any(r["type"] == "SEARCH" and r["target"] == "bug@src" for r in behavior["action_matrix"]))
+        self.assertFalse(any(r["type"] in ("FILE_READ", "FILE_WRITE") for r in behavior["action_matrix"]))
         paths = {r["path"]: r for r in behavior["file_matrix"]}
         self.assertIn("src/main.py", paths)
         self.assertEqual(paths["src/main.py"]["kind"], "consensus")
@@ -604,6 +605,214 @@ class AgentTimelineChartTests(unittest.TestCase):
     def test_empty_runs(self):
         fig = build_run_group_agent_timeline([])
         self.assertEqual(len(fig.data), 0)
+
+
+def _opencode_step(
+    index: int,
+    *,
+    agent: str,
+    session_id: str,
+    tool: str | None = None,
+    tokens: int = 10,
+) -> dict:
+    step = {
+        "index": index,
+        "role": "assistant",
+        "agent": agent,
+        "session_id": session_id,
+        "is_sub_agent": False,
+        "duration": 1.0,
+        "tokens": {
+            "total": tokens,
+            "input": tokens,
+            "output": 0,
+            "reasoning": 0,
+            "cache_read": 0,
+            "cache_write": 0,
+        },
+        "text_preview": agent,
+        "parts": [],
+        "tool_calls": [],
+        "tool_call_count": 0,
+        "error_count": 0,
+        "has_reasoning": False,
+    }
+    if tool:
+        step["tool_calls"] = [{"tool_name": tool, "status": "completed"}]
+        step["tool_call_count"] = 1
+        step["parts"] = [{"type": "tool_call", "tool_name": tool}]
+    return step
+
+
+class TimelineIdentityTests(unittest.TestCase):
+    def test_tool_chart_stacks_opencode_modes(self):
+        steps = [
+            _opencode_step(0, agent="plan", session_id="ses_root", tool="Read"),
+            _opencode_step(1, agent="explore", session_id="ses_ex1", tool="Grep"),
+        ]
+        fig = build_tool_chart(steps)
+        names = {t.name for t in fig.data}
+        self.assertIn("plan", names)
+        self.assertIn("explore", names)
+        self.assertNotIn("main", names)
+        plan = next(t for t in fig.data if t.name == "plan")
+        explore = next(t for t in fig.data if t.name == "explore")
+        idx = {name: i for i, name in enumerate(plan.y)}
+        self.assertEqual(plan.x[idx["Read"]], 1)
+        self.assertEqual(plan.x[idx["Grep"]], 0)
+        self.assertEqual(explore.x[idx["Grep"]], 1)
+        self.assertEqual(explore.x[idx["Read"]], 0)
+
+    def test_workflow_badges_use_timeline_labels(self):
+        steps = [
+            _opencode_step(0, agent="plan", session_id="ses_root"),
+            _opencode_step(1, agent="explore", session_id="ses_ex1"),
+        ]
+        html = render_workflow_html(steps)
+        self.assertIn("plan", html)
+        self.assertIn("explore", html)
+        color_map, labels, agent_id_of = bind_timeline_agents(steps)
+        self.assertGreater(len(color_map), 1)
+        ids = {agent_id_of(s) for s in steps}
+        self.assertEqual(len(ids), 2)
+        self.assertTrue(all("::" in aid for aid in ids))
+        self.assertIn("plan", labels.values())
+        self.assertIn("explore", labels.values())
+
+    def test_color_map_keys_match_tool_chart_lookup(self):
+        steps = [
+            _opencode_step(0, agent="plan", session_id="ses_root", tool="Read"),
+            _opencode_step(1, agent="explore", session_id="ses_ex1", tool="Grep"),
+        ]
+        color_map, _labels, agent_id_of = bind_timeline_agents(steps)
+        for step in steps:
+            aid = agent_id_of(step)
+            self.assertIn(aid, color_map)
+
+
+class ScorecardDisplayTests(unittest.TestCase):
+    def test_peak_zero_is_numeric_not_dash(self):
+        html = build_run_group_scorecard_html(
+            {
+                "rows": [
+                    {
+                        "run_id": "a",
+                        "label": "A",
+                        "error": None,
+                        "finished": True,
+                        "steps": 1,
+                        "wall_clock_s": 1,
+                        "wall_clock_fmt": "1s",
+                        "tokens": 1,
+                        "tool_calls": 1,
+                        "tool_success_pct": 100,
+                        "peak_occupancy": 0,
+                        "peak_pct": None,
+                        "compactions": 1,
+                        "format": "test",
+                    },
+                    {
+                        "run_id": "b",
+                        "label": "B",
+                        "error": None,
+                        "finished": True,
+                        "steps": 2,
+                        "wall_clock_s": 2,
+                        "wall_clock_fmt": "2s",
+                        "tokens": 2,
+                        "tool_calls": 2,
+                        "tool_success_pct": 100,
+                        "peak_occupancy": 100,
+                        "peak_pct": 50,
+                        "compactions": 2,
+                        "format": "test",
+                    },
+                ],
+                "behavior": None,
+                "ok": True,
+                "error": None,
+            }
+        )
+        self.assertIn("100 (50%)", html)
+        self.assertNotIn("—", html)
+
+    def test_empty_action_lists_are_identical(self):
+        behavior = build_behavioral_comparison(
+            [
+                {"run_id": "a", "label": "A", "actions": []},
+                {"run_id": "b", "label": "B", "actions": []},
+            ]
+        )
+        self.assertEqual(behavior["similarity"]["a"]["b"], 1.0)
+        self.assertEqual(behavior["similarity"]["a"]["a"], 1.0)
+        html = build_run_group_scorecard_html(
+            {
+                "rows": [
+                    {
+                        "run_id": "a",
+                        "label": "A",
+                        "error": None,
+                        "finished": True,
+                        "steps": 1,
+                        "wall_clock_s": 1,
+                        "wall_clock_fmt": "1s",
+                        "tokens": 1,
+                        "tool_calls": 0,
+                        "tool_success_pct": 100,
+                        "peak_occupancy": 1,
+                        "peak_pct": None,
+                        "compactions": 0,
+                        "format": "test",
+                    },
+                    {
+                        "run_id": "b",
+                        "label": "B",
+                        "error": None,
+                        "finished": True,
+                        "steps": 1,
+                        "wall_clock_s": 1,
+                        "wall_clock_fmt": "1s",
+                        "tokens": 1,
+                        "tool_calls": 0,
+                        "tool_success_pct": 100,
+                        "peak_occupancy": 1,
+                        "peak_pct": None,
+                        "compactions": 0,
+                        "format": "test",
+                    },
+                ],
+                "behavior": behavior,
+                "ok": True,
+                "error": None,
+            }
+        )
+        self.assertIn("No non-file actions", html)
+
+    def test_namespaced_tool_keeps_prefix_when_truncated(self):
+        long_tool = "org.example/" + ("plugin/" * 12) + "list_issues"
+        self.assertGreater(len(long_tool), 64)
+        behavior = build_behavioral_comparison(
+            [
+                {
+                    "run_id": "a",
+                    "label": "A",
+                    "actions": [_action("SEARCH", "x")],
+                    "steps": _steps_with_tools([(long_tool, {})]),
+                },
+                {
+                    "run_id": "b",
+                    "label": "B",
+                    "actions": [_action("SEARCH", "x")],
+                    "steps": _steps_with_tools([(long_tool, {})]),
+                },
+            ]
+        )
+        tools = {r["key"]: r for r in behavior["tool_matrix"]}
+        self.assertIn(long_tool, tools)
+        short = tools[long_tool]["short"]
+        self.assertTrue(short.endswith("list_issues"))
+        self.assertIn("plugin/", short)
+        self.assertNotEqual(short, "list_issues")
 
 
 if __name__ == "__main__":

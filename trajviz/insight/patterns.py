@@ -6,6 +6,8 @@ import shlex
 from bisect import bisect_right
 from collections import Counter
 
+from trajviz.insight.parser import spawned_child_session_id
+
 
 # ---------------------------------------------------------------------------
 # Expected phase ordering for anomaly detection
@@ -610,17 +612,11 @@ def extract_subagent_sessions(
                 continue
             state = part.get("state", {})
             metadata = state.get("metadata", {}) if isinstance(state, dict) else {}
-            if not isinstance(metadata, dict):
-                continue
-            child_id = (
-                metadata.get("sessionId")
-                or metadata.get("sessionID")
-                or metadata.get("session_id")
+            child_id = spawned_child_session_id(
+                metadata,
+                caller_session_id=str(step.get("session_id") or ""),
             )
-            # A session cannot spawn itself: ignore matches on the child's
-            # own steps (nested tool parts inside the delegated session).
-            if (isinstance(child_id, str) and child_id
-                    and step.get("session_id") != child_id):
+            if child_id:
                 spawn_by_child.setdefault(child_id, step.get("index", 0))
 
     for session in sessions:

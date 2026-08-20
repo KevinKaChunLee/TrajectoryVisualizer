@@ -2,8 +2,8 @@
 
 Phase 1 — per-run metrics side-by-side.
 Phase 2 — all-pairs alignment F1, consensus vs unique actions/files, tool /
-MCP / skill coverage, and waste patterns relative to a baseline (first
-successfully loaded run).
+skill coverage, and waste patterns relative to a baseline (first successfully
+loaded run).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from trajviz.converge.canonical import (
     assign_effect_labels,
     canonicalize_steps,
 )
-from trajviz.converge.divergence import classify_divergences, compute_pattern_costs
+from trajviz.converge.divergence import classify_divergences
 from trajviz.insight.diagnostics import (
     context_pressure_series,
     context_pressure_stats,
@@ -57,7 +57,7 @@ def _file_path(entry: Any) -> str | None:
 
 
 def normalize_run_paths(files: Any) -> list[str]:
-    """Flatten Gradio single/multi file uploads into existing path strings."""
+    """Flatten Gradio single/multi file uploads into unique path strings."""
     if files is None:
         return []
     if not isinstance(files, (list, tuple)):
@@ -96,15 +96,6 @@ def _action_signature(action: CanonicalAction) -> tuple[str, str] | None:
     return (action.action_type, target)
 
 
-def _signature_set(actions: list[CanonicalAction]) -> set[tuple[str, str]]:
-    out: set[tuple[str, str]] = set()
-    for action in actions:
-        sig = _action_signature(action)
-        if sig is not None:
-            out.add(sig)
-    return out
-
-
 def _file_touch_map(actions: list[CanonicalAction]) -> dict[str, dict[str, int]]:
     """path → {read, write} counts for one run's canonical file actions."""
     touches: dict[str, dict[str, int]] = {}
@@ -128,6 +119,13 @@ def _short_path(path: str, limit: int = 56) -> str:
     return "…" + path[-(limit - 1) :]
 
 
+def _short_label(text: str, limit: int = 56) -> str:
+    """Truncate a non-path key without stripping namespace prefixes."""
+    if len(text) <= limit:
+        return text
+    return "…" + text[-(limit - 1) :]
+
+
 def _fmt_signature(sig: tuple[str, str]) -> str:
     atype, target = sig
     if atype == "AGENT_SPAWN":
@@ -140,12 +138,8 @@ _SKILL_TOOL_NAMES = frozenset(
     {
         "skill",
         "skills",
-        "Skill",
-        "Skills",
         "invoke_skill",
-        "InvokeSkill",
         "run_skill",
-        "RunSkill",
     }
 )
 
@@ -153,7 +147,7 @@ _SKILL_TOOL_NAMES = frozenset(
 def _parse_skill_name(tool_name: str, tool_input: Any) -> str | None:
     """Return skill id when this call invokes a Skill tool."""
     name_l = (tool_name or "").lower()
-    if name_l not in {n.lower() for n in _SKILL_TOOL_NAMES}:
+    if name_l not in _SKILL_TOOL_NAMES:
         return None
     if isinstance(tool_input, dict):
         for key in ("skill", "name", "skill_name", "skillName", "id", "skill_id"):
@@ -195,6 +189,9 @@ def _coverage_kind(n_runs: int, thresh: int) -> str:
     return "partial"
 
 
+_KIND_RANK = {"consensus": 0, "partial": 1, "unique": 2}
+
+
 def _build_count_matrix(
     counts_by_run: dict[str, Counter[str]],
     run_ids: list[str],
@@ -207,7 +204,6 @@ def _build_count_matrix(
     for rid in run_ids:
         for key in counts_by_run.get(rid, ()):
             key_counts[key] += 1
-    kind_rank = {"consensus": 0, "partial": 1, "unique": 2}
     rows: list[dict] = []
     for key, n_runs in key_counts.items():
         cells: dict[str, dict] = {}
@@ -217,13 +213,13 @@ def _build_count_matrix(
         rows.append(
             {
                 "key": key,
-                "short": _short_path(key, limit=64),
+                "short": _short_label(key, limit=64),
                 "kind": _coverage_kind(n_runs, thresh),
                 "n_runs": n_runs,
                 "cells": cells,
             }
         )
-    rows.sort(key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["key"].lower()))
+    rows.sort(key=lambda r: (_KIND_RANK[r["kind"]], -r["n_runs"], r["key"].lower()))
     return rows[:limit], len(rows)
 
 
@@ -290,6 +286,10 @@ def _pair_f1(
     *,
     fuzzy: bool = False,
 ) -> float:
+    ref_has = any(a.action_type != "REASON" for a in ref_actions)
+    cmp_has = any(a.action_type != "REASON" for a in cmp_actions)
+    if not ref_has and not cmp_has:
+        return 1.0
     alignment = align_trajectories(ref_actions, cmp_actions, fuzzy_commands=fuzzy)
     metrics = compute_alignment_metrics(alignment, ref_actions, cmp_actions)
     return float(metrics.get("alignment_f1") or 0.0)
@@ -310,7 +310,7 @@ def build_behavioral_comparison(
     """All-pairs F1, consensus/unique signatures, baseline-relative patterns.
 
     Each ``runs`` entry needs ``run_id``, ``label``, and ``actions``
-    (list[CanonicalAction]). Optional ``steps`` enables tool / MCP / skill
+    (list[CanonicalAction]). Optional ``steps`` enables tool / skill
     coverage matrices. Baseline is the first run.
     """
     if len(runs) < 2:
@@ -331,7 +331,6 @@ def build_behavioral_comparison(
             matrix[b][a] = f1
 
     # Consensus / unique on action signatures and files
-    sig_sets = {rid: _signature_set(actions_by_id[rid]) for rid in ids}
     sig_counts_by_run: dict[str, Counter[tuple[str, str]]] = {rid: Counter() for rid in ids}
     for rid, actions in actions_by_id.items():
         for action in actions:
@@ -341,8 +340,8 @@ def build_behavioral_comparison(
 
     touch_by_run = {rid: _file_touch_map(actions_by_id[rid]) for rid in ids}
     sig_counts: Counter[tuple[str, str]] = Counter()
-    for sigs in sig_sets.values():
-        for sig in sigs:
+    for rid in ids:
+        for sig in sig_counts_by_run[rid]:
             sig_counts[sig] += 1
 
     all_paths: set[str] = set()
@@ -352,7 +351,6 @@ def build_behavioral_comparison(
     thresh = _consensus_threshold(len(ids))
 
     # Action coverage matrix (type + target × runs)
-    kind_rank = {"consensus": 0, "partial": 1, "unique": 2}
     action_rows: list[dict] = []
     for sig, n_runs in sig_counts.items():
         atype, target = sig
@@ -372,7 +370,7 @@ def build_behavioral_comparison(
             }
         )
     action_rows.sort(
-        key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["type"], r["target"]),
+        key=lambda r: (_KIND_RANK[r["kind"]], -r["n_runs"], r["type"], r["target"]),
     )
     action_matrix = action_rows[:60]
 
@@ -400,7 +398,7 @@ def build_behavioral_comparison(
             }
         )
 
-    file_rows.sort(key=lambda r: (kind_rank[r["kind"]], -r["n_runs"], r["path"]))
+    file_rows.sort(key=lambda r: (_KIND_RANK[r["kind"]], -r["n_runs"], r["path"]))
     file_matrix = file_rows[:50]
 
     # Tools / skills from parsed steps (when available)
@@ -419,11 +417,7 @@ def build_behavioral_comparison(
         cmp_actions = actions_by_id[rid]
         alignment = align_trajectories(base_actions, cmp_actions, fuzzy_commands=fuzzy)
         matched_cmp = {j for _, j in alignment["matched_pairs"]}
-        extras = [
-            cmp_actions[j]
-            for j in alignment["extra"]
-            if j < len(cmp_actions) and cmp_actions[j].action_type != "REASON"
-        ]
+        extras = [cmp_actions[j] for j in alignment["extra"] if j < len(cmp_actions)]
         matched_actions = [cmp_actions[j] for j in sorted(matched_cmp) if j < len(cmp_actions)]
         patterns = classify_divergences(
             extras,
@@ -432,7 +426,6 @@ def build_behavioral_comparison(
             matched_pairs=alignment["matched_pairs"],
             reference_actions=base_actions,
         )
-        compute_pattern_costs(patterns)
         by_type: Counter[str] = Counter()
         for p in patterns:
             by_type[p.get("type") or "unknown"] += 1
@@ -712,14 +705,10 @@ def _rw_badges(cell: dict) -> str:
     bits: list[str] = []
     if read > 0:
         label = "R" if read == 1 else f"R×{read}"
-        bits.append(
-            f"<span class='rg-badge rg-badge-r' title='{read} read(s)'>{label}</span>"
-        )
+        bits.append(f"<span class='rg-badge rg-badge-r' title='{read} read(s)'>{label}</span>")
     if write > 0:
         label = "W" if write == 1 else f"W×{write}"
-        bits.append(
-            f"<span class='rg-badge rg-badge-w' title='{write} write(s)'>{label}</span>"
-        )
+        bits.append(f"<span class='rg-badge rg-badge-w' title='{write} write(s)'>{label}</span>")
     return "".join(bits)
 
 
@@ -769,9 +758,7 @@ def _render_action_matrix_html(behavior: dict) -> str:
         "</div>",
     ]
     if not rows:
-        parts.append(
-            "<div style='font-size:12px;color:var(--ov-muted);'>No non-REASON actions across these runs.</div>"
-        )
+        parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No non-file actions across these runs.</div>")
         return "".join(parts)
 
     parts.append(
@@ -868,7 +855,7 @@ def _render_count_matrix_html(
     empty: str,
     noun: str,
 ) -> str:
-    """Shared renderer for tool / MCP / skill presence matrices."""
+    """Shared renderer for tool / skill presence matrices."""
     ids = behavior.get("run_ids") or []
     labels = behavior.get("labels") or {}
     rows = behavior.get(matrix_key) or []
@@ -994,7 +981,8 @@ def build_run_group_scorecard_html(
     if not rows:
         return (
             "<div style='padding:1.5em;color:var(--ov-muted);text-align:center;'>"
-            "Upload two or more trajectories and click <b>Build scorecard</b>.</div>"
+            "Load a trajectory in Overview (baseline), then upload at least "
+            "one comparison run — or upload two or more trajectories here.</div>"
         )
 
     flags = _best_worst_flags(rows)
@@ -1042,12 +1030,14 @@ def build_run_group_scorecard_html(
             if row.get("finished")
             else " style='color:var(--ov-bad);'"
         )
-        peak = row.get("peak_occupancy") or 0
+        peak = row.get("peak_occupancy")
         peak_pct = row.get("peak_pct")
-        if isinstance(peak_pct, (int, float)):
+        if not isinstance(peak, (int, float)):
+            peak_txt = "—"
+        elif isinstance(peak_pct, (int, float)):
             peak_txt = f"{peak:,} ({peak_pct:g}%)"
         else:
-            peak_txt = f"{peak:,}" if peak else "—"
+            peak_txt = f"{peak:,}"
 
         cells = [
             (html.escape(str(row.get("label") or rid)), ""),

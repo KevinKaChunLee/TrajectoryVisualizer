@@ -1,6 +1,8 @@
 """Plotly chart builders for trajectory visualization."""
 
 import statistics
+from collections import Counter, defaultdict
+from collections.abc import Callable
 
 # Pre-import pandas before plotly to avoid circular import error
 # in plotly's basevalidators when running inside Gradio async threads.
@@ -32,15 +34,8 @@ def _apply_dark(fig: go.Figure, dark: bool) -> go.Figure:
     return fig
 
 
-def _effective_agent(s: dict) -> str:
-    """Alias for backward compatibility within charts module."""
-    return effective_agent(s)
-
-
 def _session_primary_agents(steps: list[dict]) -> dict[str, str]:
     """Most common non-compaction agent name per session_id."""
-    from collections import Counter, defaultdict
-
     counts: dict[str, Counter] = defaultdict(Counter)
     for s in steps:
         if not isinstance(s, dict):
@@ -67,11 +62,7 @@ def _timeline_context(steps: list[dict]) -> tuple[bool, bool, dict[str, str]]:
     - session_primary_agents: dominant mode per session (folds compaction)
     """
     primary = _session_primary_agents(steps)
-    sessions = {
-        str(s.get("session_id") or "")
-        for s in steps
-        if isinstance(s, dict) and s.get("session_id")
-    }
+    sessions = {str(s.get("session_id") or "") for s in steps if isinstance(s, dict) and s.get("session_id")}
     if len(sessions) > 1:
         return True, False, primary
 
@@ -109,11 +100,7 @@ def _timeline_agent_id(
         sid = step.get("session_id") or ""
         if isinstance(sid, str) and sid:
             name = str(step.get("agent") or "").strip()
-            if (
-                name == "compaction"
-                or step.get("role") == "compaction"
-                or step.get("is_compaction_checkpoint")
-            ):
+            if name == "compaction" or step.get("role") == "compaction" or step.get("is_compaction_checkpoint"):
                 name = primary_agents.get(sid, "")
             return f"{sid}::{name}" if name else sid
     ea = effective_agent(step)
@@ -122,6 +109,7 @@ def _timeline_agent_id(
     if use_agent_names:
         return str(step.get("agent") or "").strip()
     return ""
+
 
 def _timeline_id_session(agent_id: str) -> str:
     """Session portion of a multi-session timeline id (before ``::``)."""
@@ -162,8 +150,6 @@ def _timeline_display_label(agent_id: str, steps: list[dict]) -> str:
 
 def _disambiguate_timeline_labels(ids: list[str], steps: list[dict]) -> dict[str, str]:
     """Unique legend labels; suffix short session id when names collide."""
-    from collections import Counter
-
     raw = {aid: _timeline_display_label(aid, steps) for aid in ids}
     counts = Counter(raw.values())
     out: dict[str, str] = {}
@@ -177,27 +163,51 @@ def _disambiguate_timeline_labels(ids: list[str], steps: list[dict]) -> dict[str
     return out
 
 
-def build_agent_color_map(steps: list[dict]) -> dict[str, int]:
-    """Return a mapping from agent-id to palette index.
+def _legend_label(agent_id: str, labels: dict[str, str]) -> str:
+    """Display name for a timeline agent id; empty id is main."""
+    if agent_id in labels:
+        return labels[agent_id]
+    return agent_id or "main"
 
-    The empty string / falsy agent is always index 0 ("main").
-    Sub-agents are assigned indices 1+ in the order they first appear.
-    Uses timeline session/name heuristics so OpenCode multi-session runs
-    are not collapsed into a single main lane.
+
+def bind_timeline_agents(
+    steps: list[dict],
+) -> tuple[dict[str, int], dict[str, str], Callable[[dict], str]]:
+    """Color map, legend labels, and per-step timeline identity.
+
+    Charts and workflow cards must use this together so OpenCode
+    ``session_id::mode`` keys stay consistent with the palette.
     """
     multi, use_names, primary = _timeline_context(steps)
-    mapping: dict[str, int] = {"": 0}
+    color_map: dict[str, int] = {"": 0}
     next_idx = 1
     for s in steps:
         if not isinstance(s, dict):
             continue
-        agent = _timeline_agent_id(
-            s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
-        )
-        if agent and agent not in mapping:
-            mapping[agent] = next_idx
+        agent = _timeline_agent_id(s, multi_session=multi, use_agent_names=use_names, primary_agents=primary)
+        if agent and agent not in color_map:
+            color_map[agent] = next_idx
             next_idx += 1
-    return mapping
+    labels = _disambiguate_timeline_labels(list(color_map.keys()), steps)
+
+    def agent_id(step: dict) -> str:
+        return _timeline_agent_id(
+            step,
+            multi_session=multi,
+            use_agent_names=use_names,
+            primary_agents=primary,
+        )
+
+    return color_map, labels, agent_id
+
+
+def build_agent_color_map(steps: list[dict]) -> dict[str, int]:
+    """Return a mapping from timeline agent-id to palette index.
+
+    Empty string is always index 0 (main). Sub-agents are 1+ in first-seen order.
+    """
+    color_map, _labels, _agent_id = bind_timeline_agents(steps)
+    return color_map
 
 
 # -- Layout helpers -------------------------------------------------------
@@ -533,17 +543,18 @@ def build_duration_chart(
 
 def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
     """Horizontal bar chart of tool call frequency by name, stacked by agent."""
-    color_map = build_agent_color_map(steps)
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
     has_agents = len(color_map) > 1
-
-    # Per-agent per-tool breakdown
-    from collections import defaultdict
 
     agent_tool: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     all_tools: dict[str, int] = defaultdict(int)
     for s in steps:
-        agent = effective_agent(s)
-        for tc in s["tool_calls"]:
+        if not isinstance(s, dict):
+            continue
+        agent = agent_id_of(s)
+        for tc in s.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
             name = tc.get("tool_name") or "(unnamed)"
             agent_tool[agent][name] += 1
             all_tools[name] += 1
@@ -558,15 +569,13 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
 
     fig = go.Figure()
     if has_agents:
-        # Stacked bars per agent, matching Context Growth labeling
-        for i, agent_id in enumerate(sorted(color_map.keys(), key=lambda a: color_map[a])):
-            if not agent_id:
-                label = "main"
-            else:
-                short = agent_id[:12] if len(agent_id) > 12 else agent_id
-                label = f"sub {short}"
-            color = SESSION_COLORS[i % len(SESSION_COLORS)]
+        # Stacked bars per agent, matching swimlane / workflow labeling
+        for agent_id in sorted(color_map.keys(), key=lambda a: color_map[a]):
+            label = _legend_label(agent_id, labels)
             counts = [agent_tool[agent_id].get(t, 0) for t in sorted_tools]
+            if not any(counts):
+                continue
+            color = SESSION_COLORS[color_map[agent_id] % len(SESSION_COLORS)]
             fig.add_trace(
                 go.Bar(
                     y=display_names,
@@ -754,30 +763,25 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     prompts (or main-orchestrator steps) are meaningful information regardless
     of whether one or many sub-agents are present.
     """
-    color_map = build_agent_color_map(steps)
+    color_map, label_map, agent_id_of = bind_timeline_agents(steps)
     real_agents = [a for a in color_map if a]
     if not real_agents:
         fig = _empty_figure(180, "No agent activity recorded.")
         _apply_dark(fig, dark)
         return fig
 
-    multi, use_names, primary = _timeline_context(steps)
-    label_map = _disambiguate_timeline_labels(list(color_map.keys()), steps)
-
     fig = go.Figure()
     # Group steps by agent and find contiguous runs
-    from collections import defaultdict
-
     agent_runs: dict[str, list[tuple[int, int, int, int]]] = defaultdict(list)
     prev: dict[str, int | None] = {}
 
     for s in steps:
-        agent = _timeline_agent_id(
-            s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
-        )
-        idx = s["index"]
-        tok = s["tokens"]["total"]
-        tools = s["tool_call_count"]
+        if not isinstance(s, dict):
+            continue
+        agent = agent_id_of(s)
+        idx = int(s.get("index") if s.get("index") is not None else 0)
+        tok = int((s.get("tokens") or {}).get("total") or 0)
+        tools = int(s.get("tool_call_count") or 0)
         if agent not in prev or prev[agent] is None:
             agent_runs[agent].append((idx, idx, tok, tools))
         else:
@@ -790,7 +794,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
 
     lane_count = 0
     for i, agent_id in enumerate(sorted(color_map.keys(), key=lambda a: color_map[a])):
-        label = label_map.get(agent_id) or ("main" if not agent_id else f"sub {agent_id[:12]}")
+        label = _legend_label(agent_id, label_map)
         lane_count += 1
         hex_c = SESSION_COLORS[i % len(SESSION_COLORS)]
         for start, end, tok, tools in agent_runs.get(agent_id, []):
@@ -841,7 +845,7 @@ def build_run_group_agent_timeline(
         return fig
 
     # Per-run context + shared palette keyed by display label (explore/plan/main)
-    run_meta: list[tuple[dict, bool, bool, dict[str, str], dict[str, str]]] = []
+    run_meta: list[tuple[dict, bool, bool, dict[str, str], dict[str, str], list[dict]]] = []
     color_map: dict[str, int] = {"main": 0}
     next_idx = 1
     for run in usable:
@@ -850,18 +854,15 @@ def build_run_group_agent_timeline(
         ids_in_run: list[str] = []
         seen: set[str] = set()
         for s in steps:
-            aid = _timeline_agent_id(
-                s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
-            )
+            aid = _timeline_agent_id(s, multi_session=multi, use_agent_names=use_names, primary_agents=primary)
             if aid not in seen:
                 ids_in_run.append(aid)
                 seen.add(aid)
         label_map = _disambiguate_timeline_labels(ids_in_run, steps)
-        run_meta.append((run, multi, use_names, label_map, primary))
+        run_meta.append((run, multi, use_names, label_map, primary, steps))
         for aid in ids_in_run:
-            dlabel = label_map.get(aid) or ("main" if not aid else aid)
-            # Color bucket: base name without session suffix so explore matches across runs
-            bucket = dlabel.split(" (")[0] if " (" in dlabel else dlabel
+            # Color by pre-disambiguation display name so explore matches across runs
+            bucket = _timeline_display_label(aid, steps)
             if bucket not in color_map:
                 color_map[bucket] = next_idx
                 next_idx += 1
@@ -871,20 +872,17 @@ def build_run_group_agent_timeline(
     y_labels: list[str] = []
 
     # First loaded run at top
-    for run, multi, use_names, label_map, primary in reversed(run_meta):
+    for run, multi, use_names, label_map, primary, steps in reversed(run_meta):
         label = str(run.get("label") or run.get("run_id") or "run")
         y_labels.append(label)
-        steps = [s for s in (run.get("steps") or []) if isinstance(s, dict)]
 
         segments: list[tuple[str, str, int, int, int, int]] = []
         cur_id: str | None = None
         cur_dlabel = ""
         start = end = tok = tools = 0
         for s in steps:
-            aid = _timeline_agent_id(
-                s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
-            )
-            dlabel = label_map.get(aid) or ("main" if not aid else aid)
+            aid = _timeline_agent_id(s, multi_session=multi, use_agent_names=use_names, primary_agents=primary)
+            dlabel = _legend_label(aid, label_map)
             idx = int(s.get("index") if s.get("index") is not None else 0)
             stok = int((s.get("tokens") or {}).get("total") or 0)
             stools = int(s.get("tool_call_count") or 0)
@@ -900,9 +898,9 @@ def build_run_group_agent_timeline(
         if cur_id is not None:
             segments.append((cur_id, cur_dlabel, start, end, tok, tools))
 
-        for _aid, dlabel, seg_start, seg_end, seg_tok, seg_tools in segments:
+        for aid, dlabel, seg_start, seg_end, seg_tok, seg_tools in segments:
             width = seg_end - seg_start + 1
-            bucket = dlabel.split(" (")[0] if " (" in dlabel else dlabel
+            bucket = _timeline_display_label(aid, steps)
             pal_i = color_map.get(bucket, color_map.get("main", 0))
             hex_c = SESSION_COLORS[pal_i % len(SESSION_COLORS)]
             show_leg = dlabel not in legend_seen

@@ -7,13 +7,32 @@ from pathlib import Path
 
 from trajviz.insight.charts import build_run_group_agent_timeline
 from trajviz.insight.loaders import load_trajectory
-from trajviz.insight.parser import parse_steps
+from trajviz.insight.parser import parse_steps, spawned_child_session_id
 from trajviz.insight.patterns import extract_subagent_sessions
 
 FIXTURE = Path(__file__).resolve().parents[1] / "scripts" / "exploration_subagent.json"
 
 
 class SpawnSubagentAnnotationTests(unittest.TestCase):
+    def test_spawned_child_session_id_guards(self):
+        self.assertEqual(
+            spawned_child_session_id({"sessionId": "child"}, caller_session_id="parent"),
+            "child",
+        )
+        self.assertEqual(
+            spawned_child_session_id({"sessionId": "parent"}, caller_session_id="parent"),
+            "",
+        )
+        self.assertEqual(
+            spawned_child_session_id(
+                {"sessionID": "root"},
+                caller_session_id="parent",
+                root_session_id="root",
+            ),
+            "",
+        )
+        self.assertEqual(spawned_child_session_id(None), "")
+
     @unittest.skipUnless(FIXTURE.is_file(), "exploration_subagent.json missing")
     def test_exploration_fixture_marks_explore_sessions(self):
         raw = load_trajectory(str(FIXTURE))

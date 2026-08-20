@@ -1821,10 +1821,8 @@ def build_ui() -> gr.Blocks:
             outputs=[diag_pressure_chart, diag_pressure_html],
         )
 
-        # -- Comparison callback --
-        # Semantics: the trajectory uploaded in this tab's file slot is the
-        # **reference/baseline**; the trajectory loaded on the Overview tab
-        # is the **compared** trajectory.
+        # -- Run-group scorecard --
+        # Overview trajectory is the baseline; uploaded files are comparison runs.
         def on_run_group_scorecard(files, format_hint, dark, overview_raw):
             """Build an N-run scorecard; Overview trajectory is the baseline."""
             empty_fig = go.Figure()
@@ -1867,6 +1865,8 @@ def build_ui() -> gr.Blocks:
         )
 
         def on_run_comparison(ref_file, anchor_file, ref_format, ref_labels_file, cmp_labels_file, overview_raw, dark):
+            # Pairwise: the file uploaded here is the reference/baseline;
+            # the Overview trajectory is the compared run.
             empty_fig = go.Figure()
             empty_fig.update_layout(
                 template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"

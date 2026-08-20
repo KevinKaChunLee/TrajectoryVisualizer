@@ -308,6 +308,33 @@ def parse_steps(raw: dict) -> list[dict]:
     return steps
 
 
+def spawned_child_session_id(
+    metadata: object,
+    *,
+    caller_session_id: str = "",
+    root_session_id: str = "",
+) -> str:
+    """Child session id from Task-tool metadata, or '' if this is not a spawn.
+
+    Ignores self-spawns and (when given) the trajectory root session, which
+    nested tool parts sometimes echo incorrectly.
+    """
+    if not isinstance(metadata, dict):
+        return ""
+    child_id = (
+        metadata.get("sessionId")
+        or metadata.get("sessionID")
+        or metadata.get("session_id")
+    )
+    if not isinstance(child_id, str) or not child_id:
+        return ""
+    if caller_session_id and child_id == caller_session_id:
+        return ""
+    if root_session_id and child_id == root_session_id:
+        return ""
+    return child_id
+
+
 def _annotate_spawned_subagents(steps: list[dict], raw: dict | None = None) -> None:
     """Mark child sessions spawned via Task/agent tools as sub-agents.
 
@@ -340,18 +367,12 @@ def _annotate_spawned_subagents(steps: list[dict], raw: dict | None = None) -> N
             if not isinstance(tc, dict):
                 continue
             meta = tc.get("metadata") if isinstance(tc.get("metadata"), dict) else {}
-            child_id = (
-                meta.get("sessionId")
-                or meta.get("sessionID")
-                or meta.get("session_id")
+            child_id = spawned_child_session_id(
+                meta,
+                caller_session_id=str(parent_sid or ""),
+                root_session_id=root_sid,
             )
-            if not isinstance(child_id, str) or not child_id:
-                continue
-            # A session cannot spawn itself (nested tool noise).
-            if parent_sid and child_id == parent_sid:
-                continue
-            # Root session is the orchestrator, never a Task spawn target.
-            if root_sid and child_id == root_sid:
+            if not child_id:
                 continue
             parent_from_meta = (
                 meta.get("parentSessionId")
