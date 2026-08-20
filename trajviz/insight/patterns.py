@@ -565,8 +565,9 @@ def extract_subagent_sessions(
 
     for s in steps[:_MAX_STEPS]:
         info = _get_step_info(s, trajectory)
-        is_sub = info.get("isSubAgent", False)
-        session_id = info.get("sessionID", "")
+        # Prefer step fields (may be inferred from Task spawn metadata).
+        is_sub = bool(s.get("is_sub_agent")) or bool(info.get("isSubAgent", False))
+        session_id = s.get("session_id") or info.get("sessionID", "")
         step_idx = s.get("index", 0)
 
         if is_sub and session_id:

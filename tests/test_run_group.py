@@ -232,21 +232,24 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertEqual(behavior["similarity"]["a"]["a"], 1.0)
         self.assertGreater(behavior["similarity"]["a"]["c"], 0.5)
         self.assertTrue(
-            any(r["type"] == "FILE_READ" and r["target"] == "src/main.py" for r in behavior["action_matrix"])
+            any(r["type"] == "SEARCH" and r["target"] == "bug@src" for r in behavior["action_matrix"])
+        )
+        self.assertFalse(
+            any(r["type"] in ("FILE_READ", "FILE_WRITE") for r in behavior["action_matrix"])
         )
         paths = {r["path"]: r for r in behavior["file_matrix"]}
         self.assertIn("src/main.py", paths)
         self.assertEqual(paths["src/main.py"]["kind"], "consensus")
-        self.assertTrue(paths["src/main.py"]["cells"]["a"]["read"])
-        self.assertTrue(paths["src/main.py"]["cells"]["a"]["write"])
+        self.assertEqual(paths["src/main.py"]["cells"]["a"]["read"], 1)
+        self.assertEqual(paths["src/main.py"]["cells"]["a"]["write"], 1)
         self.assertIn("other.py", paths)
         self.assertEqual(paths["other.py"]["kind"], "unique")
-        self.assertTrue(paths["other.py"]["cells"]["b"]["read"])
-        self.assertFalse(paths["other.py"]["cells"]["a"]["read"])
+        self.assertEqual(paths["other.py"]["cells"]["b"]["read"], 1)
+        self.assertEqual(paths["other.py"]["cells"]["a"]["read"], 0)
         action_by_key = {(r["type"], r["target"]): r for r in behavior["action_matrix"]}
-        self.assertEqual(action_by_key[("FILE_READ", "other.py")]["kind"], "unique")
-        self.assertTrue(action_by_key[("FILE_READ", "other.py")]["cells"]["b"]["present"])
-        self.assertFalse(action_by_key[("FILE_READ", "other.py")]["cells"]["a"]["present"])
+        self.assertEqual(action_by_key[("SEARCH", "bug@src")]["kind"], "unique")
+        self.assertTrue(action_by_key[("SEARCH", "bug@src")]["cells"]["a"]["present"])
+        self.assertFalse(action_by_key[("SEARCH", "bug@src")]["cells"]["b"]["present"])
 
         tools = {r["key"]: r for r in behavior["tool_matrix"]}
         self.assertIn("Read", tools)
@@ -310,9 +313,49 @@ class BehavioralComparisonTests(unittest.TestCase):
         self.assertIn("Skill coverage", html)
         self.assertIn("rg-badge-r", html)
         self.assertIn("rg-badge-w", html)
-        self.assertIn("rg-atype-read", html)
+        self.assertIn("rg-atype-search", html)
         self.assertIn("other.py", html)
         self.assertIn("shared-skill", html)
+
+
+class FileCoverageCountTests(unittest.TestCase):
+    def test_read_write_counts_and_exclude_from_actions(self):
+        runs = [
+            {
+                "run_id": "a",
+                "label": "A",
+                "actions": [
+                    _action("FILE_READ", "x.py", 1),
+                    _action("FILE_READ", "x.py", 2),
+                    _action("FILE_READ", "x.py", 3),
+                    _action("FILE_WRITE", "x.py", 4),
+                    _action("FILE_WRITE", "x.py", 5),
+                    _action("SEARCH", "todo", 6),
+                ],
+            },
+            {
+                "run_id": "b",
+                "label": "B",
+                "actions": [
+                    _action("FILE_READ", "x.py", 1),
+                    _action("COMMAND", "pytest", 2),
+                ],
+            },
+        ]
+        behavior = build_behavioral_comparison(runs)
+        files = {r["path"]: r for r in behavior["file_matrix"]}
+        self.assertEqual(files["x.py"]["cells"]["a"]["read"], 3)
+        self.assertEqual(files["x.py"]["cells"]["a"]["write"], 2)
+        self.assertEqual(files["x.py"]["cells"]["b"]["read"], 1)
+        self.assertEqual(files["x.py"]["cells"]["b"]["write"], 0)
+        types = {r["type"] for r in behavior["action_matrix"]}
+        self.assertEqual(types, {"SEARCH", "COMMAND"})
+        from trajviz.insight.run_group import _rw_badges
+
+        self.assertIn("R×3", _rw_badges(files["x.py"]["cells"]["a"]))
+        self.assertIn("W×2", _rw_badges(files["x.py"]["cells"]["a"]))
+        self.assertEqual(_rw_badges(files["x.py"]["cells"]["b"]), _rw_badges({"read": 1, "write": 0}))
+        self.assertIn(">R<", _rw_badges({"read": 1, "write": 0}))
 
 
 class ScorecardGroupTests(unittest.TestCase):
@@ -413,6 +456,7 @@ class ScorecardGroupTests(unittest.TestCase):
 
 class AgentTimelineChartTests(unittest.TestCase):
     def test_one_lane_per_run_colored_by_agent(self):
+        # No is_sub_agent key → Claude-style: non-empty agent is a sub-agent id
         runs = [
             {
                 "run_id": "a",
@@ -446,7 +490,116 @@ class AgentTimelineChartTests(unittest.TestCase):
         self.assertEqual(y_vals, {"Run A", "Run B"})
         legend_names = {t.name for t in fig.data if t.showlegend}
         self.assertIn("main", legend_names)
-        self.assertTrue(any(n.startswith("sub ") for n in legend_names))
+        self.assertIn("explore", legend_names)
+
+    def test_opencode_multi_session_splits_modes_and_explores(self):
+        """OpenCode: is_sub_agent always false; split by session + agent mode."""
+        runs = [
+            {
+                "run_id": "oc",
+                "label": "OpenCode",
+                "steps": [
+                    {
+                        "index": 0,
+                        "role": "assistant",
+                        "agent": "plan",
+                        "session_id": "ses_root",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 10},
+                        "tool_call_count": 0,
+                    },
+                    {
+                        "index": 1,
+                        "role": "assistant",
+                        "agent": "explore",
+                        "session_id": "ses_ex1",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 20},
+                        "tool_call_count": 1,
+                    },
+                    {
+                        "index": 2,
+                        "role": "assistant",
+                        "agent": "explore",
+                        "session_id": "ses_ex2",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 15},
+                        "tool_call_count": 1,
+                    },
+                    {
+                        "index": 3,
+                        "role": "assistant",
+                        "agent": "build",
+                        "session_id": "ses_root",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 30},
+                        "tool_call_count": 2,
+                    },
+                ],
+            }
+        ]
+        fig = build_run_group_agent_timeline(runs)
+        legend_names = {t.name for t in fig.data if t.showlegend}
+        self.assertIn("plan", legend_names)
+        self.assertIn("build", legend_names)
+        # Two explore sessions → disambiguated labels
+        explore_labels = [n for n in legend_names if n.startswith("explore")]
+        self.assertEqual(len(explore_labels), 2)
+        self.assertEqual(len(fig.data), 4)
+
+    def test_compaction_folds_into_explore_session(self):
+        runs = [
+            {
+                "label": "Run",
+                "steps": [
+                    {
+                        "index": 0,
+                        "role": "assistant",
+                        "agent": "explore",
+                        "session_id": "ses_ex",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 10},
+                        "tool_call_count": 0,
+                    },
+                    {
+                        "index": 1,
+                        "role": "compaction",
+                        "agent": "compaction",
+                        "session_id": "ses_ex",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 0},
+                        "tool_call_count": 0,
+                    },
+                    {
+                        "index": 2,
+                        "role": "assistant",
+                        "agent": "explore",
+                        "session_id": "ses_ex",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 5},
+                        "tool_call_count": 0,
+                    },
+                    {
+                        "index": 3,
+                        "role": "assistant",
+                        "agent": "build",
+                        "session_id": "ses_root",
+                        "is_sub_agent": False,
+                        "tokens": {"total": 8},
+                        "tool_call_count": 0,
+                    },
+                ],
+            }
+        ]
+        fig = build_run_group_agent_timeline(runs)
+        legend_names = {t.name for t in fig.data if t.showlegend}
+        self.assertNotIn("compaction", legend_names)
+        self.assertIn("explore", legend_names)
+        self.assertIn("build", legend_names)
+        # explore+compaction+explore should merge into one contiguous segment
+        explore_segs = [t for t in fig.data if t.name == "explore"]
+        self.assertEqual(len(explore_segs), 1)
+        self.assertEqual(int(explore_segs[0].x[0]), 3)
 
     def test_empty_runs(self):
         fig = build_run_group_agent_timeline([])

@@ -81,8 +81,12 @@ def default_run_label(path: str) -> str:
 
 
 def _action_signature(action: CanonicalAction) -> tuple[str, str] | None:
-    """Stable (type, target) key for consensus; skip REASON / empty targets."""
-    if action.action_type in ("", "REASON"):
+    """Stable (type, target) key for action coverage.
+
+    Skips REASON, empty targets, and FILE_READ/FILE_WRITE (those belong in
+    file coverage with read/write counts).
+    """
+    if action.action_type in ("", "REASON", "FILE_READ", "FILE_WRITE"):
         return None
     target = (action.target or "").strip()
     if not target and action.action_type != "AGENT_SPAWN":
@@ -101,17 +105,17 @@ def _signature_set(actions: list[CanonicalAction]) -> set[tuple[str, str]]:
     return out
 
 
-def _file_touch_map(actions: list[CanonicalAction]) -> dict[str, dict[str, bool]]:
-    """path → {read, write} for one run's canonical actions."""
-    touches: dict[str, dict[str, bool]] = {}
+def _file_touch_map(actions: list[CanonicalAction]) -> dict[str, dict[str, int]]:
+    """path → {read, write} counts for one run's canonical file actions."""
+    touches: dict[str, dict[str, int]] = {}
     for action in actions:
         if action.action_type not in ("FILE_READ", "FILE_WRITE") or not action.target:
             continue
-        cell = touches.setdefault(action.target, {"read": False, "write": False})
+        cell = touches.setdefault(action.target, {"read": 0, "write": 0})
         if action.action_type == "FILE_READ":
-            cell["read"] = True
+            cell["read"] += 1
         else:
-            cell["write"] = True
+            cell["write"] += 1
     return touches
 
 
@@ -374,15 +378,18 @@ def build_behavioral_comparison(
 
     file_rows: list[dict] = []
     for path in all_paths:
-        cells_f: dict[str, dict[str, bool]] = {}
+        cells_f: dict[str, dict[str, int]] = {}
         n_runs = 0
         for rid in ids:
             cell = touch_by_run[rid].get(path)
-            if cell:
-                cells_f[rid] = {"read": bool(cell["read"]), "write": bool(cell["write"])}
+            if cell and (cell.get("read") or cell.get("write")):
+                cells_f[rid] = {
+                    "read": int(cell.get("read") or 0),
+                    "write": int(cell.get("write") or 0),
+                }
                 n_runs += 1
             else:
-                cells_f[rid] = {"read": False, "write": False}
+                cells_f[rid] = {"read": 0, "write": 0}
         file_rows.append(
             {
                 "path": path,
@@ -696,17 +703,23 @@ def _render_similarity_html(behavior: dict) -> str:
     return "".join(parts)
 
 
-def _rw_badges(cell: dict[str, bool]) -> str:
-    """Compact read/write chips for one run×file cell."""
-    read = bool(cell.get("read"))
-    write = bool(cell.get("write"))
-    if not read and not write:
+def _rw_badges(cell: dict) -> str:
+    """Compact read/write count chips for one run×file cell."""
+    read = int(cell.get("read") or 0)
+    write = int(cell.get("write") or 0)
+    if read <= 0 and write <= 0:
         return "<span class='rg-file-empty'>—</span>"
     bits: list[str] = []
-    if read:
-        bits.append("<span class='rg-badge rg-badge-r' title='Read'>R</span>")
-    if write:
-        bits.append("<span class='rg-badge rg-badge-w' title='Write'>W</span>")
+    if read > 0:
+        label = "R" if read == 1 else f"R×{read}"
+        bits.append(
+            f"<span class='rg-badge rg-badge-r' title='{read} read(s)'>{label}</span>"
+        )
+    if write > 0:
+        label = "W" if write == 1 else f"W×{write}"
+        bits.append(
+            f"<span class='rg-badge rg-badge-w' title='{write} write(s)'>{label}</span>"
+        )
     return "".join(bits)
 
 
@@ -750,9 +763,9 @@ def _render_action_matrix_html(behavior: dict) -> str:
     parts = [
         "<h4 style='margin:1em 0 0.35em;font-size:14px;'>Action coverage</h4>",
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "Canonical tool actions (type + target). "
-        "<span class='rg-action-hit'>✓</span> = present; "
-        "×N = repeated in that run. Shared / unique same as files."
+        "Non-file canonical actions (search, command, spawn, …). "
+        "File read/write live in <b>File coverage</b> below. "
+        "<span class='rg-action-hit'>✓</span> = present; ×N = repeats in that run."
         "</div>",
     ]
     if not rows:
@@ -806,8 +819,10 @@ def _render_file_matrix_html(behavior: dict) -> str:
     parts = [
         "<h4 style='margin:1em 0 0.35em;font-size:14px;'>File coverage</h4>",
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "<span class='rg-badge rg-badge-r'>R</span> read &nbsp;"
-        "<span class='rg-badge rg-badge-w'>W</span> write &nbsp;·&nbsp; "
+        "<span class='rg-badge rg-badge-r'>R</span> / "
+        "<span class='rg-badge rg-badge-r'>R×N</span> read count &nbsp;"
+        "<span class='rg-badge rg-badge-w'>W</span> / "
+        "<span class='rg-badge rg-badge-w'>W×N</span> write count &nbsp;·&nbsp; "
         "shared = consensus threshold, unique = one run only"
         "</div>",
     ]
@@ -830,7 +845,7 @@ def _render_file_matrix_html(behavior: dict) -> str:
         parts.append(f"<tr class='{row_cls}'>")
         parts.append(f"<td class='rg-file-path' title='{html.escape(path)}'><code>{html.escape(short)}</code></td>")
         for rid in ids:
-            cell = cells.get(rid) or {"read": False, "write": False}
+            cell = cells.get(rid) or {"read": 0, "write": 0}
             parts.append(f"<td style='text-align:center;white-space:nowrap;'>{_rw_badges(cell)}</td>")
         parts.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td>")
         parts.append("</tr>")

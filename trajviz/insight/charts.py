@@ -37,16 +37,163 @@ def _effective_agent(s: dict) -> str:
     return effective_agent(s)
 
 
+def _session_primary_agents(steps: list[dict]) -> dict[str, str]:
+    """Most common non-compaction agent name per session_id."""
+    from collections import Counter, defaultdict
+
+    counts: dict[str, Counter] = defaultdict(Counter)
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("session_id") or "")
+        name = str(s.get("agent") or "").strip()
+        if not sid or not name:
+            continue
+        if name == "compaction" or s.get("role") == "compaction" or s.get("is_compaction_checkpoint"):
+            continue
+        counts[sid][name] += 1
+    return {sid: c.most_common(1)[0][0] for sid, c in counts.items() if c}
+
+
+def _timeline_context(steps: list[dict]) -> tuple[bool, bool, dict[str, str]]:
+    """Detect how to split agents on swimlane / run-group timelines.
+
+    Returns ``(multi_session, use_agent_names, session_primary_agents)``:
+    - multi_session: several ``session_id`` values (OpenCode/CodeArts subagents
+      often lack ``isSubAgent`` tags — group by session instead)
+    - use_agent_names: ``effective_agent`` is empty for everyone but ``agent``
+      field varies (e.g. OpenCode plan/build, or Claude agent ids with a
+      defaulted ``is_sub_agent=False``)
+    - session_primary_agents: dominant mode per session (folds compaction)
+    """
+    primary = _session_primary_agents(steps)
+    sessions = {
+        str(s.get("session_id") or "")
+        for s in steps
+        if isinstance(s, dict) and s.get("session_id")
+    }
+    if len(sessions) > 1:
+        return True, False, primary
+
+    eas: set[str] = set()
+    names: set[str] = set()
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        if s.get("role") not in ("assistant", "user", "compaction"):
+            continue
+        eas.add(effective_agent(s))
+        name = str(s.get("agent") or "").strip()
+        if name:
+            names.add(name)
+    use_names = (not (eas - {""})) and len(names) > 1
+    return False, use_names, primary
+
+
+def _timeline_agent_id(
+    step: dict,
+    *,
+    multi_session: bool = False,
+    use_agent_names: bool = False,
+    primary_agents: dict[str, str] | None = None,
+) -> str:
+    """Fine-grained identity for segment boundaries (session / subagent / mode).
+
+    Multi-session ids are ``session_id`` or ``session_id::agent`` when the
+    agent field is set — so plan/build modes on the same OpenCode root
+    session stay distinct, and parallel explore sessions do not merge.
+    Compaction steps inherit the session's primary agent name.
+    """
+    primary_agents = primary_agents or {}
+    if multi_session:
+        sid = step.get("session_id") or ""
+        if isinstance(sid, str) and sid:
+            name = str(step.get("agent") or "").strip()
+            if (
+                name == "compaction"
+                or step.get("role") == "compaction"
+                or step.get("is_compaction_checkpoint")
+            ):
+                name = primary_agents.get(sid, "")
+            return f"{sid}::{name}" if name else sid
+    ea = effective_agent(step)
+    if ea:
+        return ea
+    if use_agent_names:
+        return str(step.get("agent") or "").strip()
+    return ""
+
+def _timeline_id_session(agent_id: str) -> str:
+    """Session portion of a multi-session timeline id (before ``::``)."""
+    if "::" in agent_id:
+        return agent_id.split("::", 1)[0]
+    return agent_id
+
+
+def _timeline_display_label(agent_id: str, steps: list[dict]) -> str:
+    """Legend / color bucket for a timeline agent id."""
+    if not agent_id:
+        return "main"
+    # Composite multi-session id: prefer the embedded agent mode name
+    if "::" in agent_id:
+        name = agent_id.split("::", 1)[1].strip()
+        if name:
+            return name if len(name) <= 20 else name[:19] + "…"
+        agent_id = agent_id.split("::", 1)[0]
+    sid = _timeline_id_session(agent_id)
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        if (s.get("session_id") or "") == sid and sid == agent_id:
+            name = str(s.get("agent") or "").strip()
+            if name:
+                return name if len(name) <= 20 else name[:19] + "…"
+            title = str(s.get("session_title") or "").strip()
+            if title:
+                return title if len(title) <= 20 else title[:19] + "…"
+            break
+        if effective_agent(s) == agent_id or str(s.get("agent") or "").strip() == agent_id:
+            name = str(s.get("agent") or "").strip()
+            if name and name == agent_id:
+                return name if len(name) <= 20 else name[:19] + "…"
+    short = agent_id[:12] if len(agent_id) > 12 else agent_id
+    return f"sub {short}"
+
+
+def _disambiguate_timeline_labels(ids: list[str], steps: list[dict]) -> dict[str, str]:
+    """Unique legend labels; suffix short session id when names collide."""
+    from collections import Counter
+
+    raw = {aid: _timeline_display_label(aid, steps) for aid in ids}
+    counts = Counter(raw.values())
+    out: dict[str, str] = {}
+    for aid, label in raw.items():
+        if counts[label] > 1 and aid:
+            sid = _timeline_id_session(aid)
+            suffix = sid[-6:] if len(sid) > 6 else sid
+            out[aid] = f"{label} ({suffix})"
+        else:
+            out[aid] = label
+    return out
+
+
 def build_agent_color_map(steps: list[dict]) -> dict[str, int]:
     """Return a mapping from agent-id to palette index.
 
     The empty string / falsy agent is always index 0 ("main").
     Sub-agents are assigned indices 1+ in the order they first appear.
+    Uses timeline session/name heuristics so OpenCode multi-session runs
+    are not collapsed into a single main lane.
     """
+    multi, use_names, primary = _timeline_context(steps)
     mapping: dict[str, int] = {"": 0}
     next_idx = 1
     for s in steps:
-        agent = _effective_agent(s)
+        if not isinstance(s, dict):
+            continue
+        agent = _timeline_agent_id(
+            s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
+        )
         if agent and agent not in mapping:
             mapping[agent] = next_idx
             next_idx += 1
@@ -614,6 +761,9 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
         _apply_dark(fig, dark)
         return fig
 
+    multi, use_names, primary = _timeline_context(steps)
+    label_map = _disambiguate_timeline_labels(list(color_map.keys()), steps)
+
     fig = go.Figure()
     # Group steps by agent and find contiguous runs
     from collections import defaultdict
@@ -622,7 +772,9 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     prev: dict[str, int | None] = {}
 
     for s in steps:
-        agent = _effective_agent(s)
+        agent = _timeline_agent_id(
+            s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
+        )
         idx = s["index"]
         tok = s["tokens"]["total"]
         tools = s["tool_call_count"]
@@ -638,11 +790,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
 
     lane_count = 0
     for i, agent_id in enumerate(sorted(color_map.keys(), key=lambda a: color_map[a])):
-        if not agent_id:
-            label = "main"
-        else:
-            short = agent_id[:12] if len(agent_id) > 12 else agent_id
-            label = f"sub {short}"
+        label = label_map.get(agent_id) or ("main" if not agent_id else f"sub {agent_id[:12]}")
         lane_count += 1
         hex_c = SESSION_COLORS[i % len(SESSION_COLORS)]
         for start, end, tok, tools in agent_runs.get(agent_id, []):
@@ -683,8 +831,8 @@ def build_run_group_agent_timeline(
     """Compact N-run agent timeline: one horizontal lane per run.
 
     Each run dict needs ``label`` (or ``run_id``) and ``steps`` (parsed).
-    Segments within a lane are colored by ``effective_agent``; the same
-    agent id shares a color across runs. Empty agent → ``main``.
+    Segments within a lane are colored by session / subagent / agent mode
+    (see ``_timeline_context``); shared display names share colors across runs.
     """
     usable = [r for r in runs if isinstance(r, dict) and (r.get("steps") or [])]
     if not usable:
@@ -692,63 +840,74 @@ def build_run_group_agent_timeline(
         _apply_dark(fig, dark)
         return fig
 
-    # Shared palette: main first, then agents in first-seen order across runs
-    color_map: dict[str, int] = {"": 0}
+    # Per-run context + shared palette keyed by display label (explore/plan/main)
+    run_meta: list[tuple[dict, bool, bool, dict[str, str], dict[str, str]]] = []
+    color_map: dict[str, int] = {"main": 0}
     next_idx = 1
     for run in usable:
-        for s in run.get("steps") or []:
-            if not isinstance(s, dict):
-                continue
-            agent = _effective_agent(s)
-            if agent and agent not in color_map:
-                color_map[agent] = next_idx
+        steps = [s for s in (run.get("steps") or []) if isinstance(s, dict)]
+        multi, use_names, primary = _timeline_context(steps)
+        ids_in_run: list[str] = []
+        seen: set[str] = set()
+        for s in steps:
+            aid = _timeline_agent_id(
+                s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
+            )
+            if aid not in seen:
+                ids_in_run.append(aid)
+                seen.add(aid)
+        label_map = _disambiguate_timeline_labels(ids_in_run, steps)
+        run_meta.append((run, multi, use_names, label_map, primary))
+        for aid in ids_in_run:
+            dlabel = label_map.get(aid) or ("main" if not aid else aid)
+            # Color bucket: base name without session suffix so explore matches across runs
+            bucket = dlabel.split(" (")[0] if " (" in dlabel else dlabel
+            if bucket not in color_map:
+                color_map[bucket] = next_idx
                 next_idx += 1
-
-    def _agent_label(agent_id: str) -> str:
-        if not agent_id:
-            return "main"
-        short = agent_id[:16] if len(agent_id) > 16 else agent_id
-        return f"sub {short}"
 
     fig = go.Figure()
     legend_seen: set[str] = set()
     y_labels: list[str] = []
 
     # First loaded run at top
-    for run in reversed(usable):
+    for run, multi, use_names, label_map, primary in reversed(run_meta):
         label = str(run.get("label") or run.get("run_id") or "run")
         y_labels.append(label)
-        steps = run.get("steps") or []
+        steps = [s for s in (run.get("steps") or []) if isinstance(s, dict)]
 
-        # Contiguous same-agent segments
-        segments: list[tuple[str, int, int, int, int]] = []
-        cur_agent: str | None = None
+        segments: list[tuple[str, str, int, int, int, int]] = []
+        cur_id: str | None = None
+        cur_dlabel = ""
         start = end = tok = tools = 0
         for s in steps:
-            if not isinstance(s, dict):
-                continue
-            agent = _effective_agent(s)
+            aid = _timeline_agent_id(
+                s, multi_session=multi, use_agent_names=use_names, primary_agents=primary
+            )
+            dlabel = label_map.get(aid) or ("main" if not aid else aid)
             idx = int(s.get("index") if s.get("index") is not None else 0)
             stok = int((s.get("tokens") or {}).get("total") or 0)
             stools = int(s.get("tool_call_count") or 0)
-            if cur_agent is None:
-                cur_agent, start, end, tok, tools = agent, idx, idx, stok, stools
-            elif agent == cur_agent and idx == end + 1:
+            if cur_id is None:
+                cur_id, cur_dlabel = aid, dlabel
+                start, end, tok, tools = idx, idx, stok, stools
+            elif aid == cur_id and idx == end + 1:
                 end, tok, tools = idx, tok + stok, tools + stools
             else:
-                segments.append((cur_agent, start, end, tok, tools))
-                cur_agent, start, end, tok, tools = agent, idx, idx, stok, stools
-        if cur_agent is not None:
-            segments.append((cur_agent, start, end, tok, tools))
+                segments.append((cur_id, cur_dlabel, start, end, tok, tools))
+                cur_id, cur_dlabel = aid, dlabel
+                start, end, tok, tools = idx, idx, stok, stools
+        if cur_id is not None:
+            segments.append((cur_id, cur_dlabel, start, end, tok, tools))
 
-        for agent, seg_start, seg_end, seg_tok, seg_tools in segments:
+        for _aid, dlabel, seg_start, seg_end, seg_tok, seg_tools in segments:
             width = seg_end - seg_start + 1
-            pal_i = color_map.get(agent, 0)
+            bucket = dlabel.split(" (")[0] if " (" in dlabel else dlabel
+            pal_i = color_map.get(bucket, color_map.get("main", 0))
             hex_c = SESSION_COLORS[pal_i % len(SESSION_COLORS)]
-            alabel = _agent_label(agent)
-            show_leg = alabel not in legend_seen
+            show_leg = dlabel not in legend_seen
             if show_leg:
-                legend_seen.add(alabel)
+                legend_seen.add(dlabel)
             fig.add_trace(
                 go.Bar(
                     y=[label],
@@ -756,11 +915,11 @@ def build_run_group_agent_timeline(
                     orientation="h",
                     base=seg_start,
                     marker_color=hex_c,
-                    name=alabel,
-                    legendgroup=alabel,
+                    name=dlabel,
+                    legendgroup=dlabel,
                     showlegend=show_leg,
                     hovertext=(
-                        f"<b>{label}</b><br>{alabel}<br>"
+                        f"<b>{label}</b><br>{dlabel}<br>"
                         f"steps {seg_start}–{seg_end} ({width})<br>"
                         f"{seg_tok:,} tokens, {seg_tools} tool calls"
                     ),
