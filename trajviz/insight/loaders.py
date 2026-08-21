@@ -89,8 +89,7 @@ def _iso_to_epoch_ms(iso_str: str | None) -> int | None:
 def _cc_extract_usage(usage: dict | None) -> dict:
     """Extract token usage from a Claude Code message's usage field."""
     if not isinstance(usage, dict):
-        return {"total": 0, "input": 0, "output": 0, "reasoning": 0,
-                "cache": {"read": 0, "write": 0}}
+        return {"total": 0, "input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}}
     inp = usage.get("input_tokens", 0) or 0
     out = usage.get("output_tokens", 0) or 0
     cache_read = usage.get("cache_read_input_tokens", 0) or 0
@@ -100,7 +99,10 @@ def _cc_extract_usage(usage: dict | None) -> dict:
     # their sum; cache_creation must be included to agree with the session total.
     total = inp + out + cache_read + cache_write
     return {
-        "total": total, "input": inp, "output": out, "reasoning": 0,
+        "total": total,
+        "input": inp,
+        "output": out,
+        "reasoning": 0,
         "cache": {"read": cache_read, "write": cache_write},
     }
 
@@ -128,19 +130,21 @@ def _cc_content_to_parts(content: list, tool_result_map: dict | None = None) -> 
             error = result_info.get("error")
             tool_exec = result_info.get("tool_execution")
             metadata = dict(tool_exec) if isinstance(tool_exec, dict) else {}
-            parts.append({
-                "type": "tool_call",
-                "tool_name": tool_name,
-                "tool_id": tool_id,
-                "status": status,
-                "title": item.get("caller", {}).get("type", "") if isinstance(item.get("caller"), dict) else "",
-                "input": tool_input,
-                "output": output,
-                "error": error,
-                "time_start": None,
-                "time_end": None,
-                "metadata": metadata,
-            })
+            parts.append(
+                {
+                    "type": "tool_call",
+                    "tool_name": tool_name,
+                    "tool_id": tool_id,
+                    "status": status,
+                    "title": item.get("caller", {}).get("type", "") if isinstance(item.get("caller"), dict) else "",
+                    "input": tool_input,
+                    "output": output,
+                    "error": error,
+                    "time_start": None,
+                    "time_end": None,
+                    "metadata": metadata,
+                }
+            )
         elif ctype == "tool_result":
             # These are handled via tool_result_map; skip as standalone parts
             pass
@@ -275,14 +279,24 @@ def _cc_group_by_message_id(entries: list[dict]) -> list[dict]:
     return result
 
 
-def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
-                   timestamp_ms: int | None = None, model: str = "",
-                   finish: str = "", agent: str = "", message_id: str = "",
-                   step_id: str = "", parent_id: str = "", cwd: str = "",
-                   tool_calls: list | None = None,
-                   error_count: int | None = None,
-                   has_reasoning: bool | None = None,
-                   text_preview: str = "") -> dict:
+def _cc_build_step(
+    parts: list,
+    *,
+    role: str,
+    usage: dict | None = None,
+    timestamp_ms: int | None = None,
+    model: str = "",
+    finish: str = "",
+    agent: str = "",
+    message_id: str = "",
+    step_id: str = "",
+    parent_id: str = "",
+    cwd: str = "",
+    tool_calls: list | None = None,
+    error_count: int | None = None,
+    has_reasoning: bool | None = None,
+    text_preview: str = "",
+) -> dict:
     """Build one internal-format step dict — the single source of the step schema.
 
     Derived fields (tool_calls, error_count, has_reasoning) are computed from
@@ -297,8 +311,7 @@ def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
     if has_reasoning is None:
         has_reasoning = any(p.get("type") == "reasoning" for p in parts)
     if usage is None:
-        tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0,
-                  "cache_read": 0, "cache_write": 0}
+        tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
     else:
         tokens = {
             "total": usage["total"],
@@ -334,8 +347,7 @@ def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
     }
 
 
-def _cc_convert_entry_to_step(entry: dict, tool_result_map: dict,
-                              *, agent_id: str = "") -> dict | None:
+def _cc_convert_entry_to_step(entry: dict, tool_result_map: dict, *, agent_id: str = "") -> dict | None:
     """Convert a single Claude Code trajectory entry to internal step format."""
     role = entry.get("role", "")
     if role not in ("user", "assistant"):
@@ -348,10 +360,7 @@ def _cc_convert_entry_to_step(entry: dict, tool_result_map: dict,
     # Skip user messages that contain only tool_result items — their content
     # is already captured in the corresponding tool_call's output field.
     if role == "user" and content:
-        has_non_result = any(
-            isinstance(item, dict) and item.get("type") != "tool_result"
-            for item in content
-        )
+        has_non_result = any(isinstance(item, dict) and item.get("type") != "tool_result" for item in content)
         if not has_non_result:
             return None
 
@@ -429,50 +438,48 @@ def _cc_flatten_events(entries: list, tool_result_map: dict) -> list[dict]:
                 if p.get("type") == "tool_call" and not text_preview:
                     text_preview = f"[Tool: {p['tool_name']}]"
 
-            steps.append(_cc_build_step(
-                parts,
-                role="assistant",
-                usage=usage,
-                timestamp_ms=timestamp_ms,
-                model=inner_msg.get("model", ""),
-                finish=inner_msg.get("stop_reason", ""),
-                agent=agent_id,
-                message_id=inner_msg.get("id", ""),
-                step_id=msg.get("uuid", entry.get("uuid", "")),
-                parent_id=entry.get("parent_uuid", ""),
-                cwd=entry.get("cwd", ""),
-                text_preview=text_preview,
-            ))
+            steps.append(
+                _cc_build_step(
+                    parts,
+                    role="assistant",
+                    usage=usage,
+                    timestamp_ms=timestamp_ms,
+                    model=inner_msg.get("model", ""),
+                    finish=inner_msg.get("stop_reason", ""),
+                    agent=agent_id,
+                    message_id=inner_msg.get("id", ""),
+                    step_id=msg.get("uuid", entry.get("uuid", "")),
+                    parent_id=entry.get("parent_uuid", ""),
+                    cwd=entry.get("cwd", ""),
+                    text_preview=text_preview,
+                )
+            )
         elif msg_type == "user":
             # User messages in events are typically tool results — already handled via
             # tool_result_map. But if they have text content, include them.
             inner_content = inner_msg.get("content", [])
             if not isinstance(inner_content, list):
                 continue
-            has_text = any(
-                isinstance(item, dict) and item.get("type") == "text"
-                for item in inner_content
-            )
+            has_text = any(isinstance(item, dict) and item.get("type") == "text" for item in inner_content)
             if has_text:
                 timestamp_ms = _iso_to_epoch_ms(msg.get("timestamp") or entry.get("timestamp"))
                 parts = _cc_content_to_parts(inner_content, tool_result_map)
-                steps.append(_cc_build_step(
-                    parts,
-                    role="user",
-                    timestamp_ms=timestamp_ms,
-                    agent=agent_id,
-                    step_id=msg.get("uuid", entry.get("uuid", "")),
-                    parent_id=entry.get("parent_uuid", ""),
-                    cwd=entry.get("cwd", ""),
-                    # Event-path user steps never carry tool calls/usage
-                    tool_calls=[],
-                    error_count=0,
-                    has_reasoning=False,
-                    text_preview=next(
-                        (p["text"] for p in parts if p.get("type") == "text" and p.get("text")),
-                        ""
-                    ),
-                ))
+                steps.append(
+                    _cc_build_step(
+                        parts,
+                        role="user",
+                        timestamp_ms=timestamp_ms,
+                        agent=agent_id,
+                        step_id=msg.get("uuid", entry.get("uuid", "")),
+                        parent_id=entry.get("parent_uuid", ""),
+                        cwd=entry.get("cwd", ""),
+                        # Event-path user steps never carry tool calls/usage
+                        tool_calls=[],
+                        error_count=0,
+                        has_reasoning=False,
+                        text_preview=next((p["text"] for p in parts if p.get("type") == "text" and p.get("text")), ""),
+                    )
+                )
 
     return steps
 
@@ -513,13 +520,15 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
     compute_metrics(), so downstream code works unchanged.
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # --- Format version check ---
     fmt_version = raw.get("format_version", "")
     if fmt_version and fmt_version != "1.0":
-        logger.warning("Claude Code trajectory format_version %s (expected 1.0) — "
-                        "some fields may not parse correctly", fmt_version)
+        logger.warning(
+            "Claude Code trajectory format_version %s (expected 1.0) — some fields may not parse correctly", fmt_version
+        )
 
     session = raw.get("session", {}) if isinstance(raw.get("session"), dict) else {}
     stats_raw = raw.get("statistics", {}) if isinstance(raw.get("statistics"), dict) else {}
@@ -645,10 +654,12 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
         if isinstance(ts, (int, float)):
             _last_ts = ts
         _carry[id(s)] = _last_ts
-    converted_trajectory.sort(key=lambda s: (
-        _carry[id(s)] if _carry[id(s)] is not None else float("-inf"),
-        _orig_order[id(s)],
-    ))
+    converted_trajectory.sort(
+        key=lambda s: (
+            _carry[id(s)] if _carry[id(s)] is not None else float("-inf"),
+            _orig_order[id(s)],
+        )
+    )
 
     for idx, step in enumerate(converted_trajectory):
         step["index"] = idx
@@ -664,8 +675,7 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
         # Pair consecutive *timestamped* steps within the agent, stepping over
         # any untimed step so its missing timestamp does not blank out the
         # duration of the timestamped step before it.
-        timed = [s for s in agent_steps
-                 if isinstance(s.get("time_created_ms"), (int, float))]
+        timed = [s for s in agent_steps if isinstance(s.get("time_created_ms"), (int, float))]
         for i in range(len(timed) - 1):
             # Skip assistant->user turn boundaries: any user step surviving
             # conversion is a real human prompt (tool_result-only user
@@ -687,29 +697,30 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
             continue
         sa_stats = sa.get("statistics", {}) if isinstance(sa.get("statistics"), dict) else {}
         sa_tokens = sa_stats.get("tokens", {}) if isinstance(sa_stats.get("tokens"), dict) else {}
-        sub_agent_info.append({
-            "agent_id": sa.get("agent_id", ""),
-            "started_at": sa.get("started_at", ""),
-            "ended_at": sa.get("ended_at", ""),
-            "duration_seconds": sa.get("duration_seconds", 0),
-            "spawned_by": sa.get("spawned_by_tool_call_id", ""),
-            "turns": sa_stats.get("turns", 0),
-            "tool_calls": sa_stats.get("tool_calls", 0),
-            "tool_calls_by_name": sa_stats.get("tool_calls_by_name", {}),
-            "tokens": {
-                "input": sa_tokens.get("input", 0),
-                "output": sa_tokens.get("output", 0),
-                "cache_read": sa_tokens.get("cache_read", 0),
-                "cache_creation": sa_tokens.get("cache_creation", 0),
-            },
-        })
+        sub_agent_info.append(
+            {
+                "agent_id": sa.get("agent_id", ""),
+                "started_at": sa.get("started_at", ""),
+                "ended_at": sa.get("ended_at", ""),
+                "duration_seconds": sa.get("duration_seconds", 0),
+                "spawned_by": sa.get("spawned_by_tool_call_id", ""),
+                "turns": sa_stats.get("turns", 0),
+                "tool_calls": sa_stats.get("tool_calls", 0),
+                "tool_calls_by_name": sa_stats.get("tool_calls_by_name", {}),
+                "tokens": {
+                    "input": sa_tokens.get("input", 0),
+                    "output": sa_tokens.get("output", 0),
+                    "cache_read": sa_tokens.get("cache_read", 0),
+                    "cache_creation": sa_tokens.get("cache_creation", 0),
+                },
+            }
+        )
 
     # Build the internal format that parse_steps()/compute_metrics() expects.
     return {
         "metadata": metadata,
         "input": {"prompt": "", "prompt_length": 0},
-        "output": {"patch": "", "patch_length": 0, "patch_lines": 0,
-                    "has_patch": False, "error": None},
+        "output": {"patch": "", "patch_length": 0, "patch_lines": 0, "has_patch": False, "error": None},
         "timing": timing,
         "token_usage": token_usage,
         "stats": stats,
@@ -782,23 +793,18 @@ def _convert_opencode_metadata(raw: dict) -> dict:
         if isinstance(child_session_id, str) and child_session_id:
             sub_agent_session_ids.add(child_session_id)
     exported_stats = raw.get("statistics", {})
-    exported_sub_agent_count = (
-        exported_stats.get("subagent_sessions", 0)
-        if isinstance(exported_stats, dict)
-        else 0
-    )
+    exported_sub_agent_count = exported_stats.get("subagent_sessions", 0) if isinstance(exported_stats, dict) else 0
     if not isinstance(exported_sub_agent_count, int):
         exported_sub_agent_count = 0
     sub_agent_count = max(len(sub_agent_session_ids), exported_sub_agent_count)
-    exported_event_count = (
-        exported_stats.get("event_rows", 0) if isinstance(exported_stats, dict) else 0
-    )
+    exported_event_count = exported_stats.get("event_rows", 0) if isinstance(exported_stats, dict) else 0
     if not isinstance(exported_event_count, int):
         exported_event_count = 0
     manifest_entries = manifest if isinstance(manifest, list) else []
     manifest_event_count = sum(
         len(entry.get("events", []))
-        for entry in manifest_entries if isinstance(entry, dict)
+        for entry in manifest_entries
+        if isinstance(entry, dict)
         if isinstance(entry.get("events", []), list)
     )
     event_count = max(exported_event_count, manifest_event_count)
@@ -833,7 +839,9 @@ def _convert_opencode_metadata(raw: dict) -> dict:
         "finished_at": finished_at,
     }
     raw["output"] = {
-        "patch": "", "patch_length": 0, "patch_lines": 0,
+        "patch": "",
+        "patch_length": 0,
+        "patch_lines": 0,
         "has_patch": bool(summary.get("additions") or summary.get("deletions")),
         "error": None,
         "additions": summary.get("additions", 0),
@@ -850,7 +858,7 @@ def _convert_opencode_metadata(raw: dict) -> dict:
     tool_breakdown: dict[str, int] = {}
     total_input = 0
     total_output = 0
-    for msg in (messages if isinstance(messages, list) else []):
+    for msg in messages if isinstance(messages, list) else []:
         if not isinstance(msg, dict):
             continue
         msg_info = msg.get("info", {}) if isinstance(msg.get("info"), dict) else {}
@@ -864,26 +872,32 @@ def _convert_opencode_metadata(raw: dict) -> dict:
         total_input += tok.get("input", 0) or 0
         total_output += tok.get("output", 0) or 0
         # Count tool calls from parts
-        for part in (msg.get("parts", []) if isinstance(msg.get("parts"), list) else []):
+        for part in msg.get("parts", []) if isinstance(msg.get("parts"), list) else []:
             if isinstance(part, dict) and part.get("type") == "tool":
                 total_tool_calls += 1
                 tname = part.get("tool", "?")
                 tool_breakdown[tname] = tool_breakdown.get(tname, 0) + 1
 
-    raw.setdefault("token_usage", {
-        "total_tokens": total_input + total_output,
-        "prompt_tokens": total_input,
-        "completion_tokens": total_output,
-    })
-    raw.setdefault("stats", {
-        "total_messages": user_count + asst_count,
-        "user_messages": user_count,
-        "assistant_messages": asst_count,
-        "total_tool_calls": total_tool_calls,
-        "tool_call_breakdown": tool_breakdown,
-        "failed_tool_calls": 0,
-        "reasoning_steps": asst_count,
-    })
+    raw.setdefault(
+        "token_usage",
+        {
+            "total_tokens": total_input + total_output,
+            "prompt_tokens": total_input,
+            "completion_tokens": total_output,
+        },
+    )
+    raw.setdefault(
+        "stats",
+        {
+            "total_messages": user_count + asst_count,
+            "user_messages": user_count,
+            "assistant_messages": asst_count,
+            "total_tool_calls": total_tool_calls,
+            "tool_call_breakdown": tool_breakdown,
+            "failed_tool_calls": 0,
+            "reasoning_steps": asst_count,
+        },
+    )
     return raw
 
 
@@ -940,19 +954,21 @@ def _convert_codearts_metadata(raw: dict) -> dict:
     if not isinstance(session_count, int):
         session_count = len(manifest) or 1
 
-    metadata.update({
-        "agent": "codearts",
-        "model": model_id,
-        "generator_name": "codearts",
-        "generator_version": metadata.get("server_version", ""),
-        "format_version": str(export.get("schema_version", 2)),
-        "sub_agent_count": sub_agent_count,
-        "session_count": session_count,
-        "event_count": event_count,
-        "export_generated_at": export.get("generated_at", ""),
-        "export_complete": export.get("complete"),
-        "export_warnings": export.get("warnings", []),
-    })
+    metadata.update(
+        {
+            "agent": "codearts",
+            "model": model_id,
+            "generator_name": "codearts",
+            "generator_version": metadata.get("server_version", ""),
+            "format_version": str(export.get("schema_version", 2)),
+            "sub_agent_count": sub_agent_count,
+            "session_count": session_count,
+            "event_count": event_count,
+            "export_generated_at": export.get("generated_at", ""),
+            "export_complete": export.get("complete"),
+            "export_warnings": export.get("warnings", []),
+        }
+    )
 
     # Use the authoritative exporter statistics where provided, while keeping
     # the tool-name breakdown calculated by the OpenCode-compatible adapter.
@@ -960,18 +976,24 @@ def _convert_codearts_metadata(raw: dict) -> dict:
     if not isinstance(stats, dict):
         stats = {}
         raw["stats"] = stats
-    stats.update({
-        "total_messages": exported_stats.get("total_messages", stats.get("total_messages", 0)),
-        "user_messages": exported_stats.get("user_messages", stats.get("user_messages", 0)),
-        "assistant_messages": exported_stats.get("assistant_messages", stats.get("assistant_messages", 0)),
-        "total_tool_calls": exported_stats.get("tool_parts", stats.get("total_tool_calls", 0)),
-        "reasoning_steps": exported_stats.get("reasoning_parts", stats.get("reasoning_steps", 0)),
-        "sub_agent_count": sub_agent_count,
-    })
+    stats.update(
+        {
+            "total_messages": exported_stats.get("total_messages", stats.get("total_messages", 0)),
+            "user_messages": exported_stats.get("user_messages", stats.get("user_messages", 0)),
+            "assistant_messages": exported_stats.get("assistant_messages", stats.get("assistant_messages", 0)),
+            "total_tool_calls": exported_stats.get("tool_parts", stats.get("total_tool_calls", 0)),
+            "reasoning_steps": exported_stats.get("reasoning_parts", stats.get("reasoning_steps", 0)),
+            "sub_agent_count": sub_agent_count,
+        }
+    )
 
     token_totals = {
-        "total": 0, "input": 0, "output": 0, "reasoning": 0,
-        "cache_read": 0, "cache_write": 0,
+        "total": 0,
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0,
     }
     for msg in raw.get("messages", []):
         if not isinstance(msg, dict):
@@ -1018,7 +1040,7 @@ _TOOL_ERROR_PATTERNS = [
     ("Permission denied", "permission_error"),
     ("permission denied", "permission_error"),
     ("rule which prevents", "permission_error"),  # OpenCode: "user has specified a rule which prevents..."
-    ("must read file", "permission_error"),       # OpenCode: edit/write before read enforcement
+    ("must read file", "permission_error"),  # OpenCode: edit/write before read enforcement
     # Missing file / path
     ("No such file or directory", "missing_file"),
     ("cannot find the path", "missing_file"),
@@ -1075,8 +1097,11 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
     previous_usage_snapshot: tuple | None = None
 
     usage_fields = (
-        "total_tokens", "input_tokens", "output_tokens",
-        "reasoning_output_tokens", "cached_input_tokens",
+        "total_tokens",
+        "input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "cached_input_tokens",
     )
 
     def _usage_value(usage: dict, field: str) -> int | float:
@@ -1121,7 +1146,7 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                 if not current_timestamp:
                     current_timestamp = ts
 
-                for content in (payload.get("content") or []):
+                for content in payload.get("content") or []:
                     if not isinstance(content, dict):
                         continue
                     ctype = content.get("type", "")
@@ -1138,9 +1163,11 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                 if not current_timestamp:
                     current_timestamp = ts
                 summary = payload.get("summary", [])
-                summary_text = " ".join(
-                    s.get("text", "") for s in summary if isinstance(s, dict)
-                ) if isinstance(summary, list) else ""
+                summary_text = (
+                    " ".join(s.get("text", "") for s in summary if isinstance(s, dict))
+                    if isinstance(summary, list)
+                    else ""
+                )
                 current_parts.append({"type": "reasoning", "text": summary_text})
 
             elif item_type in ("function_call", "custom_tool_call"):
@@ -1210,21 +1237,22 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                     else:
                         # Anchored fallback so benign text ("Found 0 errors",
                         # "error-free") does not flag a successful call.
-                        if re.search(r"(?i)\b(?:error:|traceback \(most recent call last\))",
-                                     output[:200]):
+                        if re.search(r"(?i)\b(?:error:|traceback \(most recent call last\))", output[:200]):
                             status = "error"
                         # Check exit code reported in the output text
                         if "exited with code" in output and "code 0" not in output:
                             status = "error"
 
-                current_parts.append({
-                    "type": "tool_call" if tc else "tool",
-                    "tool_name": tc.get("tool_name", "Bash"),
-                    "tool_id": call_id,
-                    "status": status,
-                    "input": tc.get("input", {}),
-                    "output": output,
-                })
+                current_parts.append(
+                    {
+                        "type": "tool_call" if tc else "tool",
+                        "tool_name": tc.get("tool_name", "Bash"),
+                        "tool_id": call_id,
+                        "status": status,
+                        "input": tc.get("input", {}),
+                        "output": output,
+                    }
+                )
 
         elif etype == "event_msg":
             payload = event.get("payload", {}) if isinstance(event.get("payload"), dict) else {}
@@ -1241,11 +1269,13 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                 tu = None
                 cumulative_snapshot = (
                     tuple(_usage_value(cumulative, field) for field in usage_fields)
-                    if isinstance(cumulative, dict) else None
+                    if isinstance(cumulative, dict)
+                    else None
                 )
                 last_snapshot = (
                     tuple(_usage_value(last_usage, field) for field in usage_fields)
-                    if isinstance(last_usage, dict) else None
+                    if isinstance(last_usage, dict)
+                    else None
                 )
                 snapshot = (cumulative_snapshot, last_snapshot)
                 if snapshot != (None, None):
@@ -1257,22 +1287,18 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                     tu = last_usage
                 elif isinstance(cumulative, dict):
                     if previous_cumulative_usage is None or any(
-                        _usage_value(cumulative, field)
-                        < _usage_value(previous_cumulative_usage, field)
+                        _usage_value(cumulative, field) < _usage_value(previous_cumulative_usage, field)
                         for field in usage_fields
                     ):
                         tu = cumulative
                     else:
                         tu = {
-                            field: _usage_value(cumulative, field)
-                            - _usage_value(previous_cumulative_usage, field)
+                            field: _usage_value(cumulative, field) - _usage_value(previous_cumulative_usage, field)
                             for field in usage_fields
                         }
 
                 if isinstance(cumulative, dict):
-                    previous_cumulative_usage = {
-                        field: _usage_value(cumulative, field) for field in usage_fields
-                    }
+                    previous_cumulative_usage = {field: _usage_value(cumulative, field) for field in usage_fields}
 
                 if isinstance(tu, dict):
                     token_delta = {
@@ -1282,8 +1308,10 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
                         "reasoning": _usage_value(tu, "reasoning_output_tokens"),
                         "cache": {"read": _usage_value(tu, "cached_input_tokens"), "write": 0},
                     }
-                    if not any(token_delta[field] for field in ("total", "input", "output", "reasoning")) \
-                            and not token_delta["cache"]["read"]:
+                    if (
+                        not any(token_delta[field] for field in ("total", "input", "output", "reasoning"))
+                        and not token_delta["cache"]["read"]
+                    ):
                         continue
                     if current_tokens is None:
                         current_tokens = token_delta
@@ -1304,14 +1332,16 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
     if pending_tool_calls:
         current_role = current_role or "assistant"
         for call_id, tc in pending_tool_calls.items():
-            current_parts.append({
-                "type": "tool_call",
-                "tool_name": tc.get("tool_name", "Bash"),
-                "tool_id": call_id,
-                "status": "error",  # interrupted: call never produced an output
-                "input": tc.get("input", {}),
-                "output": "",
-            })
+            current_parts.append(
+                {
+                    "type": "tool_call",
+                    "tool_name": tc.get("tool_name", "Bash"),
+                    "tool_id": call_id,
+                    "status": "error",  # interrupted: call never produced an output
+                    "input": tc.get("input", {}),
+                    "output": "",
+                }
+            )
         pending_tool_calls.clear()
 
     # Flush any remaining parts
@@ -1332,12 +1362,9 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
     start_ms = _iso_to_epoch_ms(first_ts_iso)
     end_ms = _iso_to_epoch_ms(last_ts_iso)
     total_duration = (
-        round((end_ms - start_ms) / 1000.0, 3)
-        if isinstance(start_ms, int) and isinstance(end_ms, int) else 0
+        round((end_ms - start_ms) / 1000.0, 3) if isinstance(start_ms, int) and isinstance(end_ms, int) else 0
     )
-    total_tokens = sum(
-        (m["info"].get("tokens") or {}).get("total", 0) for m in messages
-    )
+    total_tokens = sum((m["info"].get("tokens") or {}).get("total", 0) for m in messages)
 
     # Build metadata
     info = {
@@ -1418,8 +1445,7 @@ def _classify_codex_command(func_name: str, cmd: str) -> str:
         return "Glob"
 
     # File writing
-    for pattern in ["cat >", "cat >>", "tee ", "echo >", "echo >>",
-                     "sed -i", "patch ", "git apply"]:
+    for pattern in ["cat >", "cat >>", "tee ", "echo >", "echo >>", "sed -i", "patch ", "git apply"]:
         if pattern in cmd_lower:
             return "Write"
 
@@ -1574,9 +1600,11 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
     # non-object top level (bare messages/events array, string, number)
     # cannot be a trajectory and would crash format detection/conversion.
     if not isinstance(raw, dict):
-        return {"_error": f"Unsupported JSON input: top-level value is "
-                          f"{type(raw).__name__}; expected a JSON object "
-                          f"(for bare event arrays, save as .jsonl)."}
+        return {
+            "_error": f"Unsupported JSON input: top-level value is "
+            f"{type(raw).__name__}; expected a JSON object "
+            f"(for bare event arrays, save as .jsonl)."
+        }
 
     fmt = detect_format(raw)
     if fmt == "unknown" and format_hint in ("ccsession", "codearts", "opencode"):
@@ -1588,10 +1616,12 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
         # correctly) but have no parser yet: their 'sender'/'content' messages
         # are not OpenCode-shaped and would silently produce empty steps.
         if safe_get(raw, "export_metadata", "source_format") == "codearts_legacy_json":
-            return {"_error": "CodeArts legacy-JSON export detected "
-                              "(source_format=codearts_legacy_json): this legacy "
-                              "message schema is not yet supported. Re-export the "
-                              "session from the CodeArts SQLite database instead."}
+            return {
+                "_error": "CodeArts legacy-JSON export detected "
+                "(source_format=codearts_legacy_json): this legacy "
+                "message schema is not yet supported. Re-export the "
+                "session from the CodeArts SQLite database instead."
+            }
         result = _convert_codearts_metadata(raw)
     elif fmt == "opencode":
         result = _convert_opencode_metadata(raw)
@@ -1608,4 +1638,5 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
 
 def _sha256_bytes(data: bytes) -> str:
     import hashlib
+
     return hashlib.sha256(data).hexdigest()

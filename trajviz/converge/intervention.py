@@ -44,6 +44,7 @@ PATTERN_DIRECTIONS: dict[str, str] = {
 # Task pairing
 # ---------------------------------------------------------------------------
 
+
 def pair_tasks(
     before_results: list[BatchResult],
     after_results: list[BatchResult],
@@ -68,11 +69,11 @@ def pair_tasks(
 # Metric extraction
 # ---------------------------------------------------------------------------
 
+
 def _extract_metric(report: dict, metric_name: str) -> float | None:
     """Extract a metric value from a comparison report."""
     # Standard alignment metrics
-    if metric_name in ("reference_recall", "behavioral_precision", "alignment_f1",
-                       "overhead_ratio", "harmful_ratio"):
+    if metric_name in ("reference_recall", "behavioral_precision", "alignment_f1", "overhead_ratio", "harmful_ratio"):
         return report.get("alignment", {}).get(metric_name)
 
     # Anchor metrics: "anchor_write_precision_ref" → strip "_ref" and "anchor_" prefix
@@ -102,6 +103,7 @@ def _count_pattern(report: dict, pattern_type: str) -> int:
 # ---------------------------------------------------------------------------
 # Delta computation
 # ---------------------------------------------------------------------------
+
 
 def compute_metric_deltas(
     paired: list[tuple[BatchResult, BatchResult]],
@@ -190,6 +192,7 @@ def compute_pattern_deltas(
 # Statistical testing
 # ---------------------------------------------------------------------------
 
+
 def test_significance(
     before_values: list[float],
     after_values: list[float],
@@ -201,8 +204,12 @@ def test_significance(
     """
     n = len(before_values)
     if n < 2:
-        return {"p_value": None, "significant": False, "test_method": "none",
-                "warning": "fewer than 2 paired observations"}
+        return {
+            "p_value": None,
+            "significant": False,
+            "test_method": "none",
+            "warning": "fewer than 2 paired observations",
+        }
     if n < 6:
         warning = "fewer than 6 paired observations — low statistical power"
     else:
@@ -211,11 +218,11 @@ def test_significance(
     # Try Wilcoxon signed-rank
     try:
         from scipy.stats import wilcoxon
+
         diffs = [a - b for a, b in zip(after_values, before_values, strict=False)]
         # wilcoxon requires at least one non-zero difference
         if all(d == 0 for d in diffs):
-            return {"p_value": 1.0, "significant": False, "test_method": "wilcoxon",
-                    "warning": warning}
+            return {"p_value": 1.0, "significant": False, "test_method": "wilcoxon", "warning": warning}
         stat, p_value = wilcoxon(diffs)
         return {
             "p_value": round(p_value, 6),
@@ -232,15 +239,15 @@ def test_significance(
     n_neg = sum(1 for d in diffs if d < 0)
     n_nonzero = n_pos + n_neg
     if n_nonzero == 0:
-        return {"p_value": 1.0, "significant": False, "test_method": "sign_test",
-                "warning": warning}
+        return {"p_value": 1.0, "significant": False, "test_method": "sign_test", "warning": warning}
 
     # Two-sided binomial p-value
     from math import comb
+
     k = min(n_pos, n_neg)
     p_value = 0.0
     for i in range(k + 1):
-        p_value += comb(n_nonzero, i) * (0.5 ** n_nonzero)
+        p_value += comb(n_nonzero, i) * (0.5**n_nonzero)
     p_value *= 2  # two-sided
     p_value = min(p_value, 1.0)
 
@@ -255,6 +262,7 @@ def test_significance(
 # ---------------------------------------------------------------------------
 # Guardrail detection
 # ---------------------------------------------------------------------------
+
 
 def detect_guardrail_regressions(
     metric_deltas: dict[str, dict],
@@ -304,22 +312,24 @@ def detect_guardrail_regressions(
 
         if exceeds_relative or exceeds_significance:
             seen.add(regressed_name)
-            warnings.append({
-                "metric": regressed_name,
-                "before_mean": d["before_mean"],
-                "after_mean": d["after_mean"],
-                "delta": d["delta"],
-                "direction": "regressed",
-                "relative_regression": round(relative_regression, 4),
-                "p_value": sig.get("p_value"),
-                "significant": sig.get("significant", False),
-                "warning": (
-                    f"{regressed_name} regressed from {d['before_mean']:.4f} to "
-                    f"{d['after_mean']:.4f} ({relative_regression*100:.1f}% relative"
-                    f"{', p=' + str(sig['p_value']) if sig.get('p_value') is not None else ''}"
-                    f")"
-                ),
-            })
+            warnings.append(
+                {
+                    "metric": regressed_name,
+                    "before_mean": d["before_mean"],
+                    "after_mean": d["after_mean"],
+                    "delta": d["delta"],
+                    "direction": "regressed",
+                    "relative_regression": round(relative_regression, 4),
+                    "p_value": sig.get("p_value"),
+                    "significant": sig.get("significant", False),
+                    "warning": (
+                        f"{regressed_name} regressed from {d['before_mean']:.4f} to "
+                        f"{d['after_mean']:.4f} ({relative_regression * 100:.1f}% relative"
+                        f"{', p=' + str(sig['p_value']) if sig.get('p_value') is not None else ''}"
+                        f")"
+                    ),
+                }
+            )
 
     return warnings
 
@@ -327,6 +337,7 @@ def detect_guardrail_regressions(
 # ---------------------------------------------------------------------------
 # Recommendation
 # ---------------------------------------------------------------------------
+
 
 def generate_recommendation(
     metric_deltas: dict[str, dict],
@@ -340,8 +351,10 @@ def generate_recommendation(
         return "No significant changes detected."
     if improved and not guardrails:
         if regressed:
-            return (f"Intervention improved {', '.join(improved[:2])} with minor "
-                    f"regressions in {', '.join(regressed[:2])} (below guardrail thresholds).")
+            return (
+                f"Intervention improved {', '.join(improved[:2])} with minor "
+                f"regressions in {', '.join(regressed[:2])} (below guardrail thresholds)."
+            )
         return f"Intervention improved {', '.join(improved[:3])} without regressions."
     if improved and guardrails:
         regressed_names = [g["metric"] for g in guardrails]
@@ -358,6 +371,7 @@ def generate_recommendation(
 # Intervention report
 # ---------------------------------------------------------------------------
 
+
 def build_intervention_report(
     before_manifest: str,
     after_manifest: str,
@@ -373,8 +387,7 @@ def build_intervention_report(
     sig_cache: dict[str, dict] = {}
     for name, d in metric_deltas.items():
         if name not in sig_cache:
-            sig_cache[name] = test_significance(
-                d.get("before_values", []), d.get("after_values", []))
+            sig_cache[name] = test_significance(d.get("before_values", []), d.get("after_values", []))
         sig = sig_cache[name]
         clean_deltas[name] = {
             "before_mean": d["before_mean"],

@@ -190,9 +190,7 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
 
         insert_session(connection, "root", parent_id=None, created=1_000)
         insert_session(connection, "child_parent", parent_id="root", created=2_000)
-        insert_session(
-            connection, "grandchild", parent_id="child_parent", created=2_500
-        )
+        insert_session(connection, "grandchild", parent_id="child_parent", created=2_500)
         insert_session(connection, "child_tool", parent_id=None, created=3_000)
 
         insert_message(
@@ -356,9 +354,7 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
         shard_2 = [{"sender": "Assistant", "content": "two"}]
         shard_10 = [{"sender": "Assistant", "content": "ten"}]
         for index, payload in ((0, shard_0), (10, shard_10), (2, shard_2)):
-            (session / f"messages_{index}.json").write_text(
-                json.dumps(payload), encoding="utf-8"
-            )
+            (session / f"messages_{index}.json").write_text(json.dumps(payload), encoding="utf-8")
 
         result = consolidator.consolidate_legacy_session(session)
 
@@ -379,9 +375,7 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
         (session / "messages_1.json").write_text("[]", encoding="utf-8")
         (session / "messages_01.json").write_text("[]", encoding="utf-8")
 
-        with self.assertRaisesRegex(
-            consolidator.ConsolidationError, "multiple files map to indexes"
-        ):
+        with self.assertRaisesRegex(consolidator.ConsolidationError, "multiple files map to indexes"):
             consolidator.consolidate_legacy_session(session)
 
     def test_filename_sanitizing_and_large_shard_gaps_are_bounded(self) -> None:
@@ -403,28 +397,20 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
         for name, content in (("a", "first"), ("b", "second")):
             session = parent / name
             session.mkdir()
-            (session / "chat_baseInfo.json").write_text(
-                '{"chatId":"duplicate"}', encoding="utf-8"
-            )
+            (session / "chat_baseInfo.json").write_text('{"chatId":"duplicate"}', encoding="utf-8")
             (session / "messages_0.json").write_text(
                 json.dumps([{"sender": "User", "content": content}]),
                 encoding="utf-8",
             )
 
         with contextlib.redirect_stderr(io.StringIO()):
-            processed, ignored, failed, partial = consolidator._batch_legacy(
-                parent, output_dir
-            )
+            processed, ignored, failed, partial = consolidator._batch_legacy(parent, output_dir)
 
         self.assertEqual((processed, ignored, failed, partial), (1, 0, 1, 0))
-        output = json.loads(
-            (output_dir / "duplicate_trajectory_v2.json").read_text(encoding="utf-8")
-        )
+        output = json.loads((output_dir / "duplicate_trajectory_v2.json").read_text(encoding="utf-8"))
         self.assertEqual(output["messages"][0]["content"], "first")
         with contextlib.redirect_stderr(io.StringIO()):
-            return_code = consolidator.main(
-                [str(parent), "--batch", "--output", str(output_dir)]
-            )
+            return_code = consolidator.main([str(parent), "--batch", "--output", str(output_dir)])
         self.assertEqual(return_code, 1)
 
     def test_database_export_preserves_tokens_and_part_times(self) -> None:
@@ -434,14 +420,8 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
 
         messages = {message["info"]["id"]: message for message in result["messages"]}
         self.assertEqual(messages["msg_assistant"]["info"]["tokens"], exact_tokens)
-        self.assertEqual(
-            messages["msg_assistant_2"]["info"]["tokens"], exact_tokens_2
-        )
-        reasoning = next(
-            part
-            for part in messages["msg_assistant"]["parts"]
-            if part["id"] == "part_reasoning"
-        )
+        self.assertEqual(messages["msg_assistant_2"]["info"]["tokens"], exact_tokens_2)
+        reasoning = next(part for part in messages["msg_assistant"]["parts"] if part["id"] == "part_reasoning")
         self.assertEqual(reasoning["time"], exact_part_time)
         self.assertEqual(reasoning["_codeartsStorage"]["timeCreated"], 1_021)
         self.assertEqual(
@@ -454,23 +434,13 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
 
         result = consolidator.consolidate_database_session(database, "root")
 
-        manifest = {
-            entry["info"]["id"]: entry for entry in result["session_manifest"]
-        }
-        self.assertEqual(
-            set(manifest), {"root", "child_parent", "grandchild", "child_tool"}
-        )
-        self.assertEqual(
-            manifest["child_parent"]["discovered_by"], "parent_id+tool_metadata"
-        )
+        manifest = {entry["info"]["id"]: entry for entry in result["session_manifest"]}
+        self.assertEqual(set(manifest), {"root", "child_parent", "grandchild", "child_tool"})
+        self.assertEqual(manifest["child_parent"]["discovered_by"], "parent_id+tool_metadata")
         self.assertEqual(manifest["grandchild"]["discovered_by"], "parent_id")
         self.assertEqual(manifest["grandchild"]["depth"], 2)
         self.assertEqual(manifest["child_tool"]["discovered_by"], "tool_metadata")
-        child_infos = [
-            message["info"]
-            for message in result["messages"]
-            if message["info"]["sessionID"] != "root"
-        ]
+        child_infos = [message["info"] for message in result["messages"] if message["info"]["sessionID"] != "root"]
         self.assertEqual(len(child_infos), 3)
         self.assertTrue(all(info["isSubAgent"] is True for info in child_infos))
         self.assertEqual(result["statistics"]["sessions"], 4)
@@ -479,9 +449,7 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
     def test_no_children_is_root_only(self) -> None:
         database, _, _, _ = self.make_database()
 
-        result = consolidator.consolidate_database_session(
-            database, "root", include_children=False
-        )
+        result = consolidator.consolidate_database_session(database, "root", include_children=False)
 
         self.assertEqual(result["statistics"]["sessions"], 1)
         self.assertEqual(
@@ -511,14 +479,8 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
 
         result = consolidator.consolidate_database_session(database, "root")
         serialized = json.dumps(result)
-        root_manifest = next(
-            entry for entry in result["session_manifest"] if entry["info"]["id"] == "root"
-        )
-        assistant = next(
-            message
-            for message in result["messages"]
-            if message["info"]["id"] == "msg_assistant"
-        )
+        root_manifest = next(entry for entry in result["session_manifest"] if entry["info"]["id"] == "root")
+        assistant = next(message for message in result["messages"] if message["info"]["id"] == "msg_assistant")
 
         self.assertEqual(root_manifest["codearts_extra"][0]["type"], "kernel")
         self.assertEqual(root_manifest["todos"][0]["content"], "verify")
@@ -557,14 +519,10 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
     def test_depth_limit_is_reported_as_partial(self) -> None:
         database, _, _, _ = self.make_database()
 
-        result = consolidator.consolidate_database_session(
-            database, "root", max_depth=1
-        )
+        result = consolidator.consolidate_database_session(database, "root", max_depth=1)
 
         self.assertFalse(result["export_metadata"]["complete"])
-        self.assertTrue(
-            any("maximum depth" in warning for warning in result["export_metadata"]["warnings"])
-        )
+        self.assertTrue(any("maximum depth" in warning for warning in result["export_metadata"]["warnings"]))
 
     def test_cli_refuses_to_overwrite_database_or_legacy_source(self) -> None:
         database, _, _, _ = self.make_database()
@@ -603,18 +561,14 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
         original_messages = '[{"sender":"User","content":"safe"}]'
         messages.write_text(original_messages, encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()):
-            return_code = consolidator.main(
-                [str(session), "--output", str(messages)]
-            )
+            return_code = consolidator.main([str(session), "--output", str(messages)])
         self.assertEqual(return_code, 1)
         self.assertEqual(messages.read_text(encoding="utf-8"), original_messages)
 
     def test_cli_uses_safe_default_name_and_nonzero_for_partial_export(self) -> None:
         session = self.root / "unsafe-name"
         session.mkdir()
-        (session / "chat_baseInfo.json").write_text(
-            '{"chatId":"../../escape"}', encoding="utf-8"
-        )
+        (session / "chat_baseInfo.json").write_text('{"chatId":"../../escape"}', encoding="utf-8")
         (session / "messages_0.json").write_text("[]", encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()):
             return_code = consolidator.main([str(session)])
@@ -669,9 +623,7 @@ class CodeArtsConsolidatorV2Tests(unittest.TestCase):
                 {session["session_id"] for session in subagent_sessions},
                 {"child_parent", "grandchild", "child_tool"},
             )
-            sessions_by_id = {
-                session["session_id"]: session for session in subagent_sessions
-            }
+            sessions_by_id = {session["session_id"]: session for session in subagent_sessions}
             self.assertEqual(sessions_by_id["child_tool"]["spawn_step"], 1)
             self.assertEqual(sessions_by_id["child_parent"]["spawn_step"], 2)
             self.assertIsNone(sessions_by_id["grandchild"]["spawn_step"])

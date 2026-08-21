@@ -28,9 +28,7 @@ class StepLabelerV2Tests(unittest.TestCase):
                 )
 
             load_steps.assert_not_called()
-            self.assertEqual(
-                trajectory_path.read_text(encoding="utf-8"), original
-            )
+            self.assertEqual(trajectory_path.read_text(encoding="utf-8"), original)
 
     def test_atomic_write_preserves_existing_output_on_serialization_error(self):
         steps = [
@@ -54,10 +52,7 @@ class StepLabelerV2Tests(unittest.TestCase):
             output_path = Path(tmp) / "labeled.json"
             original_output = '{"existing": true}\n'
             output_path.write_text(original_output, encoding="utf-8")
-            taxonomy_path = (
-                Path(step_labeler_v2.__file__).resolve().parent
-                / "TAXONOMY_REFERENCE.md"
-            )
+            taxonomy_path = Path(step_labeler_v2.__file__).resolve().parent / "TAXONOMY_REFERENCE.md"
 
             with (
                 patch.object(step_labeler_v2, "load_all_steps", return_value=steps),
@@ -77,9 +72,7 @@ class StepLabelerV2Tests(unittest.TestCase):
                     taxonomy_path=str(taxonomy_path),
                 )
 
-            self.assertEqual(
-                output_path.read_text(encoding="utf-8"), original_output
-            )
+            self.assertEqual(output_path.read_text(encoding="utf-8"), original_output)
             self.assertEqual(list(Path(tmp).glob(".labeled.json.*.tmp")), [])
 
     def test_emits_every_index_and_defaults_user(self):
@@ -115,10 +108,7 @@ class StepLabelerV2Tests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             output_path = Path(tmp) / "labeled.json"
-            taxonomy_path = (
-                Path(step_labeler_v2.__file__).resolve().parent
-                / "TAXONOMY_REFERENCE.md"
-            )
+            taxonomy_path = Path(step_labeler_v2.__file__).resolve().parent / "TAXONOMY_REFERENCE.md"
             with (
                 patch.object(step_labeler_v2, "load_all_steps", return_value=steps),
                 patch.object(
@@ -171,10 +161,7 @@ class StepLabelerV2Tests(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as tmp:
             output_path = Path(tmp) / "labeled.json"
-            taxonomy_path = (
-                Path(step_labeler_v2.__file__).resolve().parent
-                / "TAXONOMY_REFERENCE.md"
-            )
+            taxonomy_path = Path(step_labeler_v2.__file__).resolve().parent / "TAXONOMY_REFERENCE.md"
             with (
                 patch.object(step_labeler_v2, "load_all_steps", return_value=steps),
                 patch.object(step_labeler_v2.v1, "call_llm") as call_llm,

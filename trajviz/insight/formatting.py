@@ -6,12 +6,11 @@ import html
 _VERDICT_STYLES = {
     "good": ("var(--ov-success, #16a34a)", "#f0fdf4", "#bbf7d0"),
     "warn": ("var(--ov-warn, #d97706)", "#fffbeb", "#fde68a"),
-    "bad":  ("var(--ov-bad, #dc2626)",  "#fef2f2", "#fecaca"),
+    "bad": ("var(--ov-bad, #dc2626)", "#fef2f2", "#fecaca"),
 }
 
 
-def _metric_chip(label: str, value: str, *, wide: bool = False,
-                 verdict: str | None = None, hint: str = "") -> str:
+def _metric_chip(label: str, value: str, *, wide: bool = False, verdict: str | None = None, hint: str = "") -> str:
     """Render a single metric as a compact card chip (HTML).
 
     *verdict* adds a colored left border (good/warn/bad).
@@ -28,8 +27,7 @@ def _metric_chip(label: str, value: str, *, wide: bool = False,
     if verdict and verdict in _VERDICT_STYLES:
         color, bg, border_color = _VERDICT_STYLES[verdict]
         border_left = f"border-left:3px solid {color};"
-    hint_html = (f"<span style='font-size:9px;color:#94a3b8;margin-top:1px;'>{hint}</span>"
-                 if hint else "")
+    hint_html = f"<span style='font-size:9px;color:#94a3b8;margin-top:1px;'>{hint}</span>" if hint else ""
     return (
         f"<div style='display:inline-flex;flex-direction:column;background:{bg};"
         f"border:1px solid {border_color};border-radius:8px;padding:6px 10px;"
@@ -61,18 +59,19 @@ def _friendly_finish(raw: str | None) -> str:
     return _FINISH_LABELS.get(raw, raw.replace("-", " ").replace("_", " ").title())
 
 
-
-
-
-
 def _build_hotspots_md(rows: list[dict]) -> str:
     """Build markdown tables for top latency/token/cache-miss hotspots."""
     with_dur = [r for r in rows if r.get("duration") is not None]
     top_d = sorted(with_dur, key=lambda r: r["duration"], reverse=True)[:5]
     top_t = sorted(rows, key=lambda r: r["tokens_total"], reverse=True)[:5]
 
-    def fmt_table(items: list[dict], value_field: str, value_header: str,
-                  value_fmt: str, extra_cols: list[tuple[str, str, str]] | None = None) -> str:
+    def fmt_table(
+        items: list[dict],
+        value_field: str,
+        value_header: str,
+        value_fmt: str,
+        extra_cols: list[tuple[str, str, str]] | None = None,
+    ) -> str:
         if not items:
             return "*No data*"
         extra = extra_cols or [("tokens_total", "Tokens", ","), ("tool_calls", "Tool Calls", "")]
@@ -85,8 +84,7 @@ def _build_hotspots_md(rows: list[dict]) -> str:
             v = r[value_field]
             v_str = format(v, value_fmt) if isinstance(v, (int, float)) else str(v)
             extras = " | ".join(
-                format(r[f], ef) if isinstance(r[f], (int, float)) and ef else str(r[f])
-                for f, _, ef in extra
+                format(r[f], ef) if isinstance(r[f], (int, float)) and ef else str(r[f]) for f, _, ef in extra
             )
             lines.append(f"| {r['index']} | `{r['role']}` | {v_str} | {extras} |")
         return "\n".join(lines)
@@ -96,17 +94,20 @@ def _build_hotspots_md(rows: list[dict]) -> str:
         "**Top latency steps**\n\n"
         + fmt_table(top_d, "duration", "Duration (s)", ".2f")
         + "\n\n**Top token-load steps**\n\n"
-        + fmt_table(top_t, "tokens_total", "Tokens", ",",
-                    extra_cols=[("tool_calls", "Tool Calls", ""),
-                                ("duration", "Duration (s)", ".2f")])
+        + fmt_table(
+            top_t,
+            "tokens_total",
+            "Tokens",
+            ",",
+            extra_cols=[("tool_calls", "Tool Calls", ""), ("duration", "Duration (s)", ".2f")],
+        )
     ]
 
     # Lowest cache ratio (assistant steps with tokens, excluding 0-token steps).
     # Skip the table entirely if no step reports any cache read — otherwise the
     # table is just five rows of 0.0% (uninformative) for trajectories whose
     # provider doesn't emit cache metrics (e.g., some Codex sessions).
-    asst_with_tok = [r for r in rows
-                     if r.get("role") == "assistant" and r["tokens_total"] > 0]
+    asst_with_tok = [r for r in rows if r.get("role") == "assistant" and r["tokens_total"] > 0]
     if asst_with_tok and any(r["cache_ratio"] > 0 for r in asst_with_tok):
         low_cache = sorted(asst_with_tok, key=lambda r: r["cache_ratio"])[:5]
         lines = [
@@ -118,10 +119,7 @@ def _build_hotspots_md(rows: list[dict]) -> str:
                 f"| {r['index']} | `{r['role']}` | {r['cache_ratio'] * 100:.1f}% | "
                 f"{r['non_cache_tokens']:,} | {r['tokens_total']:,} |"
             )
-        sections.append(
-            "\n\n**Lowest cache read steps** (optimization targets)\n\n"
-            + "\n".join(lines)
-        )
+        sections.append("\n\n**Lowest cache read steps** (optimization targets)\n\n" + "\n".join(lines))
 
     return "".join(sections)
 
@@ -148,7 +146,7 @@ def _build_per_message_md(rows: list[dict], limit: int = 80) -> str:
     for r in rows[:limit]:
         dur = "N/A" if r["duration"] is None else f"{r['duration']:.2f}"
         tokps = "N/A" if r["tokens_per_sec"] is None else f"{r['tokens_per_sec']:.1f}"
-        finish = _friendly_finish(r['finish']) or '-'
+        finish = _friendly_finish(r["finish"]) or "-"
         if has_agent:
             agent = r.get("agent", "") or "Main agent"
             lines.append(
@@ -178,20 +176,22 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
         _metric_chip("Max duration", f"{metrics['max_duration']}s"),
     ]
     # Token breakdown: show N/A when format doesn't provide subcategories
-    has_breakdown = tok['input'] > 0 or tok['output'] > 0 or tok['cache_read'] > 0
+    has_breakdown = tok["input"] > 0 or tok["output"] > 0 or tok["cache_read"] > 0
+
     def _tok_val(v: int) -> str:
         return f"{v:,}" if has_breakdown else "N/A"
 
     token_chips = [
         _metric_chip("Total tokens", f"{tok['total']:,}"),
-        _metric_chip("Input", _tok_val(tok['input'])),
-        _metric_chip("Output", _tok_val(tok['output'])),
-        _metric_chip("Reasoning", _tok_val(tok['reasoning'])),
-        _metric_chip("Cache read", _tok_val(tok['cache_read'])),
-        _metric_chip("Cache write", _tok_val(tok['cache_write'])),
-        _metric_chip("Fresh input",
-                     f"{metrics['non_cache_tokens']:,} ({metrics['non_cache_ratio']}%)"
-                     if has_breakdown else "N/A"),
+        _metric_chip("Input", _tok_val(tok["input"])),
+        _metric_chip("Output", _tok_val(tok["output"])),
+        _metric_chip("Reasoning", _tok_val(tok["reasoning"])),
+        _metric_chip("Cache read", _tok_val(tok["cache_read"])),
+        _metric_chip("Cache write", _tok_val(tok["cache_write"])),
+        _metric_chip(
+            "Fresh input",
+            f"{metrics['non_cache_tokens']:,} ({metrics['non_cache_ratio']}%)" if has_breakdown else "N/A",
+        ),
     ]
     eff_chips = [
         _metric_chip("Avg tok/step", f"{metrics['avg_tokens_per_step']:,}"),
@@ -201,10 +201,7 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
         _metric_chip("Tok/tool call", f"{metrics['tokens_per_tool']:,}"),
     ]
 
-    tool_chips = [
-        _metric_chip(k, str(v))
-        for k, v in sorted(metrics["tool_breakdown"].items(), key=lambda x: -x[1])
-    ]
+    tool_chips = [_metric_chip(k, str(v)) for k, v in sorted(metrics["tool_breakdown"].items(), key=lambda x: -x[1])]
     # Build agent chips with main agent included and sub-agents labeled
     agent_bd = metrics.get("agent_breakdown", {})
     sub_agent_steps = sum(agent_bd.values())
@@ -216,8 +213,7 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
             label = f"sub-agent {k[:12]}"
             agent_chips.append(_metric_chip(label, f"{v} steps", wide=True))
     model_chips = [
-        _metric_chip(k, str(v))
-        for k, v in sorted(metrics.get("model_breakdown", {}).items(), key=lambda x: -x[1])
+        _metric_chip(k, str(v)) for k, v in sorted(metrics.get("model_breakdown", {}).items(), key=lambda x: -x[1])
     ]
 
     sections = [
@@ -274,9 +270,14 @@ def format_behavioral_md(metrics: dict, diag_metrics: dict | None = None) -> str
     ]
     # Cache metrics — N/A when format doesn't provide cache breakdown
     if has_cache_data:
-        chips.append(_metric_chip("Avg cache %", f"{avg_cache}%",
-                     verdict=_cache_verdict(avg_cache),
-                     hint="≥60% good" if avg_cache < 60 else ""))
+        chips.append(
+            _metric_chip(
+                "Avg cache %",
+                f"{avg_cache}%",
+                verdict=_cache_verdict(avg_cache),
+                hint="≥60% good" if avg_cache < 60 else "",
+            )
+        )
         chips.append(_metric_chip("Cache-dom", str(metrics["cache_dominant_steps"])))
     else:
         chips.append(_metric_chip("Avg cache %", "N/A", hint="not available for this format"))
@@ -284,9 +285,14 @@ def format_behavioral_md(metrics: dict, diag_metrics: dict | None = None) -> str
     # Tool timing — N/A when format doesn't provide per-tool timestamps
     if has_tool_timing:
         chips.append(_metric_chip("Tool time", f"{metrics['tool_time_total']}s"))
-        chips.append(_metric_chip("Tool-wait %", f"{tool_wait}%",
-                     verdict=_tool_wait_verdict(tool_wait),
-                     hint="≤30% good" if tool_wait > 30 else ""))
+        chips.append(
+            _metric_chip(
+                "Tool-wait %",
+                f"{tool_wait}%",
+                verdict=_tool_wait_verdict(tool_wait),
+                hint="≤30% good" if tool_wait > 30 else "",
+            )
+        )
         chips.append(_metric_chip("Tool dur avg", f"{metrics['avg_tool_duration']}s"))
         chips.append(_metric_chip("Tool dur P95", f"{metrics['p95_tool_duration']}s"))
         chips.append(_metric_chip("Tool dur max", f"{metrics['max_tool_duration']}s"))
@@ -298,13 +304,13 @@ def format_behavioral_md(metrics: dict, diag_metrics: dict | None = None) -> str
 
     # Sub-agents
     if dm.get("subagent_session_count", 0) > 0:
-        chips.append(_metric_chip("Sub-agents",
-                                  f"{dm['subagent_session_count']} ({dm.get('subagent_total_steps', 0)} steps)"))
+        chips.append(
+            _metric_chip("Sub-agents", f"{dm['subagent_session_count']} ({dm.get('subagent_total_steps', 0)} steps)")
+        )
 
     # Tool errors
     if dm.get("classified_error_count", 0) > 0:
-        chips.append(_metric_chip("Tool errors", str(dm['classified_error_count']),
-                                  verdict="bad"))
+        chips.append(_metric_chip("Tool errors", str(dm["classified_error_count"]), verdict="bad"))
 
     return _metric_grid(chips, "Behavioral Diagnostics")
 
@@ -316,10 +322,10 @@ def wall_clock_fmt(metrics: dict) -> tuple[float, str]:
     return wall, fmt
 
 
-def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
-                       *, trajectory_format: str | None = None) -> str:
+def format_banner_html(filename: str, metrics: dict, wall_fmt: str, *, trajectory_format: str | None = None) -> str:
     """Build the one-line HTML summary banner for the loaded trajectory."""
     import html as _html
+
     parts = [
         f"<strong>{_html.escape(filename)}</strong> &nbsp;&mdash;&nbsp; ",
         f"{metrics['total_steps']} steps &middot; ",
@@ -377,10 +383,4 @@ def format_context_pressure_html(series: dict) -> str:
     chips.append(_metric_chip("Compactions", str(stats.get("compaction_count") or 0)))
     drop = stats.get("largest_drop") or 0
     chips.append(_metric_chip("Largest drop", f"-{drop:,}" if drop else "0"))
-    return (
-        "<div style='margin:4px 0 8px;'>"
-        + _metric_grid(chips)
-        + "</div>"
-    )
-
-
+    return "<div style='margin:4px 0 8px;'>" + _metric_grid(chips) + "</div>"

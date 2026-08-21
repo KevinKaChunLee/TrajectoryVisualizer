@@ -20,20 +20,55 @@ _PHASE_RANK: dict[str, int] = {name: i for i, name in enumerate(_PHASE_ORDER)}
 _MAX_STEPS = 2000
 
 _PLAN_TOOL_NAMES = {
-    "TodoWrite", "todowrite", "TodoUpdate", "TaskCreate", "TaskUpdate",
-    "TaskList", "EnterPlanMode",
+    "TodoWrite",
+    "todowrite",
+    "TodoUpdate",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "EnterPlanMode",
 }
 _READ_TOOL_NAMES = {"Read", "read", "WebFetch"}
 _SEARCH_TOOL_NAMES = {
-    "Bash", "bash", "Grep", "Glob", "grep", "glob", "find", "ToolSearch", "WebSearch",
+    "Bash",
+    "bash",
+    "Grep",
+    "Glob",
+    "grep",
+    "glob",
+    "find",
+    "ToolSearch",
+    "WebSearch",
 }
 # Single source of truth for write-tool names: trajviz.tool_vocab.
 from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES  # noqa: E402
+
 _VALIDATION_COMMAND_PATTERNS = (
-    "pytest", "python -m pytest", "unittest", "tox", "nox", "go test",
-    "cargo test", "npm test", "pnpm test", "yarn test", "jest", "vitest",
-    "mvn test", "gradle test", "bazel test", "make test", "ctest", "ruff",
-    "flake8", "pylint", "mypy", "eslint", "lint", "check", "verify",
+    "pytest",
+    "python -m pytest",
+    "unittest",
+    "tox",
+    "nox",
+    "go test",
+    "cargo test",
+    "npm test",
+    "pnpm test",
+    "yarn test",
+    "jest",
+    "vitest",
+    "mvn test",
+    "gradle test",
+    "bazel test",
+    "make test",
+    "ctest",
+    "ruff",
+    "flake8",
+    "pylint",
+    "mypy",
+    "eslint",
+    "lint",
+    "check",
+    "verify",
 )
 
 
@@ -149,6 +184,7 @@ def build_structural_phase_segments(steps: list[dict]) -> list[dict]:
 # 1. Tool Sequence Detection
 # ---------------------------------------------------------------------------
 
+
 def _extract_tool_names(step: dict) -> list[str]:
     """Extract tool-call names from a single step."""
     names: list[str] = []
@@ -219,11 +255,13 @@ def detect_tool_sequences(
             if len(occ_positions) < min_freq:
                 continue
             step_indices = sorted({tool_stream[pos][1] for pos in occ_positions})
-            results.append({
-                "sequence": list(gram),
-                "frequency": len(occ_positions),
-                "step_indices": step_indices,
-            })
+            results.append(
+                {
+                    "sequence": list(gram),
+                    "frequency": len(occ_positions),
+                    "step_indices": step_indices,
+                }
+            )
 
     # Sort by frequency descending, then by shorter sequences first for ties
     results.sort(key=lambda r: (-r["frequency"], len(r["sequence"])))
@@ -233,6 +271,7 @@ def detect_tool_sequences(
 # ---------------------------------------------------------------------------
 # 2. Failure Pattern Detection
 # ---------------------------------------------------------------------------
+
 
 def _step_has_success(step: dict) -> bool:
     """Return True if the step has at least one successful tool call."""
@@ -307,13 +346,15 @@ def detect_failure_patterns(steps: list[dict]) -> list[dict]:
             most_common = counter.most_common(1)[0][0]
             recovery_path = list(most_common)
 
-        results.append({
-            "cluster_label": f"{cluster['tool']}: {cluster['pattern']}",
-            "count": cluster["count"],
-            "example_error": cluster["pattern"],
-            "recovery_path": recovery_path,
-            "steps": list(cluster.get("steps", [])),
-        })
+        results.append(
+            {
+                "cluster_label": f"{cluster['tool']}: {cluster['pattern']}",
+                "count": cluster["count"],
+                "example_error": cluster["pattern"],
+                "recovery_path": recovery_path,
+                "steps": list(cluster.get("steps", [])),
+            }
+        )
 
     return results
 
@@ -324,6 +365,7 @@ _bisect_right = bisect_right
 # ---------------------------------------------------------------------------
 # 3. Phase Anomaly Detection
 # ---------------------------------------------------------------------------
+
 
 def detect_phase_anomalies(
     steps: list[dict],
@@ -403,14 +445,16 @@ def detect_phase_anomalies(
                     f"suggesting rework or unexpected context switch."
                 )
 
-            anomalies.append({
-                "from_phase": prev_name,
-                "to_phase": curr_name,
-                "step_idx": transition_step,
-                "confidence": confidence,
-                "category": category,
-                "explanation": explanation,
-            })
+            anomalies.append(
+                {
+                    "from_phase": prev_name,
+                    "to_phase": curr_name,
+                    "step_idx": transition_step,
+                    "confidence": confidence,
+                    "category": category,
+                    "explanation": explanation,
+                }
+            )
 
     return anomalies
 
@@ -418,6 +462,7 @@ def detect_phase_anomalies(
 # ---------------------------------------------------------------------------
 # 4. Plan Progress Analysis (TodoWrite tracking)
 # ---------------------------------------------------------------------------
+
 
 def extract_plan_history(steps: list[dict]) -> list[dict]:
     """Extract plan snapshots from TodoWrite tool calls.
@@ -439,8 +484,7 @@ def extract_plan_history(steps: list[dict]) -> list[dict]:
             if not todos:
                 continue
             items = [
-                {"content": t.get("content", ""), "status": t.get("status", "?")}
-                for t in todos if isinstance(t, dict)
+                {"content": t.get("content", ""), "status": t.get("status", "?")} for t in todos if isinstance(t, dict)
             ]
             history.append({"step": s.get("index", 0), "items": items})
     return history
@@ -463,27 +507,31 @@ def detect_plan_phases(plan_history: list[dict]) -> list[dict]:
         new_contents = {item["content"] for item in snapshot["items"]}
         if i > 0 and current_contents and not current_contents & new_contents:
             # Complete content change — new phase
-            phases.append({
-                "phase_index": len(phases),
-                "start_snapshot": phase_start,
-                "end_snapshot": i - 1,
-                "start_step": plan_history[phase_start]["step"],
-                "end_step": plan_history[i - 1]["step"],
-                "item_count": len(current_contents),
-            })
+            phases.append(
+                {
+                    "phase_index": len(phases),
+                    "start_snapshot": phase_start,
+                    "end_snapshot": i - 1,
+                    "start_step": plan_history[phase_start]["step"],
+                    "end_step": plan_history[i - 1]["step"],
+                    "item_count": len(current_contents),
+                }
+            )
             phase_start = i
         current_contents = new_contents
 
     # Final phase
     if plan_history:
-        phases.append({
-            "phase_index": len(phases),
-            "start_snapshot": phase_start,
-            "end_snapshot": len(plan_history) - 1,
-            "start_step": plan_history[phase_start]["step"],
-            "end_step": plan_history[-1]["step"],
-            "item_count": len(current_contents),
-        })
+        phases.append(
+            {
+                "phase_index": len(phases),
+                "start_snapshot": phase_start,
+                "end_snapshot": len(plan_history) - 1,
+                "start_step": plan_history[phase_start]["step"],
+                "end_step": plan_history[-1]["step"],
+                "item_count": len(current_contents),
+            }
+        )
 
     return phases
 
@@ -539,6 +587,7 @@ def compute_plan_metrics(plan_history: list[dict]) -> dict:
 # 5. Sub-Agent Delegation Analysis
 # ---------------------------------------------------------------------------
 
+
 def _get_step_info(step: dict, trajectory: list[dict]) -> dict:
     """Retrieve the trajectory 'info' dict corresponding to a parsed step.
 
@@ -554,7 +603,8 @@ def _get_step_info(step: dict, trajectory: list[dict]) -> dict:
 
 
 def extract_subagent_sessions(
-    steps: list[dict], trajectory: list[dict],
+    steps: list[dict],
+    trajectory: list[dict],
 ) -> list[dict]:
     """Identify sub-agent sessions by grouping consecutive isSubAgent steps.
 
@@ -627,7 +677,8 @@ def extract_subagent_sessions(
 
 
 def compute_subagent_metrics(
-    sessions: list[dict], steps: list[dict],
+    sessions: list[dict],
+    steps: list[dict],
 ) -> list[dict]:
     """Compute per-session metrics: tokens, tools, duration."""
     results = []
@@ -641,12 +692,14 @@ def compute_subagent_metrics(
         durations = [s["duration"] for s in session_steps if s.get("duration") is not None]
         total_duration = sum(durations)
 
-        results.append({
-            **session,
-            "total_tokens": total_tokens,
-            "total_tools": total_tools,
-            "total_duration": round(total_duration, 2),
-        })
+        results.append(
+            {
+                **session,
+                "total_tokens": total_tokens,
+                "total_tools": total_tools,
+                "total_duration": round(total_duration, 2),
+            }
+        )
     return results
 
 
@@ -659,21 +712,55 @@ _SHELL_PUNCTUATION = ";&|()\n"
 _WRAPPER_OPTIONS_WITH_VALUES = {
     "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
     "git": {
-        "-C", "-c", "--git-dir", "--work-tree", "--namespace",
-        "--super-prefix", "--config-env",
+        "-C",
+        "-c",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--super-prefix",
+        "--config-env",
     },
     "sudo": {
-        "-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt",
-        "-C", "--close-from", "-r", "--role", "-t", "--type", "-T",
-        "--command-timeout", "-D", "--chdir", "-R", "--chroot", "-U",
+        "-u",
+        "--user",
+        "-g",
+        "--group",
+        "-h",
+        "--host",
+        "-p",
+        "--prompt",
+        "-C",
+        "--close-from",
+        "-r",
+        "--role",
+        "-t",
+        "--type",
+        "-T",
+        "--command-timeout",
+        "-D",
+        "--chdir",
+        "-R",
+        "--chroot",
+        "-U",
         "--other-user",
     },
     "time": {"-f", "--format", "-o", "--output"},
     "nice": {"-n", "--adjustment"},
     "timeout": {"-k", "--kill-after", "-s", "--signal"},
     "xargs": {
-        "-a", "--arg-file", "-E", "--eof", "-I", "--replace", "-L",
-        "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-s",
+        "-a",
+        "--arg-file",
+        "-E",
+        "--eof",
+        "-I",
+        "--replace",
+        "-L",
+        "--max-lines",
+        "-n",
+        "--max-args",
+        "-P",
+        "--max-procs",
+        "-s",
         "--max-chars",
     },
 }
@@ -916,13 +1003,14 @@ def detect_tool_selection_antipatterns(steps: list[dict]) -> list[dict]:
     Returns list of flagged steps.
     """
     import re
+
     # Only flag commands where sed/cat/head IS the primary command reading a file,
     # not when used in pipes (e.g., "grep ... | head -20" is legitimate).
     _BASH_READ_PATTERNS = [
-        re.compile(r"^sed\s+-n\s+'"),          # sed as primary command
+        re.compile(r"^sed\s+-n\s+'"),  # sed as primary command
         re.compile(r"^cat\s+[\"']?[/\\a-zA-Z]"),  # cat as primary command
-        re.compile(r"^head\s+-[n0-9]"),        # head as primary command
-        re.compile(r"^tail\s+-[n0-9]"),        # tail as primary command
+        re.compile(r"^head\s+-[n0-9]"),  # head as primary command
+        re.compile(r"^tail\s+-[n0-9]"),  # tail as primary command
     ]
 
     flagged: list[dict] = []
@@ -936,11 +1024,13 @@ def detect_tool_selection_antipatterns(steps: list[dict]) -> list[dict]:
             cmd = inp.get("command", "") if isinstance(inp, dict) else ""
             for pattern in _BASH_READ_PATTERNS:
                 if pattern.search(cmd):
-                    flagged.append({
-                        "step": s.get("index", 0),
-                        "command": cmd[:80],
-                        "pattern": pattern.pattern,
-                    })
+                    flagged.append(
+                        {
+                            "step": s.get("index", 0),
+                            "command": cmd[:80],
+                            "pattern": pattern.pattern,
+                        }
+                    )
                     break
     return flagged
 
@@ -958,6 +1048,7 @@ def load_step_labels(labeled_json_path: str) -> dict[int, dict[str, str]]:
     Gracefully returns an empty dict on failure.
     """
     import json
+
     try:
         with open(labeled_json_path, encoding="utf-8") as f:
             data = json.load(f)
@@ -1012,11 +1103,17 @@ def detect_semantic_antipatterns(
             labeled_seq.append((idx, phase, action))
 
     if not labeled_seq:
-        return {k: [] for k in (
-            "phase_oscillation", "premature_implementation",
-            "semantic_fruitless_exploration", "validation_avoidance",
-            "debug_without_hypothesis", "semantic_plan_stall",
-        )}
+        return {
+            k: []
+            for k in (
+                "phase_oscillation",
+                "premature_implementation",
+                "semantic_fruitless_exploration",
+                "validation_avoidance",
+                "debug_without_hypothesis",
+                "semantic_plan_stall",
+            )
+        }
 
     results: dict[str, list[dict]] = {
         "phase_oscillation": [],
@@ -1032,13 +1129,12 @@ def detect_semantic_antipatterns(
     phase_seq = [(idx, phase) for idx, phase, _ in labeled_seq]
     if len(phase_seq) >= 4:
         for i in range(len(phase_seq) - 3):
-            window = phase_seq[i:i + 6]
+            window = phase_seq[i : i + 6]
             phases_in_window = [p for _, p in window]
             unique_phases = set(phases_in_window)
             if len(unique_phases) == 2:
                 transitions = sum(
-                    1 for j in range(len(phases_in_window) - 1)
-                    if phases_in_window[j] != phases_in_window[j + 1]
+                    1 for j in range(len(phases_in_window) - 1) if phases_in_window[j] != phases_in_window[j + 1]
                 )
                 if transitions >= 3:
                     p1, p2 = sorted(unique_phases)
@@ -1046,12 +1142,14 @@ def detect_semantic_antipatterns(
                     # phase" — not a direction check (the two phases here are
                     # always distinct, so ranked phases always differ).
                     is_regression = p1 in _PHASE_RANK or p2 in _PHASE_RANK
-                    results["phase_oscillation"].append({
-                        "phases": [p1, p2],
-                        "step_range": [window[0][0], window[-1][0]],
-                        "transitions": transitions,
-                        "involves_regression": is_regression,
-                    })
+                    results["phase_oscillation"].append(
+                        {
+                            "phases": [p1, p2],
+                            "step_range": [window[0][0], window[-1][0]],
+                            "transitions": transitions,
+                            "involves_regression": is_regression,
+                        }
+                    )
                     break  # report first occurrence only
 
     # --- 2. Premature implementation ---
@@ -1072,15 +1170,17 @@ def detect_semantic_antipatterns(
             )
             followed_by_debug = False
             if impl_pos is not None:
-                for _, phase, _ in labeled_seq[impl_pos + 1:impl_pos + 6]:
+                for _, phase, _ in labeled_seq[impl_pos + 1 : impl_pos + 6]:
                     if phase == "debug":
                         followed_by_debug = True
                         break
-            results["premature_implementation"].append({
-                "first_implement_step": first_impl_idx,
-                "first_plan_step": first_plan_idx,
-                "followed_by_debug": followed_by_debug,
-            })
+            results["premature_implementation"].append(
+                {
+                    "first_implement_step": first_impl_idx,
+                    "first_plan_step": first_plan_idx,
+                    "followed_by_debug": followed_by_debug,
+                }
+            )
 
     # --- 3. Semantic fruitless exploration ---
     # Consecutive understand/code_reading or understand/file_discovery steps
@@ -1115,37 +1215,45 @@ def detect_semantic_antipatterns(
             if len(current_reading_run) >= 5:
                 unused = [(idx, t) for idx, t in current_reading_run if t not in impl_targets]
                 if len(unused) >= 4:
-                    results["semantic_fruitless_exploration"].append({
-                        "step_range": [current_reading_run[0][0], current_reading_run[-1][0]],
-                        "files_read": len(current_reading_run),
-                        "files_unused": len(unused),
-                    })
+                    results["semantic_fruitless_exploration"].append(
+                        {
+                            "step_range": [current_reading_run[0][0], current_reading_run[-1][0]],
+                            "files_read": len(current_reading_run),
+                            "files_unused": len(unused),
+                        }
+                    )
             current_reading_run = []
 
     if len(current_reading_run) >= 5:
         unused = [(idx, t) for idx, t in current_reading_run if t not in impl_targets]
         if len(unused) >= 4:
-            results["semantic_fruitless_exploration"].append({
-                "step_range": [current_reading_run[0][0], current_reading_run[-1][0]],
-                "files_read": len(current_reading_run),
-                "files_unused": len(unused),
-            })
+            results["semantic_fruitless_exploration"].append(
+                {
+                    "step_range": [current_reading_run[0][0], current_reading_run[-1][0]],
+                    "files_read": len(current_reading_run),
+                    "files_unused": len(unused),
+                }
+            )
 
     # --- 4. Validation avoidance ---
     impl_count = sum(1 for _, p, _ in labeled_seq if p == "implement")
     validate_count = sum(1 for _, p, _ in labeled_seq if p == "validate")
     if impl_count >= 5 and validate_count == 0:
-        results["validation_avoidance"].append({
-            "implement_steps": impl_count,
-            "validate_steps": 0,
-            "ratio": None,
-        })
+        results["validation_avoidance"].append(
+            {
+                "implement_steps": impl_count,
+                "validate_steps": 0,
+                "ratio": None,
+            }
+        )
     elif impl_count >= 8 and validate_count > 0 and impl_count / validate_count > 5:
-        results["validation_avoidance"].append({
-            "implement_steps": impl_count,
-            "validate_steps": validate_count,
-            "ratio": round(impl_count / validate_count, 1),
-        })
+        results["validation_avoidance"].append(
+            {
+                "implement_steps": impl_count,
+                "validate_steps": validate_count,
+                "ratio": round(impl_count / validate_count, 1),
+            }
+        )
 
     # --- 5. Debug without hypothesis ---
     # ≥3 consecutive debug_reproduction without debug_root_cause or debug_hypothesis_test
@@ -1161,18 +1269,22 @@ def detect_semantic_antipatterns(
             repro_start = None
         elif phase != "debug":
             if repro_run >= 3:
-                results["debug_without_hypothesis"].append({
-                    "step_range": [repro_start, idx],
-                    "reproduction_count": repro_run,
-                })
+                results["debug_without_hypothesis"].append(
+                    {
+                        "step_range": [repro_start, idx],
+                        "reproduction_count": repro_run,
+                    }
+                )
             repro_run = 0
             repro_start = None
 
     if repro_run >= 3:
-        results["debug_without_hypothesis"].append({
-            "step_range": [repro_start, labeled_seq[-1][0]],
-            "reproduction_count": repro_run,
-        })
+        results["debug_without_hypothesis"].append(
+            {
+                "step_range": [repro_start, labeled_seq[-1][0]],
+                "reproduction_count": repro_run,
+            }
+        )
 
     # --- 6. Semantic plan stall ---
     # ≥5 consecutive plan-phase steps with no implement step between them
@@ -1185,19 +1297,23 @@ def detect_semantic_antipatterns(
             plan_run += 1
         elif phase == "implement":
             if plan_run >= 5:
-                results["semantic_plan_stall"].append({
-                    "step_range": [plan_start, idx],
-                    "plan_steps": plan_run,
-                })
+                results["semantic_plan_stall"].append(
+                    {
+                        "step_range": [plan_start, idx],
+                        "plan_steps": plan_run,
+                    }
+                )
             plan_run = 0
             plan_start = None
         else:
             pass  # non-plan, non-implement phases don't break the stall
 
     if plan_run >= 5:
-        results["semantic_plan_stall"].append({
-            "step_range": [plan_start, labeled_seq[-1][0]],
-            "plan_steps": plan_run,
-        })
+        results["semantic_plan_stall"].append(
+            {
+                "step_range": [plan_start, labeled_seq[-1][0]],
+                "plan_steps": plan_run,
+            }
+        )
 
     return results

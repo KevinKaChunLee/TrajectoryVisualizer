@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOLS
+
 # Shared single-source helpers (C8/C9): validation-command detection lives in
 # insight/patterns.py and bash path extraction in insight/diagnostics.py (the
 # quoted + Windows-drive-aware implementation). Both modules import only
@@ -17,11 +18,12 @@ from trajviz.insight.patterns import _is_validation_command
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ActionCost:
-    tokens: int = 0            # original step-level total tokens (for reference)
+    tokens: int = 0  # original step-level total tokens (for reference)
     latency_ms: int = 0
-    token_share: int = 0       # this action's share of step tokens (step_tokens / N)
+    token_share: int = 0  # this action's share of step tokens (step_tokens / N)
 
 
 @dataclass
@@ -38,19 +40,20 @@ class CanonicalAction:
 
     Evaluative judgments (was this action correct?) require anchor/oracle grounding.
     """
+
     step_index: int = 0
-    action_type: str = ""       # FILE_READ | FILE_WRITE | SEARCH | COMMAND | AGENT_SPAWN | REASON
-    target: str = ""            # normalized path, command, or pattern
-    tool: str = ""              # original tool name
-    tool_call_id: str = ""      # stable ID from parsed tool call (for 1:1 failure attribution)
+    action_type: str = ""  # FILE_READ | FILE_WRITE | SEARCH | COMMAND | AGENT_SPAWN | REASON
+    target: str = ""  # normalized path, command, or pattern
+    tool: str = ""  # original tool name
+    tool_call_id: str = ""  # stable ID from parsed tool call (for 1:1 failure attribution)
     args: dict = field(default_factory=dict)
     start_time: int | float | None = None  # epoch ms (from tool call or step timing)
-    end_time: int | float | None = None    # epoch ms
-    status: str = ""            # raw tool status
+    end_time: int | float | None = None  # epoch ms
+    status: str = ""  # raw tool status
     cost: ActionCost = field(default_factory=ActionCost)
     effect_label: str = "unknown"  # survived | failed | reverted | justified | unknown
     effect_detail: dict = field(default_factory=dict)
-    phase_label: str | None = None   # LLM-derived: understand | plan | implement | debug | validate | report
+    phase_label: str | None = None  # LLM-derived: understand | plan | implement | debug | validate | report
     action_label: str | None = None  # LLM-derived fine-grained action (e.g., code_reading, implement_runtime_logic)
 
 
@@ -70,9 +73,17 @@ _NAVIGATION_COMMANDS = {"cd", "pwd", "ls", "echo", "export", "set", "source"}
 # Only explicit in-place flags (see _is_in_place_edit) make them writes,
 # mirroring the Codex mapping in insight/loaders.py.
 _FUZZY_KEYWORDS: dict[str, str] = {
-    "grep": "SEARCH", "rg": "SEARCH", "ag": "SEARCH", "find": "SEARCH",
-    "cat": "FILE_READ", "head": "FILE_READ", "tail": "FILE_READ", "less": "FILE_READ",
-    "sed": "FILE_READ", "awk": "FILE_READ", "tee": "FILE_WRITE",
+    "grep": "SEARCH",
+    "rg": "SEARCH",
+    "ag": "SEARCH",
+    "find": "SEARCH",
+    "cat": "FILE_READ",
+    "head": "FILE_READ",
+    "tail": "FILE_READ",
+    "less": "FILE_READ",
+    "sed": "FILE_READ",
+    "awk": "FILE_READ",
+    "tee": "FILE_WRITE",
 }
 
 _SED_IN_PLACE_RE = re.compile(r"(?:^|\s)(?:-i\S*|--in-place\b)")
@@ -101,6 +112,7 @@ def _normalize_target(path: str) -> str:
     if not path:
         return path
     import posixpath
+
     p = path.replace("\\", "/")
     if len(p) >= 2 and p[1] == ":" and p[0].isalpha():
         p = p[2:]
@@ -121,6 +133,7 @@ def _extract_base_command(command: str) -> str:
 # ---------------------------------------------------------------------------
 # Canonicalization
 # ---------------------------------------------------------------------------
+
 
 def canonicalize_steps(
     steps: list[dict],
@@ -154,19 +167,21 @@ def canonicalize_steps(
                 latency = 0
                 if isinstance(t_created, (int, float)) and isinstance(t_completed, (int, float)):
                     latency = max(0, int(t_completed - t_created))
-                actions.append(CanonicalAction(
-                    step_index=step_idx,
-                    action_type="REASON",
-                    target="",
-                    tool=ptype,
-                    args={},
-                    status="",
-                    cost=ActionCost(tokens=step_tokens, latency_ms=latency, token_share=0),
-                    effect_label="unknown",
-                    effect_detail={},
-                    phase_label=label.get("phase"),
-                    action_label=label.get("action"),
-                ))
+                actions.append(
+                    CanonicalAction(
+                        step_index=step_idx,
+                        action_type="REASON",
+                        target="",
+                        tool=ptype,
+                        args={},
+                        status="",
+                        cost=ActionCost(tokens=step_tokens, latency_ms=latency, token_share=0),
+                        effect_label="unknown",
+                        effect_detail={},
+                        phase_label=label.get("phase"),
+                        action_label=label.get("action"),
+                    )
+                )
                 break  # One REASON per step max
 
         # Tool calls → typed actions
@@ -184,11 +199,11 @@ def canonicalize_steps(
 
             if tool_name in _READ_TOOLS:
                 action_type = "FILE_READ"
-                target = _normalize_target(
-                    inp.get("file_path", "") or inp.get("filePath", ""))
+                target = _normalize_target(inp.get("file_path", "") or inp.get("filePath", ""))
             elif tool_name in _WRITE_TOOLS:
                 action_type = "FILE_WRITE"
                 from trajviz.tool_vocab import write_target_path
+
                 target = _normalize_target(write_target_path(inp))
             elif tool_name in _SEARCH_TOOLS:
                 action_type = "SEARCH"
@@ -242,22 +257,24 @@ def canonicalize_steps(
                 if isinstance(dm, (int, float)) and dm > 0:
                     latency_ms = int(dm)
 
-            actions.append(CanonicalAction(
-                step_index=step_idx,
-                action_type=action_type,
-                target=target,
-                tool=tool_name,
-                tool_call_id=tc_id,
-                args=inp,
-                start_time=ts if isinstance(ts, (int, float)) else None,
-                end_time=te if isinstance(te, (int, float)) else None,
-                status=status,
-                cost=ActionCost(tokens=step_tokens, latency_ms=latency_ms, token_share=0),
-                effect_label="unknown",
-                effect_detail={},
-                phase_label=label.get("phase"),
-                action_label=label.get("action"),
-            ))
+            actions.append(
+                CanonicalAction(
+                    step_index=step_idx,
+                    action_type=action_type,
+                    target=target,
+                    tool=tool_name,
+                    tool_call_id=tc_id,
+                    args=inp,
+                    start_time=ts if isinstance(ts, (int, float)) else None,
+                    end_time=te if isinstance(te, (int, float)) else None,
+                    status=status,
+                    cost=ActionCost(tokens=step_tokens, latency_ms=latency_ms, token_share=0),
+                    effect_label="unknown",
+                    effect_detail={},
+                    phase_label=label.get("phase"),
+                    action_label=label.get("action"),
+                )
+            )
 
         # Distribute token_share equally across non-REASON actions in this step.
         # If a step has only REASON actions (no tool calls), the REASON action
@@ -279,6 +296,7 @@ def canonicalize_steps(
 # ---------------------------------------------------------------------------
 # Effect labeling
 # ---------------------------------------------------------------------------
+
 
 def _find_own_tool_call(
     a: CanonicalAction,
@@ -306,10 +324,7 @@ def _find_own_tool_call(
             tc_id = tc.get("tool_id", "") or tc.get("id", "") or ""
             if tc_id == a.tool_call_id:
                 return tc
-    ordinal = sum(
-        1 for prev in actions[:action_index]
-        if prev.step_index == a.step_index and prev.tool == a.tool
-    )
+    ordinal = sum(1 for prev in actions[:action_index] if prev.step_index == a.step_index and prev.tool == a.tool)
     seen = 0
     for tc in tool_calls:
         if tc.get("tool_name") != a.tool:
@@ -335,19 +350,20 @@ def assign_effect_labels(
         target_files = {_normalize_target(f) for f in anchor_files}
     else:
         from trajviz.insight.diagnostics import identify_target_files
+
         target_files = {_normalize_target(f) for f in identify_target_files(steps)}
 
     # Collect test/interface files for justification
     test_patterns = {"test_", "_test.", ".test.", "spec_", "_spec.", ".spec.", "tests/", "__tests__/"}
     import_files: set[str] = set()  # files imported by target files
-    error_files: set[str] = set()   # files referenced in errors
+    error_files: set[str] = set()  # files referenced in errors
 
     # Scan tool call outputs for import/require references to build import_files
     _IMPORT_RE = re.compile(
         r"""(?:import\s+.*?from\s+['"]([^'"]+)['"]"""  # JS/TS import from
-        r"""|require\s*\(\s*['"]([^'"]+)['"]"""          # JS require
-        r"""|from\s+([\w.]+)\s+import"""                 # Python from X import
-        r"""|import\s+([\w.]+))""",                      # Python import X
+        r"""|require\s*\(\s*['"]([^'"]+)['"]"""  # JS require
+        r"""|from\s+([\w.]+)\s+import"""  # Python from X import
+        r"""|import\s+([\w.]+))""",  # Python import X
         re.MULTILINE,
     )
     for step in steps:
@@ -447,9 +463,9 @@ def assign_effect_labels(
                 a.effect_detail["reason"] = "error_reference"
             elif any(
                 nt.endswith(imp)
-                or (nt.rsplit("/", 1)[-1].split(".")[0]
-                    and imp.endswith(nt.rsplit("/", 1)[-1].split(".")[0]))
-                for imp in import_files if imp
+                or (nt.rsplit("/", 1)[-1].split(".")[0] and imp.endswith(nt.rsplit("/", 1)[-1].split(".")[0]))
+                for imp in import_files
+                if imp
             ):
                 a.effect_label = "justified"
                 a.effect_detail["reason"] = "imported_by_target"
@@ -582,6 +598,7 @@ def semantic_equivalent(
 # ---------------------------------------------------------------------------
 # Composite command reduction
 # ---------------------------------------------------------------------------
+
 
 def reduce_composite_command(action: CanonicalAction) -> CanonicalAction | None:
     """Attempt to reduce a COMMAND action to a finer-grained action type.

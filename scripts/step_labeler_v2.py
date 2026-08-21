@@ -45,9 +45,7 @@ class OutputSafetyError(ValueError):
     """Raised when label output would replace the source trajectory."""
 
 
-def _ensure_output_is_not_input(
-    trajectory_path: str | Path, output_path: str | Path
-) -> None:
+def _ensure_output_is_not_input(trajectory_path: str | Path, output_path: str | Path) -> None:
     _common.ensure_output_does_not_overwrite(
         output_path,
         [trajectory_path],
@@ -80,9 +78,7 @@ def _is_empty_assistant_step(step: dict) -> bool:
     has_text = bool((step.get("text_preview", "") or "").strip())
     has_tools = bool(step.get("tool_calls"))
     has_reasoning = any(
-        isinstance(part, dict)
-        and part.get("type") == "reasoning"
-        and part.get("text")
+        isinstance(part, dict) and part.get("type") == "reasoning" and part.get("text")
         for part in step.get("parts", [])
     )
     return not (has_text or has_tools or has_reasoning)
@@ -114,11 +110,7 @@ def _serialize_step(
         "time_completed_ms": step.get("time_completed_ms"),
         "duration_s": step.get("duration"),
         "tokens_total": tokens.get("total", 0),
-        "tool_calls": [
-            tc.get("tool_name", "?")
-            for tc in step.get("tool_calls", [])
-            if isinstance(tc, dict)
-        ],
+        "tool_calls": [tc.get("tool_name", "?") for tc in step.get("tool_calls", []) if isinstance(tc, dict)],
         "finish": step.get("finish", ""),
         "agent": step.get("agent", "") or step.get("agent_id", ""),
         "model_id": step.get("model_id", ""),
@@ -163,15 +155,10 @@ def label_trajectory(
 
     print(f"Loading trajectory: {trajectory_path}", file=sys.stderr)
     all_steps = load_all_steps(trajectory_path)
-    assistant_count = sum(
-        1 for step in all_steps if str(step.get("role", "")).lower() == "assistant"
-    )
-    user_count = sum(
-        1 for step in all_steps if str(step.get("role", "")).lower() == "user"
-    )
+    assistant_count = sum(1 for step in all_steps if str(step.get("role", "")).lower() == "assistant")
+    user_count = sum(1 for step in all_steps if str(step.get("role", "")).lower() == "user")
     print(
-        f"Found {len(all_steps)} total steps "
-        f"({assistant_count} assistant, {user_count} user)",
+        f"Found {len(all_steps)} total steps ({assistant_count} assistant, {user_count} user)",
         file=sys.stderr,
     )
 
@@ -189,8 +176,7 @@ def label_trajectory(
             label_source = "default"
             default_count += 1
             print(
-                f"Labeling index {step_index} (user)... "
-                f"{label['phase']}/{label['action']} (default)",
+                f"Labeling index {step_index} (user)... {label['phase']}/{label['action']} (default)",
                 file=sys.stderr,
             )
         elif role != "assistant":
@@ -198,15 +184,13 @@ def label_trajectory(
             label_source = "fallback"
             default_count += 1
             print(
-                f"Labeling index {step_index} ({role})... "
-                "unknown/unknown (fallback)",
+                f"Labeling index {step_index} ({role})... unknown/unknown (fallback)",
                 file=sys.stderr,
             )
         else:
             assistant_seen += 1
             print(
-                f"Labeling assistant {assistant_seen}/{assistant_count} "
-                f"(idx {step_index})...",
+                f"Labeling assistant {assistant_seen}/{assistant_count} (idx {step_index})...",
                 file=sys.stderr,
                 end=" ",
                 flush=True,
@@ -218,9 +202,7 @@ def label_trajectory(
                 assistant_unknown += 1
                 print("unknown/unknown (empty step)", file=sys.stderr)
             else:
-                user_message = v1.build_step_message(
-                    step, max_chars=max_content_chars
-                )
+                user_message = v1.build_step_message(step, max_chars=max_content_chars)
                 label = None
                 for attempt in range(2):
                     try:
@@ -255,11 +237,7 @@ def label_trajectory(
 
                 if label is None:
                     label = dict(OTHER_DEFAULT_LABEL)
-                label_source = (
-                    "llm"
-                    if label["phase"] != "unknown" and label["action"] != "unknown"
-                    else "fallback"
-                )
+                label_source = "llm" if label["phase"] != "unknown" and label["action"] != "unknown" else "fallback"
                 if label_source == "fallback":
                     assistant_unknown += 1
                 print(f"{label['phase']}/{label['action']}", file=sys.stderr)
@@ -282,9 +260,7 @@ def label_trajectory(
     if assistant_only:
         labeled_steps = [s for s in labeled_steps if s.get("role") == "assistant"]
         if len(labeled_steps) != assistant_count:
-            raise RuntimeError(
-                "Internal error: assistant-only output lost assistant records"
-            )
+            raise RuntimeError("Internal error: assistant-only output lost assistant records")
 
     output = {
         "schema_version": "trajectory_labels.v2",
@@ -320,10 +296,7 @@ def main() -> None:
     # Resolve .env config at CLI entry, not at module import (see step_labeler).
     v1.load_env_files()
     parser = argparse.ArgumentParser(
-        description=(
-            "Label assistant trajectory steps with an LLM and emit a label "
-            "record for every original index."
-        )
+        description=("Label assistant trajectory steps with an LLM and emit a label record for every original index.")
     )
     parser.add_argument("input", help="Path to trajectory file (JSON or Lingxi .log)")
     parser.add_argument(

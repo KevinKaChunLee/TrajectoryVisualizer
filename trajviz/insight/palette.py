@@ -2,16 +2,21 @@
 
 # Token category colors — used consistently across all token-related charts.
 TOKEN_COLORS = {
-    "fresh_input": "#3b82f6",   # blue
-    "cache_read": "#34d399",    # emerald (stronger than previous mint)
-    "cache_write": "#14b8a6",   # teal — cache-family, distinct from cache_read
-    "output": "#f59e0b",        # amber
-    "reasoning": "#8b5cf6",     # violet
+    "fresh_input": "#3b82f6",  # blue
+    "cache_read": "#34d399",  # emerald (stronger than previous mint)
+    "cache_write": "#14b8a6",  # teal — cache-family, distinct from cache_read
+    "output": "#f59e0b",  # amber
+    "reasoning": "#8b5cf6",  # violet
 }
 
 # Session/lane color cycle shared by the subagent swimlane and timeline charts.
 SESSION_COLORS = [
-    "#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2",
+    "#3b82f6",
+    "#8b5cf6",
+    "#059669",
+    "#d97706",
+    "#e11d48",
+    "#0891b2",
 ]
 
 # Agent color palette — first entry is "main", rest cycle for sub-agents.
@@ -26,43 +31,43 @@ AGENT_COLORS = [
 
 # CSS-variable equivalents for workflow cards (bg, border pairs).
 AGENT_CSS_COLORS = [
-    ("var(--ov-card)", "var(--ov-muted)"),   # main
-    ("#dbeafe", "#2563eb"),                    # blue
-    ("#fae8ff", "#d946ef"),                    # fuchsia
-    ("#d1fae5", "#059669"),                    # emerald
-    ("#ffedd5", "#ea580c"),                    # orange
-    ("#ede9fe", "#8b5cf6"),                    # violet
+    ("var(--ov-card)", "var(--ov-muted)"),  # main
+    ("#dbeafe", "#2563eb"),  # blue
+    ("#fae8ff", "#d946ef"),  # fuchsia
+    ("#d1fae5", "#059669"),  # emerald
+    ("#ffedd5", "#ea580c"),  # orange
+    ("#ede9fe", "#8b5cf6"),  # violet
 ]
 
 # Role colors for step type identification in charts.
 ROLE_COLORS = {
-    "error": "#dc2626",       # red
-    "stop": "#059669",        # green
-    "tool": "#d97706",        # amber/orange
-    "reasoning": "#7c3aed",   # purple
-    "user": "#1e40af",        # dark blue
-    "assistant": "#92400e",   # brown
-    "default": "#6b7280",     # grey
+    "error": "#dc2626",  # red
+    "stop": "#059669",  # green
+    "tool": "#d97706",  # amber/orange
+    "reasoning": "#7c3aed",  # purple
+    "user": "#1e40af",  # dark blue
+    "assistant": "#92400e",  # brown
+    "default": "#6b7280",  # grey
 }
 
 # Tool outcome colors.
 TOOL_OUTCOME_COLORS = {
-    "success": "#059669",     # green
-    "failure": "#dc2626",     # red
+    "success": "#059669",  # green
+    "failure": "#dc2626",  # red
 }
 
 # Label taxonomy phase colors — maps 6 labeling phases to colors.
 LABEL_PHASE_COLORS: dict[str, str] = {
-    "understand": "#3b82f6",   # blue
-    "plan":       "#8b5cf6",   # violet
-    "implement":  "#059669",   # emerald
-    "debug":      "#dc2626",   # red
-    "validate":   "#f59e0b",   # amber
-    "report":     "#ec4899",   # pink
+    "understand": "#3b82f6",  # blue
+    "plan": "#8b5cf6",  # violet
+    "implement": "#059669",  # emerald
+    "debug": "#dc2626",  # red
+    "validate": "#f59e0b",  # amber
+    "report": "#ec4899",  # pink
 }
 
 # General chart accent color.
-CHART_ACCENT = "#6366f1"      # indigo (for single-series bar charts)
+CHART_ACCENT = "#6366f1"  # indigo (for single-series bar charts)
 
 # Plotly dark-mode layout template — transparent bg with light text/gridlines.
 # Apply via fig.update_layout(**PLOTLY_DARK_TEMPLATE) when dark mode is active.

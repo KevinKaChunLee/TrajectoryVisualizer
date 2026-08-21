@@ -80,12 +80,21 @@ class AgentGroupingTests(unittest.TestCase):
     def test_main_vs_opencode_subagent_vs_codearts_session(self):
         steps = [
             _step(0, role="user", is_sub_agent=False),
-            _step(1, agent="build", is_sub_agent=False,
-                  tokens=_tokens(total=80, inp=60, out=20, cache_read=0)),
-            _step(2, agent="explore (subagent)", is_sub_agent=True, session_id="ses_child",
-                  tokens=_tokens(total=40, inp=30, out=10, cache_read=0)),
-            _step(3, agent="Agent", is_sub_agent=True, session_id="ses_ca",
-                  tokens=_tokens(total=50, inp=40, out=10, cache_read=0)),
+            _step(1, agent="build", is_sub_agent=False, tokens=_tokens(total=80, inp=60, out=20, cache_read=0)),
+            _step(
+                2,
+                agent="explore (subagent)",
+                is_sub_agent=True,
+                session_id="ses_child",
+                tokens=_tokens(total=40, inp=30, out=10, cache_read=0),
+            ),
+            _step(
+                3,
+                agent="Agent",
+                is_sub_agent=True,
+                session_id="ses_ca",
+                tokens=_tokens(total=50, inp=40, out=10, cache_read=0),
+            ),
         ]
         series = context_pressure_series(steps)
         ids = [a["agent_id"] for a in series["agents"]]
@@ -103,8 +112,9 @@ class AgentGroupingTests(unittest.TestCase):
     def test_dropdown_choices_include_all_and_main(self):
         steps = [
             _step(0, is_sub_agent=False, tokens=_tokens(total=10, inp=10)),
-            _step(1, agent="explore (subagent)", is_sub_agent=True, session_id="ses_x",
-                  tokens=_tokens(total=10, inp=10)),
+            _step(
+                1, agent="explore (subagent)", is_sub_agent=True, session_id="ses_x", tokens=_tokens(total=10, inp=10)
+            ),
         ]
         choices = pressure_agent_choices(steps)
         values = [value for _, value in choices]
@@ -128,13 +138,10 @@ class CompactionDetectionTests(unittest.TestCase):
     def test_compaction_part_after_is_next_occupancy_not_zero(self):
         steps = [
             _step(0, session_id="s", tokens=_tokens(total=100, inp=100)),
-            _step(1, role="user", session_id="s",
-                  parts=[{"type": "compaction", "summary": "prior work"}]),
+            _step(1, role="user", session_id="s", parts=[{"type": "compaction", "summary": "prior work"}]),
             _step(2, session_id="s", tokens=_tokens(total=20, inp=20)),
         ]
-        part = next(
-            e for e in detect_compaction_events(steps) if e["kind"] == "compaction_part"
-        )
+        part = next(e for e in detect_compaction_events(steps) if e["kind"] == "compaction_part")
         self.assertEqual(part["occupancy_before"], 100)
         self.assertEqual(part["occupancy_after"], 20)
         self.assertEqual(part["dropped"], 80)
@@ -167,9 +174,13 @@ class CompactionDetectionTests(unittest.TestCase):
 
     def test_tool_time_compacted(self):
         steps = [
-            _step(0, tokens=_tokens(total=50, inp=50), tool_calls=[
-                {"tool_name": "read", "time_compacted": 1_700_000_000_000},
-            ]),
+            _step(
+                0,
+                tokens=_tokens(total=50, inp=50),
+                tool_calls=[
+                    {"tool_name": "read", "time_compacted": 1_700_000_000_000},
+                ],
+            ),
         ]
         kinds = [e["kind"] for e in detect_compaction_events(steps)]
         self.assertEqual(kinds, ["tool_prune"])
@@ -199,11 +210,21 @@ class CompactionDetectionTests(unittest.TestCase):
     def test_no_false_drop_when_agents_interleave(self):
         steps = [
             _step(0, is_sub_agent=False, tokens=_tokens(total=10_000, inp=10_000)),
-            _step(1, agent="explore (subagent)", is_sub_agent=True, session_id="ses_child",
-                  tokens=_tokens(total=1_000, inp=1_000)),
+            _step(
+                1,
+                agent="explore (subagent)",
+                is_sub_agent=True,
+                session_id="ses_child",
+                tokens=_tokens(total=1_000, inp=1_000),
+            ),
             _step(2, is_sub_agent=False, tokens=_tokens(total=11_000, inp=11_000)),
-            _step(3, agent="explore (subagent)", is_sub_agent=True, session_id="ses_child",
-                  tokens=_tokens(total=1_200, inp=1_200)),
+            _step(
+                3,
+                agent="explore (subagent)",
+                is_sub_agent=True,
+                session_id="ses_child",
+                tokens=_tokens(total=1_200, inp=1_200),
+            ),
         ]
         events = detect_compaction_events(steps)
         self.assertFalse(any(e["kind"] == "occupancy_drop" for e in events))
@@ -211,16 +232,11 @@ class CompactionDetectionTests(unittest.TestCase):
     def test_interleaved_opencode_sessions_without_issubagent_are_separate_windows(self):
         """Consolidated OpenCode logs often omit isSubAgent; session_id is the window."""
         steps = [
-            _step(0, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=10_000, inp=10_000)),
-            _step(1, agent="explore", session_id="ses_a",
-                  tokens=_tokens(total=1_000, inp=1_000)),
-            _step(2, agent="explore", session_id="ses_b",
-                  tokens=_tokens(total=2_000, inp=2_000)),
-            _step(3, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=11_000, inp=11_000)),
-            _step(4, agent="explore", session_id="ses_a",
-                  tokens=_tokens(total=1_200, inp=1_200)),
+            _step(0, agent="plan", session_id="ses_plan", tokens=_tokens(total=10_000, inp=10_000)),
+            _step(1, agent="explore", session_id="ses_a", tokens=_tokens(total=1_000, inp=1_000)),
+            _step(2, agent="explore", session_id="ses_b", tokens=_tokens(total=2_000, inp=2_000)),
+            _step(3, agent="plan", session_id="ses_plan", tokens=_tokens(total=11_000, inp=11_000)),
+            _step(4, agent="explore", session_id="ses_a", tokens=_tokens(total=1_200, inp=1_200)),
         ]
         events = detect_compaction_events(steps)
         self.assertFalse(any(e["kind"] == "occupancy_drop" for e in events))
@@ -233,9 +249,13 @@ class CompactionDetectionTests(unittest.TestCase):
 
     def test_compress_step_name(self):
         steps = [
-            _step(0, parts=[
-                {"type": "step_start", "name": "Compact conversation"},
-            ], tokens=_tokens(total=40, inp=40)),
+            _step(
+                0,
+                parts=[
+                    {"type": "step_start", "name": "Compact conversation"},
+                ],
+                tokens=_tokens(total=40, inp=40),
+            ),
         ]
         kinds = [e["kind"] for e in detect_compaction_events(steps)]
         self.assertIn("compress_step", kinds)
@@ -274,8 +294,11 @@ class ParserRoundTripTests(unittest.TestCase):
                         "sessionID": "ses",
                         "summary": True,
                         "tokens": {
-                            "total": 40, "input": 30, "output": 10,
-                            "reasoning": 0, "cache": {"read": 0, "write": 0},
+                            "total": 40,
+                            "input": 30,
+                            "output": 10,
+                            "reasoning": 0,
+                            "cache": {"read": 0, "write": 0},
                         },
                     },
                     "parts": [
@@ -322,8 +345,13 @@ class ChartBuilderTests(unittest.TestCase):
     def test_all_vs_single_agent(self):
         steps = [
             _step(0, is_sub_agent=False, tokens=_tokens(total=100, inp=100)),
-            _step(1, agent="explore (subagent)", is_sub_agent=True, session_id="ses_child",
-                  tokens=_tokens(total=40, inp=40)),
+            _step(
+                1,
+                agent="explore (subagent)",
+                is_sub_agent=True,
+                session_id="ses_child",
+                tokens=_tokens(total=40, inp=40),
+            ),
             _step(2, is_sub_agent=False, tokens=_tokens(total=20, inp=20)),
         ]
         overlay = build_context_pressure_chart(steps, agent_key=PRESSURE_ALL_AGENTS)
@@ -339,12 +367,15 @@ class ChartBuilderTests(unittest.TestCase):
 
     def test_single_agent_occupancy_cliffs_at_compaction(self):
         steps = [
-            _step(0, agent="explore", session_id="ses_a",
-                  tokens=_tokens(total=10_000, inp=10_000)),
-            _step(1, role="user", agent="explore", session_id="ses_a",
-                  parts=[{"type": "compaction", "summary": "prior work"}]),
-            _step(2, agent="explore", session_id="ses_a", summary=True,
-                  tokens=_tokens(total=2_000, inp=2_000)),
+            _step(0, agent="explore", session_id="ses_a", tokens=_tokens(total=10_000, inp=10_000)),
+            _step(
+                1,
+                role="user",
+                agent="explore",
+                session_id="ses_a",
+                parts=[{"type": "compaction", "summary": "prior work"}],
+            ),
+            _step(2, agent="explore", session_id="ses_a", summary=True, tokens=_tokens(total=2_000, inp=2_000)),
         ]
         series = context_pressure_series(steps, agent_key="ses_a")
         ys = [p["occupancy"] for p in series["agents"][0]["points"]]
@@ -353,31 +384,26 @@ class ChartBuilderTests(unittest.TestCase):
         fig = build_context_pressure_chart(steps, agent_key="ses_a")
         occ = next(t for t in fig.data if t.name == "Occupancy")
         occ_ys = list(occ.y)
-        self.assertTrue(
-            any(a == 10_000 and b == 2_000 for a, b in zip(occ_ys, occ_ys[1:], strict=False))
-        )
+        self.assertTrue(any(a == 10_000 and b == 2_000 for a, b in zip(occ_ys, occ_ys[1:], strict=False)))
         self.assertNotEqual(occ.line.color, "#3b82f6")
 
     def test_overlay_uses_distinct_colors_and_per_agent_compaction(self):
         steps = [
-            _step(0, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=10_000, inp=10_000)),
-            _step(1, agent="explore", session_id="ses_a",
-                  tokens=_tokens(total=4_000, inp=4_000)),
-            _step(2, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=2_000, inp=2_000)),
-            _step(3, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=2_100, inp=2_100)),
-            _step(4, role="user", agent="explore", session_id="ses_a",
-                  parts=[{"type": "compaction", "summary": "prior work"}]),
-            _step(5, agent="explore", session_id="ses_a", summary=True,
-                  tokens=_tokens(total=800, inp=800)),
+            _step(0, agent="plan", session_id="ses_plan", tokens=_tokens(total=10_000, inp=10_000)),
+            _step(1, agent="explore", session_id="ses_a", tokens=_tokens(total=4_000, inp=4_000)),
+            _step(2, agent="plan", session_id="ses_plan", tokens=_tokens(total=2_000, inp=2_000)),
+            _step(3, agent="plan", session_id="ses_plan", tokens=_tokens(total=2_100, inp=2_100)),
+            _step(
+                4,
+                role="user",
+                agent="explore",
+                session_id="ses_a",
+                parts=[{"type": "compaction", "summary": "prior work"}],
+            ),
+            _step(5, agent="explore", session_id="ses_a", summary=True, tokens=_tokens(total=800, inp=800)),
         ]
         fig = build_context_pressure_chart(steps, agent_key=PRESSURE_ALL_AGENTS)
-        occupancy_colors = [
-            t.line.color for t in fig.data
-            if t.name in ("plan", "explore") and t.line is not None
-        ]
+        occupancy_colors = [t.line.color for t in fig.data if t.name in ("plan", "explore") and t.line is not None]
         self.assertEqual(len(occupancy_colors), 2)
         self.assertEqual(len(set(occupancy_colors)), 2)
         compact_names = [t.name for t in fig.data if t.name and "compact" in t.name]

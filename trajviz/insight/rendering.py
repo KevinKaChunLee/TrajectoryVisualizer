@@ -90,7 +90,7 @@ def _md_to_html_preview(text: str) -> str:
     parts: list[str] = []
     last_end = 0
     for m in _CODE_FENCE_RE.finditer(text):
-        before = text[last_end:m.start()]
+        before = text[last_end : m.start()]
         if before:
             parts.append(_neutralize_orphan_fences(html.escape(before)))
         lang = m.group(1) or "text"
@@ -101,7 +101,7 @@ def _md_to_html_preview(text: str) -> str:
             f'<div class="wf-code-block">'
             f'<span class="wf-code-lang">{lang_escaped}</span>'
             f'<pre class="wf-code-hl"><code>{highlighted}</code></pre>'
-            f'</div>'
+            f"</div>"
         )
         last_end = m.end()
     tail = text[last_end:]
@@ -132,8 +132,7 @@ def _render_one_agent_card(a: dict, agent_hex: str) -> str:
         )
 
     _cache_display = (
-        "N/A" if a["cache_read_tokens"] == 0 and a["total_tokens"] > 0
-        else f"{a['cache_efficiency_pct']:.1f}%"
+        "N/A" if a["cache_read_tokens"] == 0 and a["total_tokens"] > 0 else f"{a['cache_efficiency_pct']:.1f}%"
     )
     return (
         f"<div class='agent-card' title='{full_id}'"
@@ -169,8 +168,7 @@ def render_agent_summary_cards(agent_summaries: list[dict]) -> str:
         )
 
     cards = [
-        _render_one_agent_card(a, AGENT_COLORS[aidx % len(AGENT_COLORS)])
-        for aidx, a in enumerate(agent_summaries)
+        _render_one_agent_card(a, AGENT_COLORS[aidx % len(AGENT_COLORS)]) for aidx, a in enumerate(agent_summaries)
     ]
     return "<div class='agent-cards-grid'>" + "".join(cards) + "</div>"
 
@@ -260,10 +258,7 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
         )
     nav_class = "wf-toc-sidebar toc-hidden" if collapsed else "wf-toc-sidebar"
     return (
-        f"<nav class='{nav_class}' id='wf-toc-sidebar'>"
-        "<div class='toc-title'>Steps</div>"
-        + "".join(items)
-        + "</nav>"
+        f"<nav class='{nav_class}' id='wf-toc-sidebar'><div class='toc-title'>Steps</div>" + "".join(items) + "</nav>"
     )
 
 
@@ -294,11 +289,15 @@ def render_workflow_html(steps: list[dict]) -> str:
                 part_icons.append("text")
         icon_str = " \u00b7 ".join(sorted(set(part_icons))) if part_icons else ""
 
-        tc_info = f'<span>{step["tool_call_count"]} tool(s)</span>' if step["tool_call_count"] else ''
-        err_info = f'<span style="color:var(--wf-border-error)">{step["error_count"]} err</span>' if step["error_count"] else ''
+        tc_info = f"<span>{step['tool_call_count']} tool(s)</span>" if step["tool_call_count"] else ""
+        err_info = (
+            f'<span style="color:var(--wf-border-error)">{step["error_count"]} err</span>'
+            if step["error_count"]
+            else ""
+        )
 
         # Agent badge with per-agent color (same identity as swimlane / tool chart)
-        agent_badge = ''
+        agent_badge = ""
         agent_left_border = ""
         if has_agents:
             aid = agent_id_of(step)
@@ -347,12 +346,7 @@ def render_workflow_html(steps: list[dict]) -> str:
         if i < len(steps) - 1:
             cards_html.append('<div class="wf-connector"></div>')
 
-    return (
-        css
-        + '<div class="wf-scroll"><div class="wf-container">'
-        + "\n".join(cards_html)
-        + '</div></div>'
-    )
+    return css + '<div class="wf-scroll"><div class="wf-container">' + "\n".join(cards_html) + "</div></div>"
 
 
 def _fmt_timestamp(ms):
@@ -368,9 +362,11 @@ def _format_step_header(step: dict) -> str:
     role = str(step.get("role", ""))
     role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
 
-    rows: list[tuple[str, str]] = [("Role", step['role'])]
+    rows: list[tuple[str, str]] = [("Role", step["role"])]
     _optional = [
-        ("agent", "Agent"), ("mode", "Mode"), ("model_id", "Model"),
+        ("agent", "Agent"),
+        ("mode", "Mode"),
+        ("model_id", "Model"),
         ("provider_id", "Provider"),
     ]
     for key, field in _optional:
@@ -403,8 +399,11 @@ def _format_step_header(step: dict) -> str:
         rows.append(("Parent session", step["parent_session_id"]))
 
     _id_fields = [
-        ("id", "ID"), ("parent_id", "Parent ID"), ("session_id", "Session"),
-        ("cwd", "CWD"), ("message_id", "Message ID"),
+        ("id", "ID"),
+        ("parent_id", "Parent ID"),
+        ("session_id", "Session"),
+        ("cwd", "CWD"),
+        ("message_id", "Message ID"),
     ]
     for key, field in _id_fields:
         if step.get(key):
@@ -592,7 +591,7 @@ def _split_diff_by_file(diff_text: str) -> list[tuple[str, str]]:
     result: list[tuple[str, str]] = []
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(diff_text)
-        result.append((m.group(1), diff_text[m.start():end]))
+        result.append((m.group(1), diff_text[m.start() : end]))
     return result
 
 
@@ -666,12 +665,7 @@ def _unavailable_metric_fields(step: dict) -> list[str]:
 
     for key, label in _METRIC_TOKEN_FIELDS:
         value = tokens.get(key)
-        if (
-            key not in tokens
-            or value is None
-            or isinstance(value, bool)
-            or not isinstance(value, (int, float))
-        ):
+        if key not in tokens or value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
             if label not in missing:
                 missing.append(label)
     return missing
@@ -706,11 +700,7 @@ def _format_metrics_tab(step: dict) -> str:
 
     tokens = step["tokens"]
     duration = step.get("duration")
-    duration_available = (
-        isinstance(duration, (int, float))
-        and not isinstance(duration, bool)
-        and duration >= 0
-    )
+    duration_available = isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration >= 0
     duration_text = f"{duration}s" if duration_available else "n/a"
     if duration_available and duration > 0:
         throughput_text = f"{tokens['total'] / duration:,.0f} tok/s"
@@ -732,10 +722,7 @@ def _format_metrics_tab(step: dict) -> str:
         ("Cache Ratio", cache_ratio_text),
     ]
 
-    tr_parts = "".join(
-        f"<tr><td>{html.escape(k)}</td><td>{html.escape(v)}</td></tr>"
-        for k, v in rows
-    )
+    tr_parts = "".join(f"<tr><td>{html.escape(k)}</td><td>{html.escape(v)}</td></tr>" for k, v in rows)
     return f"<table class='dp-meta-table'>{tr_parts}</table>"
 
 
@@ -756,11 +743,7 @@ def _format_raw_tab(step: dict) -> str:
         if step.get(k):
             raw_data[k] = step[k]
     raw_str = json.dumps(raw_data, indent=2, ensure_ascii=False, default=str)
-    return (
-        f"<div class='dp-details-body'>"
-        f"<pre>{html.escape(raw_str)}</pre>"
-        f"</div>"
-    )
+    return f"<div class='dp-details-body'><pre>{html.escape(raw_str)}</pre></div>"
 
 
 def format_step_detail(step: dict) -> str:
@@ -771,12 +754,7 @@ def format_step_detail(step: dict) -> str:
     idx = step.get("index", 0)
 
     # Breadcrumb
-    breadcrumb = (
-        f"<div class='dp-breadcrumb'>"
-        f"<span onclick=\"{_JS_GOTO_WORKFLOW}\">Workflow</span>"
-        f" › Step {idx}"
-        f"</div>"
-    )
+    breadcrumb = f"<div class='dp-breadcrumb'><span onclick=\"{_JS_GOTO_WORKFLOW}\">Workflow</span> › Step {idx}</div>"
 
     header = _format_step_header(step)
 
@@ -802,9 +780,7 @@ def format_step_detail(step: dict) -> str:
             content_parts.append(_format_patch_section(p))
         else:
             content_parts.append(
-                f"<div class='dp-section'>"
-                f"<div class='dp-section-title'>{html.escape(ptype)}</div>"
-                f"</div>"
+                f"<div class='dp-section'><div class='dp-section-title'>{html.escape(ptype)}</div></div>"
             )
 
     content_html = "\n".join(content_parts) if content_parts else "<em>No content</em>"
@@ -831,6 +807,7 @@ def format_step_detail(step: dict) -> str:
 # Diagnostic renderers
 # ---------------------------------------------------------------------------
 
+
 def _diag_jump_onclick(idx: int) -> str:
     """JS onclick to switch to Workflow tab and scroll to a step card."""
     return (
@@ -844,14 +821,13 @@ def _diag_jump_onclick(idx: int) -> str:
     )
 
 
-
-
 def build_root_cause_html(clusters: list[dict]) -> str:
     """Render root-cause candidate summary panel."""
     if not clusters:
         return ""
 
     from .diagnostics import format_root_cause_summary
+
     summaries = format_root_cause_summary(clusters)
 
     items = []
@@ -874,14 +850,10 @@ def build_root_cause_html(clusters: list[dict]) -> str:
 
 # Label-based Workflow-tab jump: robust to tab insertions/reordering
 # (positional tabs[i] indexing broke when the Attribution tab shifted the order).
-_JS_GOTO_WORKFLOW = ("var tabs=document.querySelectorAll('button[role=tab]');"
-    "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}")
-
-
-
-
-
-
+_JS_GOTO_WORKFLOW = (
+    "var tabs=document.querySelectorAll('button[role=tab]');"
+    "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -889,8 +861,8 @@ _JS_GOTO_WORKFLOW = ("var tabs=document.querySelectorAll('button[role=tab]');"
 # ---------------------------------------------------------------------------
 
 _STRENGTH_STYLE = {
-    "deductive":      ("#059669", "Deductive"),       # set arithmetic, no model
-    "associational":  ("#d97706", "Associational"),   # objective trajectory fact
+    "deductive": ("#059669", "Deductive"),  # set arithmetic, no model
+    "associational": ("#d97706", "Associational"),  # objective trajectory fact
     "model_inferred": ("#6366f1", "Model-inferred"),  # LLM judge
 }
 _ATTR_CAP_LABEL = {
@@ -907,8 +879,10 @@ _LINK_ICON = {"observation": "•", "inference": "↳", "conclusion": "⇒"}
 
 def _attr_notice(reason: str, warn: bool = True) -> str:
     color = "var(--ov-warn)" if warn else "var(--ov-muted)"
-    return (f"<div style='padding:1.5em;color:{color};text-align:center;font-size:14px;"
-            f"line-height:1.5;'>{html.escape(reason)}</div>")
+    return (
+        f"<div style='padding:1.5em;color:{color};text-align:center;font-size:14px;"
+        f"line-height:1.5;'>{html.escape(reason)}</div>"
+    )
 
 
 def _attr_scorecard_html(scorecard: list[dict], primary: dict | None) -> str:
@@ -965,16 +939,18 @@ def _attr_fault_html(fault: dict) -> str:
         stmt = html.escape(link.get("statement", ""))
         quotes = ""
         for q in link.get("quotes", []) or []:
-            quotes += (f"<div class='attr-quote'>step {html.escape(str(q.get('step')))}: "
-                       f"{html.escape(str(q.get('text', '')))}</div>")
+            quotes += (
+                f"<div class='attr-quote'>step {html.escape(str(q.get('step')))}: "
+                f"{html.escape(str(q.get('text', '')))}</div>"
+            )
         links_html.append(
             f"<div class='attr-link'><span class='attr-link-icon'>{icon}</span>"
             f"<span class='attr-link-body'>{stmt}"
-            f"<span class='attr-link-src'>{html.escape(src)}</span>{quotes}</span></div>")
+            f"<span class='attr-link-src'>{html.escape(src)}</span>{quotes}</span></div>"
+        )
 
     audit = (fault.get("audit") or {}).get("verdict", "")
-    audit_html = (f"<div class='attr-audit'>audit: {html.escape(audit)}</div>"
-                  if audit else "")
+    audit_html = f"<div class='attr-audit'>audit: {html.escape(audit)}</div>" if audit else ""
     return (
         f"<details class='judge-panel'{' open' if fault.get('is_primary') else ''}>"
         f"<summary>"
@@ -994,14 +970,15 @@ def _attr_arbiter_html(arb: dict | None) -> str:
     if not arb or arb.get("support") is None:
         return ""
     applied = arb.get("applied", "")
-    refuted = applied in ("demoted_to_conjunctive", "refuted_reassigned",
-                          "refuted_unattributed")
-    color = "#dc2626" if refuted else ("#059669" if applied == "corroborated"
-                                       else "#9ca3af")
-    verb = {"demoted_to_conjunctive": "refuted (demoted to conjunctive)",
-            "refuted_reassigned": "refuted (blame reassigned to a deductive fault)",
-            "refuted_unattributed": "refuted (no attributed cause remains)",
-            "corroborated": "corroborated", "noted": "noted"}.get(applied, applied)
+    refuted = applied in ("demoted_to_conjunctive", "refuted_reassigned", "refuted_unattributed")
+    color = "#dc2626" if refuted else ("#059669" if applied == "corroborated" else "#9ca3af")
+    verb = {
+        "demoted_to_conjunctive": "refuted (demoted to conjunctive)",
+        "refuted_reassigned": "refuted (blame reassigned to a deductive fault)",
+        "refuted_unattributed": "refuted (no attributed cause remains)",
+        "corroborated": "corroborated",
+        "noted": "noted",
+    }.get(applied, applied)
     tgt = arb.get("target") or {}
     rationale = arb.get("rationale") or ""
     return (
@@ -1011,7 +988,8 @@ def _attr_arbiter_html(arb: dict | None) -> str:
         f"{html.escape(verb)} — <code>{html.escape(str(tgt.get('error_type', '?')))}</code>"
         f" ({html.escape(str(arb.get('confidence', '?')))})</div>"
         + (f"<div class='attr-banner-sub'>{html.escape(rationale)}</div>" if rationale else "")
-        + "</div>")
+        + "</div>"
+    )
 
 
 def build_attribution_html(data: dict) -> str:
@@ -1025,41 +1003,47 @@ def build_attribution_html(data: dict) -> str:
     status = data.get("blame_status") or "?"
     primary = data.get("primary")
     if primary:
-        head = (f"Primary cause: <b>{html.escape(_ATTR_CAP_LABEL.get(primary['capability'], primary['capability']))}</b> "
-                f"→ <code>{html.escape(primary['error_type'])}</code>")
+        head = (
+            f"Primary cause: <b>{html.escape(_ATTR_CAP_LABEL.get(primary['capability'], primary['capability']))}</b> "
+            f"→ <code>{html.escape(primary['error_type'])}</code>"
+        )
     else:
         head = f"No single dominant cause (<code>{html.escape(status)}</code>)"
     n_assessed = sum(1 for s in data.get("scorecard", []) if s.get("assessed"))
-    tier_note = (f"{n_assessed}-capability assessment"
-                 + (" (incl. judge verdict for this case)" if data.get("used_judge")
-                    else " (deductive/associational slice)"))
+    tier_note = f"{n_assessed}-capability assessment" + (
+        " (incl. judge verdict for this case)" if data.get("used_judge") else " (deductive/associational slice)"
+    )
     banner = (
         f"<div class='attr-banner'>"
         f"<div class='attr-banner-head'>{head}</div>"
         f"<div class='attr-banner-sub'>blame status: <b>{html.escape(status)}</b>"
-        f" &middot; {html.escape(tier_note)}</div></div>")
+        f" &middot; {html.escape(tier_note)}</div></div>"
+    )
     notes_html = "".join(
-        f"<div class='attr-banner-sub'>&#9888; {html.escape(n)}</div>"
-        for n in data.get("notes") or [])
+        f"<div class='attr-banner-sub'>&#9888; {html.escape(n)}</div>" for n in data.get("notes") or []
+    )
 
     faults = data.get("faults", [])
     attributed = [f for f in faults if float(f.get("blame_weight") or 0) > 0]
     refuted = [f for f in faults if float(f.get("blame_weight") or 0) == 0]
-    out = (banner + notes_html
-           + _attr_arbiter_html(data.get("arbiter"))
-           + _attr_scorecard_html(data.get("scorecard", []), primary))
-    out += ("<div style='margin-top:12px;font-weight:600;font-size:13px;'>"
-            "Diagnosed faults (evidence chains)</div>")
+    out = (
+        banner
+        + notes_html
+        + _attr_arbiter_html(data.get("arbiter"))
+        + _attr_scorecard_html(data.get("scorecard", []), primary)
+    )
+    out += "<div style='margin-top:12px;font-weight:600;font-size:13px;'>Diagnosed faults (evidence chains)</div>"
     out += "".join(_attr_fault_html(f) for f in attributed) or _attr_notice(
-        "No attributed faults — no cause survived (see the arbiter verdict "
-        "above / coverage gap).", warn=False)
+        "No attributed faults — no cause survived (see the arbiter verdict above / coverage gap).", warn=False
+    )
     if refuted:
-        out += ("<div style='margin-top:12px;font-weight:600;font-size:13px;"
-                "color:var(--ov-muted);'>Refuted candidates (zero blame — kept "
-                "for audit)</div>")
+        out += (
+            "<div style='margin-top:12px;font-weight:600;font-size:13px;"
+            "color:var(--ov-muted);'>Refuted candidates (zero blame — kept "
+            "for audit)</div>"
+        )
         out += "".join(_attr_fault_html(f) for f in refuted)
     return out
-
 
 
 # ---------------------------------------------------------------------------
@@ -1070,6 +1054,7 @@ def build_attribution_html(data: dict) -> str:
 # ---------------------------------------------------------------------------
 # Anti-Pattern Summary
 # ---------------------------------------------------------------------------
+
 
 def _antipattern_card(border_color: str, title: str, detail: str, why: str) -> str:
     """Render a single anti-pattern card with a 'why this matters' line."""
@@ -1102,58 +1087,64 @@ def build_antipattern_summary_html(
 
     # Platform/tool errors
     if error_count > 0:
-        cards.append(_antipattern_card(
-            "var(--ov-bad)",
-            f"{error_count} tool error(s)",
-            "detected from tool output (platform, permission, missing file)",
-            "Failed tool calls cost tokens and turns to recover from, and often indicate "
-            "environment problems (wrong path, missing dependency, sandbox limits) rather than agent mistakes — "
-            "fix the environment and the agent may stop wandering.",
-        ))
+        cards.append(
+            _antipattern_card(
+                "var(--ov-bad)",
+                f"{error_count} tool error(s)",
+                "detected from tool output (platform, permission, missing file)",
+                "Failed tool calls cost tokens and turns to recover from, and often indicate "
+                "environment problems (wrong path, missing dependency, sandbox limits) rather than agent mistakes — "
+                "fix the environment and the agent may stop wandering.",
+            )
+        )
 
     # Fruitless streaks
     if fruitless_streaks:
         total_wasted = sum(s["length"] for s in fruitless_streaks)
         shown = fruitless_streaks[:3]
-        streak_desc = ", ".join(
-            f"steps {s['start_step']}-{s['end_step']} ({s['length']})" for s in shown
-        )
+        streak_desc = ", ".join(f"steps {s['start_step']}-{s['end_step']} ({s['length']})" for s in shown)
         remaining = len(fruitless_streaks) - len(shown)
         if remaining > 0:
-            remaining_len = sum(s["length"] for s in fruitless_streaks[len(shown):])
+            remaining_len = sum(s["length"] for s in fruitless_streaks[len(shown) :])
             streak_desc += f", +{remaining} more ({remaining_len})"
-        cards.append(_antipattern_card(
-            "var(--ov-warn)",
-            f"{len(fruitless_streaks)} fruitless search streak(s)",
-            f"{total_wasted} wasted steps — {streak_desc}",
-            "Three or more consecutive searches that returned no matches. Each one still "
-            "consumes tokens and latency; sustained streaks suggest the agent is looking "
-            "in the wrong place rather than refining its query.",
-        ))
+        cards.append(
+            _antipattern_card(
+                "var(--ov-warn)",
+                f"{len(fruitless_streaks)} fruitless search streak(s)",
+                f"{total_wasted} wasted steps — {streak_desc}",
+                "Three or more consecutive searches that returned no matches. Each one still "
+                "consumes tokens and latency; sustained streaks suggest the agent is looking "
+                "in the wrong place rather than refining its query.",
+            )
+        )
 
     # Tool selection
     if tool_selection:
-        cards.append(_antipattern_card(
-            "var(--ov-accent)",
-            f"{len(tool_selection)} Bash-for-reading",
-            "steps used sed/cat/head instead of Read tool",
-            "Reading files via shell pipes bypasses the Read tool's structure — "
-            "no line numbers, no cross-turn cache, no output cap — which inflates "
-            "context size and makes the trajectory harder to analyze.",
-        ))
+        cards.append(
+            _antipattern_card(
+                "var(--ov-accent)",
+                f"{len(tool_selection)} Bash-for-reading",
+                "steps used sed/cat/head instead of Read tool",
+                "Reading files via shell pipes bypasses the Read tool's structure — "
+                "no line numbers, no cross-turn cache, no output cap — which inflates "
+                "context size and makes the trajectory harder to analyze.",
+            )
+        )
 
     # Stalled plan items
     stalled = plan_metrics.get("stalled", [])
     if stalled:
         items_desc = ", ".join(f"'{s['content'][:30]}'" for s in stalled[:2])
-        cards.append(_antipattern_card(
-            "var(--ov-warn)",
-            f"{len(stalled)} stalled plan item(s)",
-            items_desc,
-            "Items marked in_progress in TodoWrite but never marked completed, "
-            "or completed more than 20 steps after they started. Often means the "
-            "agent context-switched away and forgot to close the loop.",
-        ))
+        cards.append(
+            _antipattern_card(
+                "var(--ov-warn)",
+                f"{len(stalled)} stalled plan item(s)",
+                items_desc,
+                "Items marked in_progress in TodoWrite but never marked completed, "
+                "or completed more than 20 steps after they started. Often means the "
+                "agent context-switched away and forgot to close the loop.",
+            )
+        )
 
     if not cards:
         return "<div style='padding:12px;color:var(--ov-muted);text-align:center;font-size:13px;'>No anti-patterns detected</div>"

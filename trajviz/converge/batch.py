@@ -17,6 +17,7 @@ from .alignment import build_comparison_report
 # Manifest
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ManifestEntry:
     task_id: str
@@ -48,8 +49,7 @@ def parse_manifest(manifest_path: str) -> list[ManifestEntry]:
         for field_name in ("task_id", "reference", "compared"):
             if field_name not in item:
                 raise ValueError(
-                    f"Manifest entry {i} (task_id={item.get('task_id', '?')}) "
-                    f"missing required field '{field_name}'"
+                    f"Manifest entry {i} (task_id={item.get('task_id', '?')}) missing required field '{field_name}'"
                 )
 
         def _resolve(p: str) -> str:
@@ -65,21 +65,21 @@ def parse_manifest(manifest_path: str) -> list[ManifestEntry]:
         for label, path in [("reference", ref_path), ("compared", cmp_path)]:
             if not os.path.isfile(path):
                 raise FileNotFoundError(
-                    f"Manifest entry {i} (task_id={item['task_id']}): "
-                    f"{label} file not found: {path}"
+                    f"Manifest entry {i} (task_id={item['task_id']}): {label} file not found: {path}"
                 )
         if anchor_path and not os.path.isfile(anchor_path):
             raise FileNotFoundError(
-                f"Manifest entry {i} (task_id={item['task_id']}): "
-                f"anchor file not found: {anchor_path}"
+                f"Manifest entry {i} (task_id={item['task_id']}): anchor file not found: {anchor_path}"
             )
 
-        entries.append(ManifestEntry(
-            task_id=item["task_id"],
-            reference=ref_path,
-            compared=cmp_path,
-            anchor=anchor_path,
-        ))
+        entries.append(
+            ManifestEntry(
+                task_id=item["task_id"],
+                reference=ref_path,
+                compared=cmp_path,
+                anchor=anchor_path,
+            )
+        )
 
     return entries
 
@@ -87,6 +87,7 @@ def parse_manifest(manifest_path: str) -> list[ManifestEntry]:
 # ---------------------------------------------------------------------------
 # Batch runner
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class BatchResult:
@@ -132,6 +133,7 @@ def run_batch(
 # Aggregation
 # ---------------------------------------------------------------------------
 
+
 def _safe_stat(values: list[float], func, default=None):
     """Compute a statistic, returning default if values is empty."""
     if not values:
@@ -173,12 +175,20 @@ def aggregate_reports(results: list[BatchResult]) -> dict[str, Any]:
 
     # Anchor metrics (only from anchored tasks)
     anchor_metric_paths = {
-        "anchor_write_precision_ref": lambda r: (r.get("anchor_analysis") or {}).get("reference", {}).get("write_precision"),
-        "anchor_write_precision_cmp": lambda r: (r.get("anchor_analysis") or {}).get("compared", {}).get("write_precision"),
+        "anchor_write_precision_ref": lambda r: (
+            (r.get("anchor_analysis") or {}).get("reference", {}).get("write_precision")
+        ),
+        "anchor_write_precision_cmp": lambda r: (
+            (r.get("anchor_analysis") or {}).get("compared", {}).get("write_precision")
+        ),
         "anchor_write_recall_ref": lambda r: (r.get("anchor_analysis") or {}).get("reference", {}).get("write_recall"),
         "anchor_write_recall_cmp": lambda r: (r.get("anchor_analysis") or {}).get("compared", {}).get("write_recall"),
-        "off_patch_write_ratio_ref": lambda r: (r.get("anchor_analysis") or {}).get("reference", {}).get("off_patch_write_ratio"),
-        "off_patch_write_ratio_cmp": lambda r: (r.get("anchor_analysis") or {}).get("compared", {}).get("off_patch_write_ratio"),
+        "off_patch_write_ratio_ref": lambda r: (
+            (r.get("anchor_analysis") or {}).get("reference", {}).get("off_patch_write_ratio")
+        ),
+        "off_patch_write_ratio_cmp": lambda r: (
+            (r.get("anchor_analysis") or {}).get("compared", {}).get("off_patch_write_ratio")
+        ),
     }
 
     metrics: dict[str, dict] = {}
@@ -238,6 +248,7 @@ def aggregate_reports(results: list[BatchResult]) -> dict[str, Any]:
 # Pattern frequency and promotion
 # ---------------------------------------------------------------------------
 
+
 def compute_pattern_frequency(results: list[BatchResult]) -> dict[str, dict]:
     """Count how many tasks each divergence pattern type appears in.
 
@@ -290,6 +301,7 @@ def promote_patterns(
 # Consistency
 # ---------------------------------------------------------------------------
 
+
 def compute_consistency(aggregate: dict) -> dict[str, float | None]:
     """Compute coefficient of variation (stdev/mean) per metric.
 
@@ -309,6 +321,7 @@ def compute_consistency(aggregate: dict) -> dict[str, float | None]:
 # ---------------------------------------------------------------------------
 # Batch report
 # ---------------------------------------------------------------------------
+
 
 def build_batch_report(
     manifest_path: str,

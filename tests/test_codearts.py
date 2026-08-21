@@ -51,10 +51,12 @@ class CodeArtsTests(unittest.TestCase):
     def test_real_user_text_wins_over_an_earlier_synthetic_reminder(self):
         from trajviz.insight.parser import _parse_parts
 
-        _, _, _, _, preview = _parse_parts([
-            {"type": "text", "text": "system reminder", "synthetic": True},
-            {"type": "text", "text": "actual user request", "metadata": {"isUserInput": True}},
-        ])
+        _, _, _, _, preview = _parse_parts(
+            [
+                {"type": "text", "text": "system reminder", "synthetic": True},
+                {"type": "text", "text": "actual user request", "metadata": {"isUserInput": True}},
+            ]
+        )
 
         self.assertEqual(preview, "actual user request")
 

@@ -78,7 +78,10 @@ def run_comparison(
         cmp_steps = parse_steps(cmp_raw)
 
         report = build_comparison_report_from_steps(
-            ref_raw, cmp_raw, ref_steps, cmp_steps,
+            ref_raw,
+            cmp_raw,
+            ref_steps,
+            cmp_steps,
             token_rate=token_rate,
             fuzzy_commands=fuzzy,
             anchor_files=_parse_anchor_files(anchor_path),

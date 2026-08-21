@@ -72,9 +72,24 @@ class OpenCodeConsolidatorTests(unittest.TestCase):
             )
             """,
             (
-                "ses_root", "project", "workspace", None, "root", "/workspace",
-                "Root", "test", 0, 0, 0, 1_000, 2_000, None, None,
-                None, None, None,
+                "ses_root",
+                "project",
+                "workspace",
+                None,
+                "root",
+                "/workspace",
+                "Root",
+                "test",
+                0,
+                0,
+                0,
+                1_000,
+                2_000,
+                None,
+                None,
+                None,
+                None,
+                None,
             ),
         )
         token_objects = [
@@ -104,7 +119,10 @@ class OpenCodeConsolidatorTests(unittest.TestCase):
             connection.execute(
                 "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
                 (
-                    f"msg_{index}", "ses_root", created, created + 50,
+                    f"msg_{index}",
+                    "ses_root",
+                    created,
+                    created + 50,
                     json.dumps(payload),
                 ),
             )
@@ -131,9 +149,7 @@ class OpenCodeConsolidatorTests(unittest.TestCase):
         self._run_main(database, output)
 
         result = json.loads(output.read_text(encoding="utf-8"))
-        actual_tokens = [
-            message["info"]["tokens"] for message in result["messages"]
-        ]
+        actual_tokens = [message["info"]["tokens"] for message in result["messages"]]
         self.assertEqual(actual_tokens, expected_tokens)
 
     def test_refuses_to_overwrite_source_database(self) -> None:

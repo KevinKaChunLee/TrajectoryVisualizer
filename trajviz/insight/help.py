@@ -10,7 +10,6 @@ HELP_TEXT: dict[str, str] = {
     "wall_clock": "Elapsed wall-clock time from first to last step, including idle gaps between steps.",
     "tokens": "Total tokens consumed across all steps: input + output + reasoning + cache read.",
     "tool_success": "Percentage of tool calls that completed without errors. 100% means no tool failures.",
-
     # Section subtitles
     "section_performance": "Token consumption, step timing, and overall resource usage patterns.",
     "section_efficiency": "Context growth over time and compression events.",

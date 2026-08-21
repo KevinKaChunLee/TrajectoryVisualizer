@@ -6,8 +6,7 @@ import statistics
 # Statuses that mark a tool call as failed. Single definition shared by
 # tool_success_rate (_compute_tool_stats) and edit_precision
 # (compute_diagnostic_metrics) so the two can never disagree.
-_FAILURE_STATUSES = {"error", "failed", "failure", "cancelled", "canceled",
-                     "timeout", "timed_out"}
+_FAILURE_STATUSES = {"error", "failed", "failure", "cancelled", "canceled", "timeout", "timed_out"}
 
 
 def effective_agent(s: dict) -> str:
@@ -107,8 +106,7 @@ def validate_token_integrity(steps: list[dict]) -> list[str]:
         examples = ", ".join(str(i) for i in zero_token_steps[:5])
         suffix = f" and {n - 5} more" if n > 5 else ""
         warnings.append(
-            f"{n} assistant step(s) have zero token data "
-            f"(steps {examples}{suffix}) \u2014 metrics may be inaccurate."
+            f"{n} assistant step(s) have zero token data (steps {examples}{suffix}) \u2014 metrics may be inaccurate."
         )
     return warnings
 
@@ -145,30 +143,32 @@ def build_message_metrics(steps: list[dict]) -> list[dict]:
             pt = p.get("type", "unknown")
             part_counts[pt] = part_counts.get(pt, 0) + 1
 
-        rows.append({
-            "index": s.get("index", 0),
-            "role": s.get("role", "?"),
-            "agent": effective_agent(s),
-            "model_id": s.get("model_id", ""),
-            "finish": s.get("finish", ""),
-            "duration": duration,
-            "tokens_total": tok_total,
-            "tokens_input": tok_input,
-            "tokens_output": tok_output,
-            "cache_read": cache_read,
-            "non_cache_tokens": non_cache,
-            "cache_ratio": (cache_read / tok_total) if tok_total else 0.0,
-            "tokens_per_sec": (tok_total / duration) if duration and duration > 0 else None,
-            "non_cache_per_sec": (non_cache / duration) if duration and duration > 0 else None,
-            "output_input_ratio": (tok_output / max(1, tok_input)),
-            "tool_calls": s.get("tool_call_count", 0),
-            "errors": s.get("error_count", 0),
-            "tool_time_sum": tool_time_sum,
-            "tool_time_share": (tool_time_sum / duration) if duration and duration > 0 else 0.0,
-            "reasoning_parts": part_counts.get("reasoning", 0),
-            "text_parts": part_counts.get("text", 0),
-            "patch_parts": part_counts.get("patch", 0),
-        })
+        rows.append(
+            {
+                "index": s.get("index", 0),
+                "role": s.get("role", "?"),
+                "agent": effective_agent(s),
+                "model_id": s.get("model_id", ""),
+                "finish": s.get("finish", ""),
+                "duration": duration,
+                "tokens_total": tok_total,
+                "tokens_input": tok_input,
+                "tokens_output": tok_output,
+                "cache_read": cache_read,
+                "non_cache_tokens": non_cache,
+                "cache_ratio": (cache_read / tok_total) if tok_total else 0.0,
+                "tokens_per_sec": (tok_total / duration) if duration and duration > 0 else None,
+                "non_cache_per_sec": (non_cache / duration) if duration and duration > 0 else None,
+                "output_input_ratio": (tok_output / max(1, tok_input)),
+                "tool_calls": s.get("tool_call_count", 0),
+                "errors": s.get("error_count", 0),
+                "tool_time_sum": tool_time_sum,
+                "tool_time_share": (tool_time_sum / duration) if duration and duration > 0 else 0.0,
+                "reasoning_parts": part_counts.get("reasoning", 0),
+                "text_parts": part_counts.get("text", 0),
+                "patch_parts": part_counts.get("patch", 0),
+            }
+        )
     return rows
 
 
@@ -251,17 +251,15 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
 
     result["output_tokens_per_sec"] = (
         round(timed_output_tokens / timed_asst_duration, 1)
-        if timed_asst_duration > 0 and timed_output_tokens > 0 else None
+        if timed_asst_duration > 0 and timed_output_tokens > 0
+        else None
     )
     result["output_throughput_timed_steps"] = timed_assistant_step_count
     result["output_throughput_total_steps"] = assistant_step_count
     result["output_throughput_coverage_pct"] = (
-        round(timed_assistant_step_count / assistant_step_count * 100, 1)
-        if assistant_step_count else None
+        round(timed_assistant_step_count / assistant_step_count * 100, 1) if assistant_step_count else None
     )
-    result["output_throughput_incomplete"] = (
-        timed_assistant_step_count < assistant_step_count
-    )
+    result["output_throughput_incomplete"] = timed_assistant_step_count < assistant_step_count
     result["output_throughput_timed_tokens"] = timed_output_tokens
     result["output_throughput_timed_seconds"] = round(timed_asst_duration, 3)
 
@@ -295,7 +293,8 @@ def _compute_plan_metrics(steps: list[dict]) -> dict:
     last_items = last.get("todos", last.get("items", []))
     if isinstance(last_items, list) and last_items:
         completed = sum(
-            1 for item in last_items
+            1
+            for item in last_items
             if (isinstance(item, dict) and item.get("completed", False))
             or (isinstance(item, dict) and item.get("status") in ("completed", "done"))
         )
@@ -339,7 +338,9 @@ def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw)
         "input_tokens": total_tokens["input"],
         "output_tokens": total_tokens["output"],
         "cache_read_tokens": total_tokens["cache_read"],
-        "tokens_per_patch_line": round(total_io / output.get("patch_lines", 0), 1) if output.get("patch_lines", 0) > 0 else None,
+        "tokens_per_patch_line": round(total_io / output.get("patch_lines", 0), 1)
+        if output.get("patch_lines", 0) > 0
+        else None,
         "tokens_per_churn_line": round(total_io / churn, 1) if churn > 0 else None,
     }
 
@@ -442,13 +443,18 @@ def _compute_efficiency_stats(steps, message_rows, raw):
         "has_patch": output.get("has_patch", False),
         "patch_error": output.get("error"),
         "files_changed": (
-            summary.get("files") if summary and "files" in summary
-            else len(file_status_raw) if isinstance(file_status_raw, list) else None
+            summary.get("files")
+            if summary and "files" in summary
+            else len(file_status_raw)
+            if isinstance(file_status_raw, list)
+            else None
         ),
         "additions": summary.get("additions") if summary else None,
         "deletions": summary.get("deletions") if summary else None,
         "churn": _churn(summary),
-        "net_change": (summary["additions"] - summary["deletions"]) if summary and "additions" in summary and "deletions" in summary else None,
+        "net_change": (summary["additions"] - summary["deletions"])
+        if summary and "additions" in summary and "deletions" in summary
+        else None,
         "user_turns": user_n,
         "assistant_turns": asst_n,
         "autonomy_ratio": round(asst_n / (user_n + asst_n), 4) if (user_n + asst_n) > 0 else None,
@@ -466,8 +472,7 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
     # Duration stats
     durations = [s["duration"] for s in steps if s.get("duration") is not None]
     total_duration = sum(durations)
-    total_tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0,
-                    "cache_read": 0, "cache_write": 0}
+    total_tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
     for s in steps:
         for k in total_tokens:
             total_tokens[k] += s["tokens"].get(k, 0)
@@ -506,11 +511,15 @@ def compute_diagnostic_metrics(
             from the step labeler. Enables semantic anti-pattern detection.
     """
     from .patterns import (
-        extract_plan_history, compute_plan_metrics as _plan_metrics,
-        extract_subagent_sessions, compute_subagent_metrics,
-        detect_fruitless_streaks, compute_autonomy_ratio,
+        extract_plan_history,
+        compute_plan_metrics as _plan_metrics,
+        extract_subagent_sessions,
+        compute_subagent_metrics,
+        detect_fruitless_streaks,
+        compute_autonomy_ratio,
         detect_tool_selection_antipatterns,
-        build_structural_phase_segments, detect_phase_anomalies,
+        build_structural_phase_segments,
+        detect_phase_anomalies,
         detect_semantic_antipatterns,
     )
 
@@ -525,6 +534,7 @@ def compute_diagnostic_metrics(
 
     # Edit precision: successful edits / total edit attempts
     from trajviz.tool_vocab import WRITE_TOOL_NAMES as edit_tools
+
     edit_total = 0
     edit_success = 0
     for s in steps:
@@ -537,24 +547,20 @@ def compute_diagnostic_metrics(
                     edit_success += 1
 
     # Search-to-action ratio: read/search calls per edit/write call
-    search_tools = {"Read", "read", "Grep", "grep", "Glob", "glob",
-                    "WebFetch", "WebSearch"}
-    search_count = sum(1 for s in steps for tc in s.get("tool_calls", [])
-                       if tc.get("tool_name") in search_tools)
+    search_tools = {"Read", "read", "Grep", "grep", "Glob", "glob", "WebFetch", "WebSearch"}
+    search_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("tool_name") in search_tools)
 
     # Context compression events — deduplicate between part scan and token drop
     compression_steps: set[int] = set()
     for i, s in enumerate(steps):
         for p in s.get("parts", []):
-            if (p.get("type") in ("step_start", "step_finish")
-                    and "compress" in p.get("name", "").lower()):
+            if p.get("type") in ("step_start", "step_finish") and "compress" in p.get("name", "").lower():
                 compression_steps.add(i)
     # Token-drop heuristic: only applies when tokens grow cumulatively across
     # steps (e.g., Claude Code context window).  For formats with per-step
     # deltas, tokens naturally vary, so drops are not compressions.
     # Detect cumulative pattern: tokens should generally be non-decreasing.
-    asst_tokens = [s.get("tokens", {}).get("total", 0) or 0
-                   for s in steps if s.get("role") == "assistant"]
+    asst_tokens = [s.get("tokens", {}).get("total", 0) or 0 for s in steps if s.get("role") == "assistant"]
     if len(asst_tokens) >= 5:
         increasing = sum(1 for a, b in zip(asst_tokens, asst_tokens[1:], strict=False) if b >= a)
         is_cumulative = increasing / (len(asst_tokens) - 1) > 0.7
@@ -624,14 +630,32 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
         # ratio here means "unknown", not "poor".
         verdicts.append({"metric": "Cache Efficiency", "status": "good", "label": "N/A", "detail": "No token data"})
     elif avg_cache >= 60:
-        verdicts.append({"metric": "Cache Efficiency", "status": "good", "label": f"{avg_cache}%",
-                         "detail": f"Avg cache read {avg_cache}% — strong cache reuse"})
+        verdicts.append(
+            {
+                "metric": "Cache Efficiency",
+                "status": "good",
+                "label": f"{avg_cache}%",
+                "detail": f"Avg cache read {avg_cache}% — strong cache reuse",
+            }
+        )
     elif avg_cache >= 30:
-        verdicts.append({"metric": "Cache Efficiency", "status": "warn", "label": f"{avg_cache}%",
-                         "detail": f"Avg cache read {avg_cache}% — moderate cache reuse"})
+        verdicts.append(
+            {
+                "metric": "Cache Efficiency",
+                "status": "warn",
+                "label": f"{avg_cache}%",
+                "detail": f"Avg cache read {avg_cache}% — moderate cache reuse",
+            }
+        )
     else:
-        verdicts.append({"metric": "Cache Efficiency", "status": "bad", "label": f"{avg_cache}%",
-                         "detail": f"Avg cache read {avg_cache}% — most input tokens are fresh"})
+        verdicts.append(
+            {
+                "metric": "Cache Efficiency",
+                "status": "bad",
+                "label": f"{avg_cache}%",
+                "detail": f"Avg cache read {avg_cache}% — most input tokens are fresh",
+            }
+        )
 
     # Tool success rate
     tool_rate = metrics.get("tool_success_rate", 0)
@@ -639,11 +663,32 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     if tool_count == 0:
         verdicts.append({"metric": "Tool Success", "status": "good", "label": "N/A", "detail": "No tool calls"})
     elif tool_rate >= 95:
-        verdicts.append({"metric": "Tool Success", "status": "good", "label": f"{tool_rate}%", "detail": f"{tool_rate}% success across {tool_count} calls"})
+        verdicts.append(
+            {
+                "metric": "Tool Success",
+                "status": "good",
+                "label": f"{tool_rate}%",
+                "detail": f"{tool_rate}% success across {tool_count} calls",
+            }
+        )
     elif tool_rate >= 80:
-        verdicts.append({"metric": "Tool Success", "status": "warn", "label": f"{tool_rate}%", "detail": f"{tool_rate}% success — {metrics.get('tool_fail', 0)} failures out of {tool_count} calls"})
+        verdicts.append(
+            {
+                "metric": "Tool Success",
+                "status": "warn",
+                "label": f"{tool_rate}%",
+                "detail": f"{tool_rate}% success — {metrics.get('tool_fail', 0)} failures out of {tool_count} calls",
+            }
+        )
     else:
-        verdicts.append({"metric": "Tool Success", "status": "bad", "label": f"{tool_rate}%", "detail": f"{tool_rate}% success — high failure rate across {tool_count} calls"})
+        verdicts.append(
+            {
+                "metric": "Tool Success",
+                "status": "bad",
+                "label": f"{tool_rate}%",
+                "detail": f"{tool_rate}% success — high failure rate across {tool_count} calls",
+            }
+        )
 
     # Generation throughput — output tokens per second of assistant wall time.
     # NOTE: use output_tokens_per_sec, not tokens_per_second, which divides the
@@ -667,14 +712,32 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
             detail += coverage_note
         verdicts.append({"metric": "Throughput", "status": "good", "label": "N/A", "detail": detail})
     elif gen_rate >= 50:
-        verdicts.append({"metric": "Throughput", "status": "good", "label": f"{gen_rate} output tok/s",
-                         "detail": f"{gen_rate} output tok/s — strong throughput{coverage_note}"})
+        verdicts.append(
+            {
+                "metric": "Throughput",
+                "status": "good",
+                "label": f"{gen_rate} output tok/s",
+                "detail": f"{gen_rate} output tok/s — strong throughput{coverage_note}",
+            }
+        )
     elif gen_rate >= 20:
-        verdicts.append({"metric": "Throughput", "status": "warn", "label": f"{gen_rate} output tok/s",
-                         "detail": f"{gen_rate} output tok/s — moderate throughput{coverage_note}"})
+        verdicts.append(
+            {
+                "metric": "Throughput",
+                "status": "warn",
+                "label": f"{gen_rate} output tok/s",
+                "detail": f"{gen_rate} output tok/s — moderate throughput{coverage_note}",
+            }
+        )
     else:
-        verdicts.append({"metric": "Throughput", "status": "bad", "label": f"{gen_rate} output tok/s",
-                         "detail": f"{gen_rate} output tok/s — low throughput{coverage_note}"})
+        verdicts.append(
+            {
+                "metric": "Throughput",
+                "status": "bad",
+                "label": f"{gen_rate} output tok/s",
+                "detail": f"{gen_rate} output tok/s — low throughput{coverage_note}",
+            }
+        )
 
     # Failed tool calls — tool_fail counts failing tool CALLS (already reflected
     # in Tool Success); label accordingly rather than as "error steps".
@@ -731,11 +794,19 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
             seen.add(agent)
 
     # Accumulate per-agent stats
-    stats: dict[str, dict] = defaultdict(lambda: {
-        "step_count": 0, "total_tokens": 0, "input_tokens": 0,
-        "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0,
-        "total_duration_s": 0.0, "tool_call_count": 0, "error_count": 0,
-    })
+    stats: dict[str, dict] = defaultdict(
+        lambda: {
+            "step_count": 0,
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "total_duration_s": 0.0,
+            "tool_call_count": 0,
+            "error_count": 0,
+        }
+    )
     for s in steps:
         if s.get("role") != "assistant":
             continue
@@ -773,9 +844,7 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
     result = []
     for agent_id in agent_order:
         d = stats[agent_id]
-        label = "main" if not agent_id else (
-            agent_id[:8] + "\u2026" if len(agent_id) > 8 else agent_id
-        )
+        label = "main" if not agent_id else (agent_id[:8] + "\u2026" if len(agent_id) > 8 else agent_id)
         total_tok = d["total_tokens"]
         cache_read = d["cache_read_tokens"]
         cache_pct = round(cache_read / total_tok * 100, 1) if total_tok > 0 else 0.0
@@ -786,22 +855,24 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
         spawned_by_tool = spawned_by_map.get(agent_id, "")
         spawned_by_step = tool_call_step_map.get(spawned_by_tool) if spawned_by_tool else None
 
-        result.append({
-            "agent_id": agent_id,
-            "label": label,
-            "step_count": d["step_count"],
-            "total_tokens": total_tok,
-            "input_tokens": d["input_tokens"],
-            "output_tokens": d["output_tokens"],
-            "reasoning_tokens": d["reasoning_tokens"],
-            "cache_read_tokens": cache_read,
-            "total_duration_s": round(dur, 2),
-            "tool_call_count": d["tool_call_count"],
-            "error_count": d["error_count"],
-            "cache_efficiency_pct": cache_pct,
-            "tokens_per_second": tok_per_s,
-            "spawned_by_step": spawned_by_step,
-        })
+        result.append(
+            {
+                "agent_id": agent_id,
+                "label": label,
+                "step_count": d["step_count"],
+                "total_tokens": total_tok,
+                "input_tokens": d["input_tokens"],
+                "output_tokens": d["output_tokens"],
+                "reasoning_tokens": d["reasoning_tokens"],
+                "cache_read_tokens": cache_read,
+                "total_duration_s": round(dur, 2),
+                "tool_call_count": d["tool_call_count"],
+                "error_count": d["error_count"],
+                "cache_efficiency_pct": cache_pct,
+                "tokens_per_second": tok_per_s,
+                "spawned_by_step": spawned_by_step,
+            }
+        )
     return result
 
 
@@ -818,13 +889,9 @@ def generate_agent_insights(agent_summaries: list[dict]) -> list[str]:
     for a in agent_summaries:
         share = a["total_tokens"] / total_tokens * 100
         if share > 60:
-            insights.append(
-                f"Agent {a['label']} consumed {share:.0f}% of total tokens"
-            )
+            insights.append(f"Agent {a['label']} consumed {share:.0f}% of total tokens")
         if a["cache_efficiency_pct"] == 0 and a["total_tokens"] > 0:
-            insights.append(
-                f"Agent {a['label']} has 0% cache efficiency — no prompt caching"
-            )
+            insights.append(f"Agent {a['label']} has 0% cache efficiency — no prompt caching")
         if a["step_count"] > 0 and a["error_count"] / a["step_count"] > 0.10:
             rate = a["error_count"] / a["step_count"] * 100
             insights.append(
@@ -832,8 +899,6 @@ def generate_agent_insights(agent_summaries: list[dict]) -> list[str]:
             )
         tool_share = a["tool_call_count"] / max(1, sum(x["tool_call_count"] for x in agent_summaries)) * 100
         if tool_share > 70 and len(agent_summaries) > 1:
-            insights.append(
-                f"Agent {a['label']} made {tool_share:.0f}% of all tool calls"
-            )
+            insights.append(f"Agent {a['label']} made {tool_share:.0f}% of all tool calls")
 
     return insights

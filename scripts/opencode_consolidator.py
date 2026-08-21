@@ -179,9 +179,7 @@ def export_session_and_collect_children(
             )
 
             for part_row in cursor.fetchall():
-                part_id, part_message_id, part_session_id, part_time_created, part_time_updated, part_data = (
-                    part_row
-                )
+                part_id, part_message_id, part_session_id, part_time_created, part_time_updated, part_data = part_row
                 try:
                     part = json.loads(part_data) if isinstance(part_data, str) else part_data
                     part["id"] = part_id
@@ -246,9 +244,24 @@ def export_session_and_collect_children(
         # Move message-level fields into "info" if they're at top level
         if "info" not in msg:
             msg_info = {}
-            keys_to_move = ["role", "time", "agent", "model", "tokens", "system", "finish", "mode", "path",
-                           "cost", "id", "sessionID", "parentID", "summary",
-                           "modelID", "providerID"]  # Add these for OpenCode format
+            keys_to_move = [
+                "role",
+                "time",
+                "agent",
+                "model",
+                "tokens",
+                "system",
+                "finish",
+                "mode",
+                "path",
+                "cost",
+                "id",
+                "sessionID",
+                "parentID",
+                "summary",
+                "modelID",
+                "providerID",
+            ]  # Add these for OpenCode format
             for key in keys_to_move:
                 if key in msg:
                     msg_info[key] = msg.pop(key)
@@ -329,9 +342,7 @@ def print_usage():
     print(f"  OPENCODE_DATABASE=/custom/opencode.db {sys.argv[0]} ses_123abc456", file=sys.stderr)
 
 
-def ensure_output_is_not_source(
-    output_path: str | Path, source_paths: Iterable[str | Path]
-) -> None:
+def ensure_output_is_not_source(output_path: str | Path, source_paths: Iterable[str | Path]) -> None:
     """Refuse to replace the live database or one of its SQLite sidecars."""
     _common.ensure_output_does_not_overwrite(
         output_path,
@@ -384,7 +395,7 @@ def main():
         # Export session with all children
         result = export_session_and_collect_children(conn, session_id, set())
 
-# Sort messages by creation time
+        # Sort messages by creation time
         if result.get("messages"):
             result["messages"].sort(key=lambda m: m.get("info", {}).get("time", {}).get("created", 0))
 

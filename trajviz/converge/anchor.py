@@ -76,7 +76,11 @@ def classify_anchor_files(
     """
     file_to_class: dict[str, str] = {}
     class_counts: dict[str, int] = {
-        "source": 0, "generated": 0, "test": 0, "fixture": 0, "spec": 0,
+        "source": 0,
+        "generated": 0,
+        "test": 0,
+        "fixture": 0,
+        "spec": 0,
     }
 
     for f in sorted(anchor_files):
@@ -90,6 +94,7 @@ def classify_anchor_files(
 # ---------------------------------------------------------------------------
 # Anchor write metrics
 # ---------------------------------------------------------------------------
+
 
 def _match_anchor(target: str, anchor_files: set[str]) -> str | None:
     """Find which anchor file a target matches, if any."""
@@ -175,6 +180,7 @@ def compute_anchor_metrics(
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
+
 
 def compute_anchor_analysis(
     ref_actions: list[CanonicalAction],

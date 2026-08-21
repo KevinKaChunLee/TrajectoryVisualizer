@@ -13,7 +13,9 @@ from trajviz.insight.loaders import load_trajectory, detect_format
 from trajviz.insight.parser import parse_steps
 from trajviz.insight import rendering, formatting
 from trajviz.insight.metrics import (
-    compute_metrics, compute_health_verdict, effective_agent,
+    compute_metrics,
+    compute_health_verdict,
+    effective_agent,
 )
 from trajviz.insight.analytics import compute_step_analytics
 from trajviz.insight import patterns, diagnostics
@@ -38,30 +40,59 @@ class CodexLoaderTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.events = [
-            _codex_event("session_meta", "2026-01-05T12:00:00.000Z",
-                         {"id": "s1", "cwd": "/p/proj", "cli_version": "1.2.3",
-                          "model": "gpt-5", "model_provider": "openai"}),
-            _codex_event("response_item", "2026-01-05T12:00:01.000Z",
-                         {"type": "message", "role": "user",
-                          "content": [{"type": "input_text", "text": "fix it"}]}),
-            _codex_event("response_item", "2026-01-05T12:00:03.000Z",
-                         {"type": "message", "role": "assistant",
-                          "content": [{"type": "output_text", "text": "ok"}]}),
-            _codex_event("response_item", "2026-01-05T12:00:04.000Z",
-                         {"type": "custom_tool_call", "call_id": "c1", "name": "exec_command",
-                          "input": json.dumps({"cmd": "sed -i s/a/b/ app.py"})}),
-            _codex_event("response_item", "2026-01-05T12:00:05.000Z",
-                         {"type": "custom_tool_call_output", "call_id": "c1", "output": "done"}),
-            _codex_event("event_msg", "2026-01-05T12:00:06.000Z",
-                         {"type": "token_count", "info": {
-                          "last_token_usage":
-                              {"input_tokens": 1000, "cached_input_tokens": 800,
-                               "output_tokens": 50, "reasoning_output_tokens": 20,
-                               "total_tokens": 1070},
-                          "total_token_usage":
-                              {"input_tokens": 1000, "cached_input_tokens": 800,
-                               "output_tokens": 50, "reasoning_output_tokens": 20,
-                               "total_tokens": 1070}}}),
+            _codex_event(
+                "session_meta",
+                "2026-01-05T12:00:00.000Z",
+                {"id": "s1", "cwd": "/p/proj", "cli_version": "1.2.3", "model": "gpt-5", "model_provider": "openai"},
+            ),
+            _codex_event(
+                "response_item",
+                "2026-01-05T12:00:01.000Z",
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "fix it"}]},
+            ),
+            _codex_event(
+                "response_item",
+                "2026-01-05T12:00:03.000Z",
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]},
+            ),
+            _codex_event(
+                "response_item",
+                "2026-01-05T12:00:04.000Z",
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "c1",
+                    "name": "exec_command",
+                    "input": json.dumps({"cmd": "sed -i s/a/b/ app.py"}),
+                },
+            ),
+            _codex_event(
+                "response_item",
+                "2026-01-05T12:00:05.000Z",
+                {"type": "custom_tool_call_output", "call_id": "c1", "output": "done"},
+            ),
+            _codex_event(
+                "event_msg",
+                "2026-01-05T12:00:06.000Z",
+                {
+                    "type": "token_count",
+                    "info": {
+                        "last_token_usage": {
+                            "input_tokens": 1000,
+                            "cached_input_tokens": 800,
+                            "output_tokens": 50,
+                            "reasoning_output_tokens": 20,
+                            "total_tokens": 1070,
+                        },
+                        "total_token_usage": {
+                            "input_tokens": 1000,
+                            "cached_input_tokens": 800,
+                            "output_tokens": 50,
+                            "reasoning_output_tokens": 20,
+                            "total_tokens": 1070,
+                        },
+                    },
+                },
+            ),
             _codex_event("event_msg", "2026-01-05T12:00:07.000Z", {"type": "task_complete"}),
         ]
 
@@ -85,22 +116,32 @@ class CodexLoaderTests(unittest.TestCase):
 
     def test_multiple_token_counts_are_accumulated_and_duplicates_ignored(self):
         extra_usage = _codex_event(
-            "event_msg", "2026-01-05T12:00:06.500Z",
-            {"type": "token_count", "info": {
-                "last_token_usage": {
-                    "input_tokens": 200, "cached_input_tokens": 150,
-                    "output_tokens": 5, "reasoning_output_tokens": 2,
-                    "total_tokens": 205,
+            "event_msg",
+            "2026-01-05T12:00:06.500Z",
+            {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 200,
+                        "cached_input_tokens": 150,
+                        "output_tokens": 5,
+                        "reasoning_output_tokens": 2,
+                        "total_tokens": 205,
+                    },
+                    "total_token_usage": {
+                        "input_tokens": 1200,
+                        "cached_input_tokens": 950,
+                        "output_tokens": 55,
+                        "reasoning_output_tokens": 22,
+                        "total_tokens": 1275,
+                    },
                 },
-                "total_token_usage": {
-                    "input_tokens": 1200, "cached_input_tokens": 950,
-                    "output_tokens": 55, "reasoning_output_tokens": 22,
-                    "total_tokens": 1275,
-                },
-            }},
+            },
         )
         duplicate_usage = _codex_event(
-            "event_msg", "2026-01-05T12:00:06.750Z", extra_usage["payload"],
+            "event_msg",
+            "2026-01-05T12:00:06.750Z",
+            extra_usage["payload"],
         )
         events = self.events[:-1] + [extra_usage, duplicate_usage, self.events[-1]]
         raw = load_trajectory(_write(self.tmp, "multi-usage.jsonl", events, jsonl=True))
@@ -114,15 +155,21 @@ class CodexLoaderTests(unittest.TestCase):
 
     def test_same_cumulative_with_different_last_usage_is_not_a_duplicate(self):
         parallel_usage = _codex_event(
-            "event_msg", "2026-01-05T12:00:06.500Z",
-            {"type": "token_count", "info": {
-                "last_token_usage": {
-                    "input_tokens": 9, "cached_input_tokens": 8,
-                    "output_tokens": 1, "reasoning_output_tokens": 0,
-                    "total_tokens": 10,
+            "event_msg",
+            "2026-01-05T12:00:06.500Z",
+            {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 9,
+                        "cached_input_tokens": 8,
+                        "output_tokens": 1,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": 10,
+                    },
+                    "total_token_usage": self.events[-2]["payload"]["info"]["total_token_usage"],
                 },
-                "total_token_usage": self.events[-2]["payload"]["info"]["total_token_usage"],
-            }},
+            },
         )
         events = self.events[:-1] + [parallel_usage, self.events[-1]]
         raw = load_trajectory(_write(self.tmp, "parallel-usage.jsonl", events, jsonl=True))
@@ -135,17 +182,22 @@ class CodexLoaderTests(unittest.TestCase):
 
     def test_modern_exec_input_preserves_and_classifies_command(self):
         modern_call = _codex_event(
-            "response_item", "2026-01-05T12:00:05.100Z",
-            {"type": "custom_tool_call", "call_id": "c2", "name": "exec",
-             "input": 'const r = await tools.exec_command({"cmd":"rg -n needle src"});'},
+            "response_item",
+            "2026-01-05T12:00:05.100Z",
+            {
+                "type": "custom_tool_call",
+                "call_id": "c2",
+                "name": "exec",
+                "input": 'const r = await tools.exec_command({"cmd":"rg -n needle src"});',
+            },
         )
         modern_output = _codex_event(
-            "response_item", "2026-01-05T12:00:05.200Z",
+            "response_item",
+            "2026-01-05T12:00:05.200Z",
             {"type": "custom_tool_call_output", "call_id": "c2", "output": "match"},
         )
         events = self.events[:-2] + [modern_call, modern_output] + self.events[-2:]
-        steps = parse_steps(load_trajectory(
-            _write(self.tmp, "modern-exec.jsonl", events, jsonl=True)))
+        steps = parse_steps(load_trajectory(_write(self.tmp, "modern-exec.jsonl", events, jsonl=True)))
         tool = next(t for s in steps for t in s["tool_calls"] if t["tool_id"] == "c2")
         self.assertEqual(tool["tool_name"], "Grep")
         self.assertEqual(tool["input"]["command"], "rg -n needle src")
@@ -153,17 +205,17 @@ class CodexLoaderTests(unittest.TestCase):
     def test_modern_apply_patch_is_a_write_with_target(self):
         patch = "*** Begin Patch\n*** Update File: src/app.py\n@@\n-old\n+new\n*** End Patch"
         modern_call = _codex_event(
-            "response_item", "2026-01-05T12:00:05.100Z",
-            {"type": "custom_tool_call", "call_id": "c2", "name": "apply_patch",
-             "input": patch},
+            "response_item",
+            "2026-01-05T12:00:05.100Z",
+            {"type": "custom_tool_call", "call_id": "c2", "name": "apply_patch", "input": patch},
         )
         modern_output = _codex_event(
-            "response_item", "2026-01-05T12:00:05.200Z",
+            "response_item",
+            "2026-01-05T12:00:05.200Z",
             {"type": "custom_tool_call_output", "call_id": "c2", "output": "Done!"},
         )
         events = self.events[:-2] + [modern_call, modern_output] + self.events[-2:]
-        steps = parse_steps(load_trajectory(
-            _write(self.tmp, "modern-patch.jsonl", events, jsonl=True)))
+        steps = parse_steps(load_trajectory(_write(self.tmp, "modern-patch.jsonl", events, jsonl=True)))
         tool = next(t for s in steps for t in s["tool_calls"] if t["tool_id"] == "c2")
         self.assertEqual(tool["tool_name"], "Write")
         self.assertEqual(tool["input"]["file_path"], "src/app.py")
@@ -171,17 +223,22 @@ class CodexLoaderTests(unittest.TestCase):
 
     def test_non_shell_function_call_preserves_name_and_arguments(self):
         spawn = _codex_event(
-            "response_item", "2026-01-05T12:00:05.100Z",
-            {"type": "function_call", "call_id": "c2", "name": "spawn_agent",
-             "arguments": json.dumps({"task_name": "review", "message": "inspect"})},
+            "response_item",
+            "2026-01-05T12:00:05.100Z",
+            {
+                "type": "function_call",
+                "call_id": "c2",
+                "name": "spawn_agent",
+                "arguments": json.dumps({"task_name": "review", "message": "inspect"}),
+            },
         )
         spawn_output = _codex_event(
-            "response_item", "2026-01-05T12:00:05.200Z",
+            "response_item",
+            "2026-01-05T12:00:05.200Z",
             {"type": "function_call_output", "call_id": "c2", "output": "queued"},
         )
         events = self.events[:-2] + [spawn, spawn_output] + self.events[-2:]
-        steps = parse_steps(load_trajectory(
-            _write(self.tmp, "spawn.jsonl", events, jsonl=True)))
+        steps = parse_steps(load_trajectory(_write(self.tmp, "spawn.jsonl", events, jsonl=True)))
         tool = next(t for s in steps for t in s["tool_calls"] if t["tool_id"] == "c2")
         self.assertEqual(tool["tool_name"], "spawn_agent")
         self.assertEqual(tool["input"]["task_name"], "review")
@@ -220,8 +277,9 @@ class CodexLoaderTests(unittest.TestCase):
     def test_malformed_metadata_and_reasoning_entries_do_not_crash(self):
         events = [
             _codex_event("session_meta", "2026-01-05T12:00:00Z", None),
-            _codex_event("response_item", "2026-01-05T12:00:01Z",
-                         {"type": "reasoning", "summary": [None, {"text": "ok"}]}),
+            _codex_event(
+                "response_item", "2026-01-05T12:00:01Z", {"type": "reasoning", "summary": [None, {"text": "ok"}]}
+            ),
             _codex_event("event_msg", "2026-01-05T12:00:02Z", {"type": "task_complete"}),
         ]
         raw = load_trajectory(_write(self.tmp, "malformed-fields.jsonl", events, jsonl=True))
@@ -235,9 +293,13 @@ class ClaudeCodeLoaderTests(unittest.TestCase):
         self._i = 0
 
     def _entry(self, mid, ts, text):
-        e = {"role": "assistant", "message_id": mid, "index": self._i,
-             "content": [{"type": "text", "text": text}],
-             "usage": {"input_tokens": 10, "output_tokens": 5}}
+        e = {
+            "role": "assistant",
+            "message_id": mid,
+            "index": self._i,
+            "content": [{"type": "text", "text": text}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
         if ts is not None:
             e["timestamp"] = ts
         self._i += 1
@@ -247,9 +309,12 @@ class ClaudeCodeLoaderTests(unittest.TestCase):
         self._i = 0
         return {
             "format": "ccsession-trajectory",
-            "session": {"id": "s", "working_directory": "/p",
-                        "started_at": "2026-01-05T12:00:00Z",
-                        "ended_at": "2026-01-05T12:01:30Z"},
+            "session": {
+                "id": "s",
+                "working_directory": "/p",
+                "started_at": "2026-01-05T12:00:00Z",
+                "ended_at": "2026-01-05T12:01:30Z",
+            },
             "statistics": {},
             "trajectory": [
                 self._entry("m0", "2026-01-05T12:00:00Z", "first"),
@@ -257,8 +322,9 @@ class ClaudeCodeLoaderTests(unittest.TestCase):
                 self._entry("mNT", None, "no-timestamp"),
                 self._entry("m2", "2026-01-05T12:01:20Z", "third"),
             ],
-            "sub_agents": [{"agent_id": "sub1", "trajectory": [
-                self._entry("sa0", "2026-01-05T12:00:30Z", "subagent")]}],
+            "sub_agents": [
+                {"agent_id": "sub1", "trajectory": [self._entry("sa0", "2026-01-05T12:00:30Z", "subagent")]}
+            ],
         }
 
     def _steps(self):
@@ -282,24 +348,27 @@ class ClaudeCodeLoaderTests(unittest.TestCase):
 class RobustnessTests(unittest.TestCase):
     def test_null_directory_does_not_crash(self):
         tmp = tempfile.mkdtemp()
-        oc = {"info": {"id": "s", "directory": None, "time": {"created": 1000, "updated": 2000}},
-              "messages": [{"info": {"role": "user", "time": {"created": 1000}}, "parts": []}]}
+        oc = {
+            "info": {"id": "s", "directory": None, "time": {"created": 1000, "updated": 2000}},
+            "messages": [{"info": {"role": "user", "time": {"created": 1000}}, "parts": []}],
+        }
         raw = load_trajectory(_write(tmp, "n.json", oc))
         self.assertNotIn("_error", raw)
 
     def test_non_string_role_does_not_crash_renderers(self):
-        steps = parse_steps({"messages": [{"role": 123, "parts": []},
-                                          {"role": ["x"], "parts": []}]})
+        steps = parse_steps({"messages": [{"role": 123, "parts": []}, {"role": ["x"], "parts": []}]})
         rendering.render_workflow_html(steps)
         rendering.render_toc_sidebar(steps)
         rendering._format_step_header(steps[0])
 
     def test_explicit_zero_duration_is_not_backfilled(self):
         raw = {
-            "messages": [{
-                "info": {"role": "assistant", "time": {"created": 1000, "completed": 1000}},
-                "parts": [{"type": "text", "text": "instant"}],
-            }],
+            "messages": [
+                {
+                    "info": {"role": "assistant", "time": {"created": 1000, "completed": 1000}},
+                    "parts": [{"type": "text", "text": "instant"}],
+                }
+            ],
             "timing": {"finished_at": "1970-01-01T00:00:10Z"},
         }
         step = parse_steps(raw)[0]
@@ -311,16 +380,22 @@ class XssTests(unittest.TestCase):
     PAYLOAD = "<img src=x onerror=alert(1)>"
 
     def test_role_escaped_in_workflow_html(self):
-        steps = parse_steps({"messages": [
-            {"info": {"role": self.PAYLOAD, "time": {"created": 1, "completed": 2}},
-             "parts": [{"type": "text", "text": "hi"}]}]})
+        steps = parse_steps(
+            {
+                "messages": [
+                    {
+                        "info": {"role": self.PAYLOAD, "time": {"created": 1, "completed": 2}},
+                        "parts": [{"type": "text", "text": "hi"}],
+                    }
+                ]
+            }
+        )
         out = rendering.render_workflow_html(steps)
         self.assertNotIn("<img", out)
         self.assertIn("&lt;", out)
 
     def test_todowrite_content_escaped(self):
-        out = rendering.build_antipattern_summary_html(
-            [], [], {"stalled": [{"content": "</span>" + self.PAYLOAD}]}, 0)
+        out = rendering.build_antipattern_summary_html([], [], {"stalled": [{"content": "</span>" + self.PAYLOAD}]}, 0)
         self.assertNotIn("<img", out)
         self.assertIn("&lt;", out)
 
@@ -334,27 +409,56 @@ class MetricsTests(unittest.TestCase):
         return {v["metric"]: v for v in compute_health_verdict(m, [])}
 
     def test_throughput_uses_output_rate_not_inflated_total(self):
-        m = {"tokens": {"total": 918125}, "avg_cache_ratio": 98.0,
-             "tokens_per_second": 3946.2, "output_tokens_per_sec": 48.3,
-             "tool_call_count": 5, "tool_success_rate": 100, "tool_fail": 0}
+        m = {
+            "tokens": {"total": 918125},
+            "avg_cache_ratio": 98.0,
+            "tokens_per_second": 3946.2,
+            "output_tokens_per_sec": 48.3,
+            "tool_call_count": 5,
+            "tool_success_rate": 100,
+            "tool_fail": 0,
+        }
         v = self._verdicts(m)["Throughput"]
         self.assertEqual(v["status"], "warn")
         self.assertIn("48.3", v["label"])
 
     def test_verdicts_na_on_missing_token_data(self):
-        m = {"tokens": {"total": 0}, "avg_cache_ratio": 0, "output_tokens_per_sec": None,
-             "tool_call_count": 0, "tool_success_rate": 0, "tool_fail": 0}
+        m = {
+            "tokens": {"total": 0},
+            "avg_cache_ratio": 0,
+            "output_tokens_per_sec": None,
+            "tool_call_count": 0,
+            "tool_success_rate": 0,
+            "tool_fail": 0,
+        }
         v = self._verdicts(m)
         self.assertEqual(v["Cache Efficiency"]["label"], "N/A")
         self.assertEqual(v["Throughput"]["label"], "N/A")
 
     def test_analytics_tool_time_metadata_fallback(self):
-        step = {"index": 0, "role": "assistant", "duration": 10.0,
-                "tokens": {"total": 100, "input": 100, "output": 0, "reasoning": 0, "cache_read": 0},
-                "parts": [], "tool_call_count": 1, "error_count": 0, "has_reasoning": False,
-                "text_preview": "", "finish": "", "model_id": "", "agent": "",
-                "tool_calls": [{"tool_name": "Task", "time_start": None, "time_end": None,
-                                "duration_ms": None, "metadata": {"totalDurationMs": 8000}}]}
+        step = {
+            "index": 0,
+            "role": "assistant",
+            "duration": 10.0,
+            "tokens": {"total": 100, "input": 100, "output": 0, "reasoning": 0, "cache_read": 0},
+            "parts": [],
+            "tool_call_count": 1,
+            "error_count": 0,
+            "has_reasoning": False,
+            "text_preview": "",
+            "finish": "",
+            "model_id": "",
+            "agent": "",
+            "tool_calls": [
+                {
+                    "tool_name": "Task",
+                    "time_start": None,
+                    "time_end": None,
+                    "duration_ms": None,
+                    "metadata": {"totalDurationMs": 8000},
+                }
+            ],
+        }
         sa = compute_step_analytics([step])[0]
         self.assertEqual(sa["tool_time_share"], 0.8)
 
@@ -370,13 +474,19 @@ class MetricsTests(unittest.TestCase):
 
 class PatternsDiagnosticsTests(unittest.TestCase):
     def _bash(self, i, cmd, out=""):
-        return {"index": i, "role": "assistant",
-                "tool_calls": [{"tool_name": "Bash", "input": {"command": cmd},
-                                "output": out, "status": "success"}]}
+        return {
+            "index": i,
+            "role": "assistant",
+            "tool_calls": [{"tool_name": "Bash", "input": {"command": cmd}, "output": out, "status": "success"}],
+        }
 
     def test_silent_setup_bash_not_fruitless(self):
-        setup = [self._bash(0, "mkdir -p build"), self._bash(1, "cp a b"),
-                 self._bash(2, "chmod +x x"), self._bash(3, "git add -A")]
+        setup = [
+            self._bash(0, "mkdir -p build"),
+            self._bash(1, "cp a b"),
+            self._bash(2, "chmod +x x"),
+            self._bash(3, "git add -A"),
+        ]
         self.assertEqual(patterns.detect_fruitless_streaks(setup), [])
 
     def test_empty_grep_via_bash_still_fruitless(self):
@@ -385,20 +495,32 @@ class PatternsDiagnosticsTests(unittest.TestCase):
         self.assertTrue(streaks and streaks[0]["length"] == 3)
 
     def test_tool_sequences_non_overlapping(self):
-        burst = [{"index": i, "role": "assistant",
-                  "tool_calls": [{"tool_name": "Read", "input": {}, "status": "success"}]}
-                 for i in range(4)]
+        burst = [
+            {"index": i, "role": "assistant", "tool_calls": [{"tool_name": "Read", "input": {}, "status": "success"}]}
+            for i in range(4)
+        ]
         seqs = patterns.detect_tool_sequences(burst, min_freq=3)
         self.assertFalse([r for r in seqs if r["sequence"] == ["Read", "Read"]])
 
     def test_file_targeting_backslash_paths_match(self):
         def tc(tool, path):
             return {"tool_name": tool, "input": {"file_path": path}, "status": "success", "output": ""}
+
         steps = [
-            {"index": 0, "role": "assistant", "tokens": {"total": 10}, "parts": [],
-             "tool_calls": [tc("Read", r"C:\proj\app.py")]},
-            {"index": 1, "role": "assistant", "tokens": {"total": 10}, "parts": [],
-             "tool_calls": [tc("Edit", r"C:\proj\app.py")]},
+            {
+                "index": 0,
+                "role": "assistant",
+                "tokens": {"total": 10},
+                "parts": [],
+                "tool_calls": [tc("Read", r"C:\proj\app.py")],
+            },
+            {
+                "index": 1,
+                "role": "assistant",
+                "tokens": {"total": 10},
+                "parts": [],
+                "tool_calls": [tc("Edit", r"C:\proj\app.py")],
+            },
         ]
         inter = diagnostics.extract_file_interactions(steps)
         targets = diagnostics.identify_target_files(steps)
@@ -406,9 +528,14 @@ class PatternsDiagnosticsTests(unittest.TestCase):
         self.assertTrue(m["steps_to_first_touch"])
 
     def test_hotspot_inference_excludes_pre_step_idle(self):
-        step = {"index": 0, "role": "assistant", "duration": 20.0,
-                "tool_calls": [{"tool_name": "Task", "time_start": None, "time_end": None,
-                                "duration_ms": 15000, "metadata": {}}]}
+        step = {
+            "index": 0,
+            "role": "assistant",
+            "duration": 20.0,
+            "tool_calls": [
+                {"tool_name": "Task", "time_start": None, "time_end": None, "duration_ms": 15000, "metadata": {}}
+            ],
+        }
         d = diagnostics.decompose_hotspot_duration(step, idle_gap=8.0)
         self.assertEqual(d["inference_s"], 5.0)
 
@@ -416,21 +543,29 @@ class PatternsDiagnosticsTests(unittest.TestCase):
 class ConvergeTests(unittest.TestCase):
     def test_extract_base_command_multi_env(self):
         from trajviz.converge.canonical import _extract_base_command
+
         self.assertEqual(_extract_base_command("FOO=1 BAR=2 pytest"), "pytest")
         self.assertEqual(_extract_base_command("make test"), "make")
 
     def test_first_passing_validation_fires_for_validation_command(self):
         from trajviz.converge.canonical import CanonicalAction
         from trajviz.converge.milestones import extract_milestones
-        acts = [CanonicalAction(step_index=5, action_type="COMMAND", target="pytest",
-                                effect_label="justified",
-                                effect_detail={"reason": "validation_command"})]
+
+        acts = [
+            CanonicalAction(
+                step_index=5,
+                action_type="COMMAND",
+                target="pytest",
+                effect_label="justified",
+                effect_detail={"reason": "validation_command"},
+            )
+        ]
         self.assertEqual(extract_milestones(acts)["first_passing_validation"], 5)
 
     def test_recommendation_reports_minor_regressions(self):
         from trajviz.converge.intervention import generate_recommendation
-        rec = generate_recommendation(
-            {"latency": {"direction": "improved"}, "tokens": {"direction": "regressed"}}, [])
+
+        rec = generate_recommendation({"latency": {"direction": "improved"}, "tokens": {"direction": "regressed"}}, [])
         self.assertNotIn("without regressions", rec)
 
 

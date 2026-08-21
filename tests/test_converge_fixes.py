@@ -68,9 +68,11 @@ class SedAwkClassificationTests(unittest.TestCase):
         self.assertEqual(actions[0].action_type, "FILE_READ")
 
     def test_in_place_sed_is_file_write(self):
-        for cmd in ("sed -i 's/a/b/' /repo/f.py",
-                    "sed -i.bak 's/a/b/' /repo/f.py",
-                    "sed --in-place 's/a/b/' /repo/f.py"):
+        for cmd in (
+            "sed -i 's/a/b/' /repo/f.py",
+            "sed -i.bak 's/a/b/' /repo/f.py",
+            "sed --in-place 's/a/b/' /repo/f.py",
+        ):
             actions = canonicalize_steps([_step(0, [_bash(cmd, "t1")])])
             self.assertEqual(actions[0].action_type, "FILE_WRITE", cmd)
 
@@ -88,9 +90,17 @@ class SedAwkClassificationTests(unittest.TestCase):
         """The proof scenario: a later `sed -n` view of an edited file must
         not flip the real Edit to 'reverted'."""
         steps = [
-            _step(0, [{"tool_name": "Edit", "tool_id": "e1",
-                       "input": {"file_path": "/repo/src/app.py"},
-                       "status": "success"}]),
+            _step(
+                0,
+                [
+                    {
+                        "tool_name": "Edit",
+                        "tool_id": "e1",
+                        "input": {"file_path": "/repo/src/app.py"},
+                        "status": "success",
+                    }
+                ],
+            ),
             _step(1, [_bash("sed -n '1,50p' /repo/src/app.py", "t2")]),
         ]
         actions = canonicalize_steps(steps)
@@ -105,10 +115,15 @@ class PositionalFailureAttributionTests(unittest.TestCase):
     """B23: a failing id-less call must not mark same-tool siblings failed."""
 
     def test_only_failing_sibling_is_marked_failed(self):
-        steps = [_step(0, [
-            _bash("make build", metadata={"exit": 0}),
-            _bash("make test", metadata={"exit": 1}),
-        ])]
+        steps = [
+            _step(
+                0,
+                [
+                    _bash("make build", metadata={"exit": 0}),
+                    _bash("make test", metadata={"exit": 1}),
+                ],
+            )
+        ]
         actions = canonicalize_steps(steps)
         assign_effect_labels(actions, steps)
         self.assertNotEqual(actions[0].effect_label, "failed")
@@ -123,10 +138,10 @@ class JointCountFallbackTests(unittest.TestCase):
     @staticmethod
     def _pair():
         ref = [
-            CanonicalAction(step_index=0, action_type="FILE_READ",
-                            target="/r/a.py", cost=ActionCost(token_share=5000)),
-            CanonicalAction(step_index=1, action_type="FILE_WRITE",
-                            target="/r/a.py", cost=ActionCost(token_share=5000)),
+            CanonicalAction(step_index=0, action_type="FILE_READ", target="/r/a.py", cost=ActionCost(token_share=5000)),
+            CanonicalAction(
+                step_index=1, action_type="FILE_WRITE", target="/r/a.py", cost=ActionCost(token_share=5000)
+            ),
         ]
         cmp_ = [
             CanonicalAction(step_index=0, action_type="FILE_READ", target="/r/a.py"),
@@ -162,13 +177,11 @@ class AnchorPatchParsingTests(unittest.TestCase):
         return path
 
     def test_git_style_patch_extracts_files(self):
-        path = self._write_patch(
-            "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-x\n+y\n")
+        path = self._write_patch("--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-x\n+y\n")
         self.assertEqual(_parse_anchor_files(path), {"src/app.py"})
 
     def test_prefixless_patch_returns_none_not_empty_set(self):
-        path = self._write_patch(
-            "--- src/app.py\n+++ src/app.py\n@@ -1 +1 @@\n-x\n+y\n")
+        path = self._write_patch("--- src/app.py\n+++ src/app.py\n@@ -1 +1 @@\n-x\n+y\n")
         self.assertIsNone(_parse_anchor_files(path))
 
     def test_missing_patch_returns_none(self):
@@ -180,12 +193,28 @@ class AnchorPatchParsingTests(unittest.TestCase):
         behave like anchor_files=None (fall back to identify_target_files),
         so a target-file read still labels 'justified'."""
         steps = [
-            _step(0, [{"tool_name": "Edit", "tool_id": "e1",
-                       "input": {"file_path": "/repo/src/app.py"},
-                       "status": "success"}]),
-            _step(1, [{"tool_name": "Read", "tool_id": "r1",
-                       "input": {"file_path": "/repo/src/app.py"},
-                       "status": "success"}]),
+            _step(
+                0,
+                [
+                    {
+                        "tool_name": "Edit",
+                        "tool_id": "e1",
+                        "input": {"file_path": "/repo/src/app.py"},
+                        "status": "success",
+                    }
+                ],
+            ),
+            _step(
+                1,
+                [
+                    {
+                        "tool_name": "Read",
+                        "tool_id": "r1",
+                        "input": {"file_path": "/repo/src/app.py"},
+                        "status": "success",
+                    }
+                ],
+            ),
         ]
         actions_none = canonicalize_steps(steps)
         assign_effect_labels(actions_none, steps, anchor_files=None)
@@ -206,24 +235,19 @@ class FuzzySearchTargetTests(unittest.TestCase):
 
     def test_reduced_grep_matches_native_search(self):
         cmd = CanonicalAction(
-            step_index=0, action_type="COMMAND", target="grep",
-            args={"command": "grep -n TODO /repo/src/app.py"})
-        native = CanonicalAction(
-            step_index=0, action_type="SEARCH", target="TODO@/repo/src/app.py")
+            step_index=0, action_type="COMMAND", target="grep", args={"command": "grep -n TODO /repo/src/app.py"}
+        )
+        native = CanonicalAction(step_index=0, action_type="SEARCH", target="TODO@/repo/src/app.py")
         self.assertTrue(semantic_equivalent(cmd, native, fuzzy_commands=True))
 
     def test_search_scope_matches_across_roots(self):
-        a = CanonicalAction(step_index=0, action_type="SEARCH",
-                            target="TODO@/home/u1/repo/src")
-        b = CanonicalAction(step_index=0, action_type="SEARCH",
-                            target="TODO@/tmp/work/repo/src")
+        a = CanonicalAction(step_index=0, action_type="SEARCH", target="TODO@/home/u1/repo/src")
+        b = CanonicalAction(step_index=0, action_type="SEARCH", target="TODO@/tmp/work/repo/src")
         self.assertTrue(semantic_equivalent(a, b))
 
     def test_different_patterns_never_match(self):
-        a = CanonicalAction(step_index=0, action_type="SEARCH",
-                            target="TODO@/home/u1/repo/src")
-        b = CanonicalAction(step_index=0, action_type="SEARCH",
-                            target="FIXME@/home/u1/repo/src")
+        a = CanonicalAction(step_index=0, action_type="SEARCH", target="TODO@/home/u1/repo/src")
+        b = CanonicalAction(step_index=0, action_type="SEARCH", target="FIXME@/home/u1/repo/src")
         self.assertFalse(semantic_equivalent(a, b))
 
 
@@ -261,14 +285,23 @@ class AnchorSectionRenderingTests(unittest.TestCase):
 
     def test_anchor_section_rendered_when_present(self):
         report = {
-            "outcome": {}, "patterns": [],
+            "outcome": {},
+            "patterns": [],
             "anchor_analysis": {
                 "total_anchor_files": 1,
                 "file_classes": {"source": 1},
-                "reference": {"write_precision": 1.0, "write_recall": 1.0,
-                              "anchor_files_written": 1, "files_written": 1},
-                "compared": {"write_precision": 0.5, "write_recall": 1.0,
-                             "anchor_files_written": 1, "files_written": 2},
+                "reference": {
+                    "write_precision": 1.0,
+                    "write_recall": 1.0,
+                    "anchor_files_written": 1,
+                    "files_written": 1,
+                },
+                "compared": {
+                    "write_precision": 0.5,
+                    "write_recall": 1.0,
+                    "anchor_files_written": 1,
+                    "files_written": 2,
+                },
             },
         }
         html = build_comparison_report_html(report)
@@ -276,8 +309,7 @@ class AnchorSectionRenderingTests(unittest.TestCase):
         self.assertIn("Write Precision", html)
 
     def test_no_anchor_section_when_absent(self):
-        html = build_comparison_report_html(
-            {"outcome": {}, "patterns": [], "anchor_analysis": None})
+        html = build_comparison_report_html({"outcome": {}, "patterns": [], "anchor_analysis": None})
         self.assertNotIn("Anchor Analysis", html)
 
 

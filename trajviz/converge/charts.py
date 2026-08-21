@@ -32,14 +32,14 @@ _MILESTONE_LABELS = {
     "final_patch": "Final Patch",
 }
 
-_REF_COLOR = "#1d4ed8"   # blue
-_CMP_COLOR = "#dc2626"   # red
+_REF_COLOR = "#1d4ed8"  # blue
+_CMP_COLOR = "#dc2626"  # red
 _DELTA_COLOR = "#6b7280"  # gray
 
 _PATTERN_COLORS = {
     "broad_exploration": "#3b82f6",
-    "reverted_and_rewritten": "#ef4444",    # was write_retry
-    "iterative_refinement": "#f87171",      # lighter red (less severe)
+    "reverted_and_rewritten": "#ef4444",  # was write_retry
+    "iterative_refinement": "#f87171",  # lighter red (less severe)
     "error_recovery_overhead": "#f59e0b",
     "premature_validation": "#8b5cf6",
     "redundant_search": "#06b6d4",
@@ -53,17 +53,25 @@ def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
     fig = go.Figure()
     if message:
         fig.add_annotation(
-            text=message, xref="paper", yref="paper",
-            x=0.5, y=0.5, showarrow=False, font_size=16,
+            text=message,
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font_size=16,
         )
     fig.update_layout(template=_TPL, height=height)
     return fig
 
 
 def _apply_chart_layout(
-    fig: go.Figure, title: str,
-    xaxis: str | None = None, yaxis: str | None = None,
-    height: int = 380, **kwargs,
+    fig: go.Figure,
+    title: str,
+    xaxis: str | None = None,
+    yaxis: str | None = None,
+    height: int = 380,
+    **kwargs,
 ) -> None:
     """Apply standard chart layout."""
     layout = dict(
@@ -82,6 +90,7 @@ def _apply_chart_layout(
 
 
 # -- Milestone timeline -------------------------------------------------------
+
 
 def build_milestone_timeline_chart(
     ref_milestones: dict[str, int | None],
@@ -106,16 +115,19 @@ def build_milestone_timeline_chart(
             ref_text.append(_MILESTONE_LABELS.get(name, name))
 
     if ref_x:
-        fig.add_trace(go.Scatter(
-            x=ref_x, y=[1] * len(ref_x),
-            mode="markers+text",
-            marker=dict(size=12, color=_REF_COLOR, symbol="diamond"),
-            text=ref_text,
-            textposition="top center",
-            textfont=dict(size=9),
-            name="Reference",
-            hovertemplate="<b>%{text}</b><br>Step: %{x}<extra>Reference</extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=ref_x,
+                y=[1] * len(ref_x),
+                mode="markers+text",
+                marker=dict(size=12, color=_REF_COLOR, symbol="diamond"),
+                text=ref_text,
+                textposition="top center",
+                textfont=dict(size=9),
+                name="Reference",
+                hovertemplate="<b>%{text}</b><br>Step: %{x}<extra>Reference</extra>",
+            )
+        )
 
     # Compared track (bottom, y=0)
     cmp_x, cmp_text = [], []
@@ -126,16 +138,19 @@ def build_milestone_timeline_chart(
             cmp_text.append(_MILESTONE_LABELS.get(name, name))
 
     if cmp_x:
-        fig.add_trace(go.Scatter(
-            x=cmp_x, y=[0] * len(cmp_x),
-            mode="markers+text",
-            marker=dict(size=12, color=_CMP_COLOR, symbol="diamond"),
-            text=cmp_text,
-            textposition="bottom center",
-            textfont=dict(size=9),
-            name="Compared",
-            hovertemplate="<b>%{text}</b><br>Step: %{x}<extra>Compared</extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=cmp_x,
+                y=[0] * len(cmp_x),
+                mode="markers+text",
+                marker=dict(size=12, color=_CMP_COLOR, symbol="diamond"),
+                text=cmp_text,
+                textposition="bottom center",
+                textfont=dict(size=9),
+                name="Compared",
+                hovertemplate="<b>%{text}</b><br>Step: %{x}<extra>Compared</extra>",
+            )
+        )
 
     # Connecting lines for deltas
     for name in _MILESTONE_NAMES:
@@ -144,24 +159,29 @@ def build_milestone_timeline_chart(
         if ref_val is not None and cmp_val is not None:
             delta = cmp_val - ref_val
             delta_label = f"+{delta}" if delta > 0 else str(delta)
-            fig.add_trace(go.Scatter(
-                x=[ref_val, cmp_val],
-                y=[1, 0],
-                mode="lines",
-                line=dict(color=_DELTA_COLOR, width=1, dash="dot"),
-                showlegend=False,
-                hoverinfo="skip",
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=[ref_val, cmp_val],
+                    y=[1, 0],
+                    mode="lines",
+                    line=dict(color=_DELTA_COLOR, width=1, dash="dot"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
             fig.add_annotation(
-                x=(ref_val + cmp_val) / 2, y=0.5,
+                x=(ref_val + cmp_val) / 2,
+                y=0.5,
                 text=delta_label,
                 showarrow=False,
                 font=dict(size=9, color=_DELTA_COLOR),
             )
 
     _apply_chart_layout(
-        fig, "Milestone Timeline",
-        xaxis="Step Index", height=320,
+        fig,
+        "Milestone Timeline",
+        xaxis="Step Index",
+        height=320,
         yaxis_visible=False,
         yaxis_range=[-0.5, 1.5],
         yaxis_tickvals=[0, 1],
@@ -172,6 +192,7 @@ def build_milestone_timeline_chart(
 
 
 # -- Segment cost chart -------------------------------------------------------
+
 
 def build_segment_cost_chart(
     segment_data: dict,
@@ -192,16 +213,21 @@ def build_segment_cost_chart(
         labels = [c["segment"] for c in comparisons]
         overheads = [c.get("overhead", 0) for c in comparisons]
 
-        fig.add_trace(go.Bar(
-            x=labels, y=overheads,
-            name="Overhead Ratio",
-            marker_color=_CMP_COLOR,
-            text=[f"{v:.2f}x" for v in overheads],
-            textposition="outside",
-        ))
+        fig.add_trace(
+            go.Bar(
+                x=labels,
+                y=overheads,
+                name="Overhead Ratio",
+                marker_color=_CMP_COLOR,
+                text=[f"{v:.2f}x" for v in overheads],
+                textposition="outside",
+            )
+        )
         _apply_chart_layout(
-            fig, "Segment Cost Overhead (Compared / Reference)",
-            xaxis="Segment", yaxis="Overhead Ratio",
+            fig,
+            "Segment Cost Overhead (Compared / Reference)",
+            xaxis="Segment",
+            yaxis="Overhead Ratio",
         )
     else:
         ref_segs = segment_data.get("reference_segments", [])
@@ -211,22 +237,28 @@ def build_segment_cost_chart(
             return _empty_figure(message="No segment data")
 
         if ref_segs:
-            fig.add_trace(go.Bar(
-                x=[s["segment"] for s in ref_segs],
-                y=[s.get("tokens", 0) for s in ref_segs],
-                name="Reference",
-                marker_color=_REF_COLOR,
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=[s["segment"] for s in ref_segs],
+                    y=[s.get("tokens", 0) for s in ref_segs],
+                    name="Reference",
+                    marker_color=_REF_COLOR,
+                )
+            )
         if cmp_segs:
-            fig.add_trace(go.Bar(
-                x=[s["segment"] for s in cmp_segs],
-                y=[s.get("tokens", 0) for s in cmp_segs],
-                name="Compared",
-                marker_color=_CMP_COLOR,
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=[s["segment"] for s in cmp_segs],
+                    y=[s.get("tokens", 0) for s in cmp_segs],
+                    name="Compared",
+                    marker_color=_CMP_COLOR,
+                )
+            )
         _apply_chart_layout(
-            fig, "Segment Token Costs",
-            xaxis="Segment", yaxis="Tokens",
+            fig,
+            "Segment Token Costs",
+            xaxis="Segment",
+            yaxis="Tokens",
             barmode="group",
         )
 
@@ -234,6 +266,7 @@ def build_segment_cost_chart(
 
 
 # -- Divergence waterfall chart ------------------------------------------------
+
 
 def build_divergence_waterfall_chart(patterns: list[dict]) -> go.Figure:
     """Waterfall chart showing cost breakdown by divergence pattern category.
@@ -260,26 +293,31 @@ def build_divergence_waterfall_chart(patterns: list[dict]) -> go.Figure:
     values = [v for _, v in sorted_types] + [sum(v for _, v in sorted_types)]
     measures = ["relative"] * len(sorted_types) + ["total"]
 
-    fig = go.Figure(go.Waterfall(
-        x=labels,
-        y=values,
-        measure=measures,
-        text=[f"{v:,}" for v in values],
-        textposition="outside",
-        connector=dict(line=dict(color="#d1d5db", width=1)),
-        increasing=dict(marker=dict(color="#ef4444")),
-        decreasing=dict(marker=dict(color="#22c55e")),
-        totals=dict(marker=dict(color="#6366f1")),
-    ))
+    fig = go.Figure(
+        go.Waterfall(
+            x=labels,
+            y=values,
+            measure=measures,
+            text=[f"{v:,}" for v in values],
+            textposition="outside",
+            connector=dict(line=dict(color="#d1d5db", width=1)),
+            increasing=dict(marker=dict(color="#ef4444")),
+            decreasing=dict(marker=dict(color="#22c55e")),
+            totals=dict(marker=dict(color="#6366f1")),
+        )
+    )
 
     _apply_chart_layout(
-        fig, "Divergence Cost Breakdown by Pattern",
-        xaxis="Pattern", yaxis="Extra Tokens",
+        fig,
+        "Divergence Cost Breakdown by Pattern",
+        xaxis="Pattern",
+        yaxis="Extra Tokens",
     )
     return fig
 
 
 # -- Anchor class recall chart ------------------------------------------------
+
 
 def build_anchor_class_chart(anchor_analysis: dict | None) -> go.Figure:
     """Grouped bar chart showing per-class anchor-write recall for reference and compared.
@@ -305,27 +343,33 @@ def build_anchor_class_chart(anchor_analysis: dict | None) -> go.Figure:
 
     fig = go.Figure()
 
-    fig.add_trace(go.Bar(
-        x=classes,
-        y=ref_recalls,
-        name="Reference",
-        marker_color=_REF_COLOR,
-        text=[f"{v:.1f}%" for v in ref_recalls],
-        textposition="outside",
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=classes,
+            y=ref_recalls,
+            name="Reference",
+            marker_color=_REF_COLOR,
+            text=[f"{v:.1f}%" for v in ref_recalls],
+            textposition="outside",
+        )
+    )
 
-    fig.add_trace(go.Bar(
-        x=classes,
-        y=cmp_recalls,
-        name="Compared",
-        marker_color="#f97316",  # orange
-        text=[f"{v:.1f}%" for v in cmp_recalls],
-        textposition="outside",
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=classes,
+            y=cmp_recalls,
+            name="Compared",
+            marker_color="#f97316",  # orange
+            text=[f"{v:.1f}%" for v in cmp_recalls],
+            textposition="outside",
+        )
+    )
 
     _apply_chart_layout(
-        fig, "Anchor Write Recall by File Class",
-        xaxis="File Class", yaxis="Recall (%)",
+        fig,
+        "Anchor Write Recall by File Class",
+        xaxis="File Class",
+        yaxis="Recall (%)",
         barmode="group",
     )
     return fig

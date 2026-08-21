@@ -65,7 +65,9 @@ def build_ui() -> gr.Blocks:
                 empty = _empty_figure(message="Upload both trajectory files to compare")
                 return (
                     "<div class='cvg-report'><p>Please upload both a reference and compared trajectory.</p></div>",
-                    empty, empty, empty,
+                    empty,
+                    empty,
+                    empty,
                     gr.update(value=empty, visible=False),
                 )
 
@@ -107,7 +109,10 @@ def build_ui() -> gr.Blocks:
                 anchor_visible = anchor_analysis is not None
 
                 return (
-                    html_out, milestone_fig, segment_fig, waterfall_fig,
+                    html_out,
+                    milestone_fig,
+                    segment_fig,
+                    waterfall_fig,
                     gr.update(value=anchor_fig, visible=anchor_visible),
                 )
 
@@ -144,8 +149,11 @@ def build_ui() -> gr.Blocks:
         def do_batch(manifest_upload, rate, fuzzy):
             """Callback: parse manifest, run batch, aggregate, display."""
             from .batch import (
-                parse_manifest, run_batch, aggregate_reports,
-                compute_pattern_frequency, promote_patterns,
+                parse_manifest,
+                run_batch,
+                aggregate_reports,
+                compute_pattern_frequency,
+                promote_patterns,
             )
 
             if manifest_upload is None:
@@ -161,35 +169,46 @@ def build_ui() -> gr.Blocks:
 
                 # Render as HTML
                 import html as html_mod
+
                 parts = ['<div class="cvg-report">']
                 parts.append("<h2>Batch Report</h2>")
-                parts.append(f"<p>{aggregate.get('success_count', 0)} of {aggregate.get('task_count', 0)} tasks succeeded</p>")
+                parts.append(
+                    f"<p>{aggregate.get('success_count', 0)} of {aggregate.get('task_count', 0)} tasks succeeded</p>"
+                )
 
                 # Metrics table
                 metrics = aggregate.get("metrics", {})
                 if metrics:
                     parts.append("<h3>Aggregate Metrics</h3>")
-                    parts.append('<table class="cvg-outcome-table"><thead><tr>'
-                                 '<th>Metric</th><th>Mean</th><th>Median</th><th>P95</th></tr></thead><tbody>')
+                    parts.append(
+                        '<table class="cvg-outcome-table"><thead><tr>'
+                        "<th>Metric</th><th>Mean</th><th>Median</th><th>P95</th></tr></thead><tbody>"
+                    )
                     for name, stats in metrics.items():
-                        parts.append(f"<tr><td>{html_mod.escape(name)}</td>"
-                                     f"<td>{stats.get('mean', 0):.4f}</td>"
-                                     f"<td>{stats.get('median', 0):.4f}</td>"
-                                     f"<td>{stats.get('p95', 0):.4f}</td></tr>")
+                        parts.append(
+                            f"<tr><td>{html_mod.escape(name)}</td>"
+                            f"<td>{stats.get('mean', 0):.4f}</td>"
+                            f"<td>{stats.get('median', 0):.4f}</td>"
+                            f"<td>{stats.get('p95', 0):.4f}</td></tr>"
+                        )
                     parts.append("</tbody></table>")
 
                 # Pattern frequency
                 if frequency:
                     parts.append("<h3>Pattern Frequency</h3>")
-                    parts.append('<table class="cvg-outcome-table"><thead><tr>'
-                                 '<th>Pattern</th><th>Tasks</th><th>Prevalence</th><th>Level</th></tr></thead><tbody>')
+                    parts.append(
+                        '<table class="cvg-outcome-table"><thead><tr>'
+                        "<th>Pattern</th><th>Tasks</th><th>Prevalence</th><th>Level</th></tr></thead><tbody>"
+                    )
                     for ptype, data in sorted(frequency.items(), key=lambda x: -x[1].get("count", 0)):
                         level = promoted.get(ptype, "hypothesis")
                         badge = "supported_finding" if level == "supported_finding" else "hypothesis"
-                        parts.append(f"<tr><td>{html_mod.escape(ptype)}</td>"
-                                     f"<td>{data.get('count', 0)}</td>"
-                                     f"<td>{data.get('prevalence', 0)*100:.0f}%</td>"
-                                     f"<td><span class='cvg-badge'>{html_mod.escape(badge)}</span></td></tr>")
+                        parts.append(
+                            f"<tr><td>{html_mod.escape(ptype)}</td>"
+                            f"<td>{data.get('count', 0)}</td>"
+                            f"<td>{data.get('prevalence', 0) * 100:.0f}%</td>"
+                            f"<td><span class='cvg-badge'>{html_mod.escape(badge)}</span></td></tr>"
+                        )
                     parts.append("</tbody></table>")
 
                 parts.append("</div>")
@@ -229,8 +248,11 @@ def build_ui() -> gr.Blocks:
             """Callback: run before/after comparison."""
             from .batch import parse_manifest, run_batch
             from .intervention import (
-                pair_tasks, compute_metric_deltas, compute_pattern_deltas,
-                detect_guardrail_regressions, build_intervention_report,
+                pair_tasks,
+                compute_metric_deltas,
+                compute_pattern_deltas,
+                detect_guardrail_regressions,
+                build_intervention_report,
             )
 
             if before_upload is None or after_upload is None:
@@ -250,10 +272,11 @@ def build_ui() -> gr.Blocks:
                 pattern_deltas = compute_pattern_deltas(paired)
                 guardrails = detect_guardrail_regressions(metric_deltas)
                 report = build_intervention_report(
-                    before_path, after_path, paired, before_only, after_only,
-                    metric_deltas, pattern_deltas, guardrails)
+                    before_path, after_path, paired, before_only, after_only, metric_deltas, pattern_deltas, guardrails
+                )
 
                 import html as html_mod
+
                 parts = ['<div class="cvg-report">']
                 parts.append("<h2>Intervention Report</h2>")
                 parts.append(f"<p>Paired tasks: {report['paired_tasks']}</p>")
@@ -271,18 +294,24 @@ def build_ui() -> gr.Blocks:
                 deltas = report.get("intervention_effect", {})
                 if deltas:
                     parts.append("<h3>Metric Deltas</h3>")
-                    parts.append('<table class="cvg-outcome-table"><thead><tr>'
-                                 '<th>Metric</th><th>Before</th><th>After</th>'
-                                 '<th>Delta</th><th>Direction</th></tr></thead><tbody>')
+                    parts.append(
+                        '<table class="cvg-outcome-table"><thead><tr>'
+                        "<th>Metric</th><th>Before</th><th>After</th>"
+                        "<th>Delta</th><th>Direction</th></tr></thead><tbody>"
+                    )
                     for name, d in deltas.items():
-                        color = "#059669" if d["direction"] == "improved" else (
-                            "#dc2626" if d["direction"] == "regressed" else "#6b7280")
+                        color = (
+                            "#059669"
+                            if d["direction"] == "improved"
+                            else ("#dc2626" if d["direction"] == "regressed" else "#6b7280")
+                        )
                         parts.append(
-                            f'<tr><td>{html_mod.escape(name)}</td>'
-                            f'<td>{d["before_mean"]:.4f}</td>'
-                            f'<td>{d["after_mean"]:.4f}</td>'
-                            f'<td>{d["delta"]:+.4f}</td>'
-                            f'<td style="color:{color};">{d["direction"]}</td></tr>')
+                            f"<tr><td>{html_mod.escape(name)}</td>"
+                            f"<td>{d['before_mean']:.4f}</td>"
+                            f"<td>{d['after_mean']:.4f}</td>"
+                            f"<td>{d['delta']:+.4f}</td>"
+                            f'<td style="color:{color};">{d["direction"]}</td></tr>'
+                        )
                     parts.append("</tbody></table>")
 
                 parts.append("</div>")

@@ -10,6 +10,7 @@ so they also run in CI. Locates DECAF via AWE_DECAF_PATH (default: a sibling
 environment into a hard failure instead of a silent skip — so the suite can never
 be green merely because the attribution tests were skipped.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -55,6 +56,7 @@ try:
     import awe.arbiter as _arb
     import awe.adapters as _ad
     import awe.trajsignals as _ts
+
     if (_CACHE / "judge").is_dir():
         _cfg.JUDGE_CACHE_DIR = _CACHE / "judge"
         _arb.ARBITER_CACHE_DIR = _CACHE / "arbiter"
@@ -74,8 +76,9 @@ def pytest_collection_finish(session):
     # No silent green: if CI demands the integration tests, the environment must
     # be ready (DECAF importable + fixture corpus present) or the run fails here.
     if os.environ.get("TRAJVIZ_REQUIRE_ATTRIBUTION"):
-        assert _DECAF_OK, ("TRAJVIZ_REQUIRE_ATTRIBUTION set but DECAF (awe) is not "
-                           "importable — set AWE_DECAF_PATH to a DECAF checkout")
-        assert (_CORPUS / "data" / "requirements"
-                / "astropy__astropy-13033.json").is_file(), \
+        assert _DECAF_OK, (
+            "TRAJVIZ_REQUIRE_ATTRIBUTION set but DECAF (awe) is not importable — set AWE_DECAF_PATH to a DECAF checkout"
+        )
+        assert (_CORPUS / "data" / "requirements" / "astropy__astropy-13033.json").is_file(), (
             "TRAJVIZ_REQUIRE_ATTRIBUTION set but the fixture corpus is missing"
+        )

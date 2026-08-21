@@ -215,9 +215,7 @@ def build_step_message(step: dict, max_chars: int = 8000) -> str:
             # Arguments: Lingxi uses "arguments", CC/OpenCode uses "input"
             inp = tc.get("arguments") or tc.get("input", {})
             if isinstance(inp, dict):
-                inp_summary = ", ".join(
-                    f"{k}={repr(v)[:80]}" for k, v in list(inp.items())[:5]
-                )
+                inp_summary = ", ".join(f"{k}={repr(v)[:80]}" for k, v in list(inp.items())[:5])
             else:
                 inp_summary = str(inp)[:200]
             line = f"  - {name} ({status}): {inp_summary}"
@@ -244,7 +242,11 @@ def build_step_message(step: dict, max_chars: int = 8000) -> str:
         for tc in tool_calls:
             fn = tc.get("tool_name", "?")
             args = tc.get("arguments", {})
-            args_str = ", ".join(f"{k}={repr(v)[:60]}" for k, v in list(args.items())[:5]) if isinstance(args, dict) else str(args)[:200]
+            args_str = (
+                ", ".join(f"{k}={repr(v)[:60]}" for k, v in list(args.items())[:5])
+                if isinstance(args, dict)
+                else str(args)[:200]
+            )
             triple_lines.append(f"ToolCall: {fn}({args_str})")
             sr = tc.get("short_result", "")
             if sr:
@@ -262,10 +264,7 @@ def build_step_message(step: dict, max_chars: int = 8000) -> str:
         parts.append(f"Text:\n{preview}")
 
     # Reasoning (include all reasoning blocks)
-    reasoning_blocks = [
-        p["text"] for p in step.get("parts", [])
-        if p.get("type") == "reasoning" and p.get("text")
-    ]
+    reasoning_blocks = [p["text"] for p in step.get("parts", []) if p.get("type") == "reasoning" and p.get("text")]
     if reasoning_blocks:
         parts.append("Reasoning:\n" + "\n---\n".join(reasoning_blocks))
 
@@ -281,11 +280,7 @@ def build_step_message(step: dict, max_chars: int = 8000) -> str:
         else:
             head_chars = (budget * 3) // 4
             tail_chars = budget - head_chars
-            content = (
-                content[:head_chars]
-                + separator
-                + content[-tail_chars:]
-            )
+            content = content[:head_chars] + separator + content[-tail_chars:]
     return content
 
 
@@ -304,16 +299,19 @@ def call_llm(
     timeout: int = 120,
 ) -> str:
     if provider == "anthropic":
-        return _call_anthropic(base_url, api_key, model, system_prompt,
-                               user_message, temperature, max_tokens, timeout)
-    return _call_openai(base_url, api_key, model, system_prompt,
-                        user_message, temperature, max_tokens, timeout)
+        return _call_anthropic(base_url, api_key, model, system_prompt, user_message, temperature, max_tokens, timeout)
+    return _call_openai(base_url, api_key, model, system_prompt, user_message, temperature, max_tokens, timeout)
 
 
 def _call_openai(
-    base_url: str, api_key: str, model: str,
-    system_prompt: str, user_message: str,
-    temperature: float | None, max_tokens: int | None, timeout: int,
+    base_url: str,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    temperature: float | None,
+    max_tokens: int | None,
+    timeout: int,
 ) -> str:
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
@@ -339,9 +337,14 @@ def _call_openai(
 
 
 def _call_anthropic(
-    base_url: str, api_key: str, model: str,
-    system_prompt: str, user_message: str,
-    temperature: float | None, max_tokens: int | None, timeout: int,
+    base_url: str,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    temperature: float | None,
+    max_tokens: int | None,
+    timeout: int,
 ) -> str:
     url = f"{base_url.rstrip('/')}/messages"
     headers = {
@@ -427,26 +430,24 @@ def main() -> None:
         description="Label trajectory steps with phase/action tags using an LLM.",
     )
     parser.add_argument("input", help="Path to trajectory file (JSON or Lingxi .log)")
-    parser.add_argument("--output", "-o", default=None,
-                        help="Output JSON path (default: <input>_labeled.json)")
-    parser.add_argument("--model", default=None,
-                        help="LLM model (overrides LABEL_MODEL env)")
-    parser.add_argument("--base-url", default=None,
-                        help="LLM API base URL (overrides LABEL_BASE_URL env)")
-    parser.add_argument("--api-key", default=None,
-                        help="LLM API key (overrides LABEL_API_KEY env)")
-    parser.add_argument("--provider", default=None,
-                        help="LLM provider: openai or anthropic (overrides LABEL_PROVIDER env)")
-    parser.add_argument("--temperature", type=float, default=None,
-                        help="Sampling temperature (overrides LABEL_TEMPERATURE env)")
-    parser.add_argument("--max-tokens", type=int, default=None,
-                        help="Max response tokens (overrides LABEL_MAX_TOKENS env)")
-    parser.add_argument("--max-content-chars", type=int, default=8000,
-                        help="Max chars per step sent to LLM (default: 8000)")
-    parser.add_argument("--delay", type=float, default=0.0,
-                        help="Delay in seconds between LLM calls (default: 0)")
-    parser.add_argument("--taxonomy", default=None,
-                        help="Path to TAXONOMY_REFERENCE.md (default: auto-detect)")
+    parser.add_argument("--output", "-o", default=None, help="Output JSON path (default: <input>_labeled.json)")
+    parser.add_argument("--model", default=None, help="LLM model (overrides LABEL_MODEL env)")
+    parser.add_argument("--base-url", default=None, help="LLM API base URL (overrides LABEL_BASE_URL env)")
+    parser.add_argument("--api-key", default=None, help="LLM API key (overrides LABEL_API_KEY env)")
+    parser.add_argument(
+        "--provider", default=None, help="LLM provider: openai or anthropic (overrides LABEL_PROVIDER env)"
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=None, help="Sampling temperature (overrides LABEL_TEMPERATURE env)"
+    )
+    parser.add_argument(
+        "--max-tokens", type=int, default=None, help="Max response tokens (overrides LABEL_MAX_TOKENS env)"
+    )
+    parser.add_argument(
+        "--max-content-chars", type=int, default=8000, help="Max chars per step sent to LLM (default: 8000)"
+    )
+    parser.add_argument("--delay", type=float, default=0.0, help="Delay in seconds between LLM calls (default: 0)")
+    parser.add_argument("--taxonomy", default=None, help="Path to TAXONOMY_REFERENCE.md (default: auto-detect)")
 
     args = parser.parse_args()
 

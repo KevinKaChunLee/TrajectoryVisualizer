@@ -37,23 +37,14 @@ def aggregate_labels(data: dict) -> dict:
     # from the trajectory below.  v2 sidecars contain every original index,
     # including deterministic user labels.  Keep classification KPIs
     # assistant-focused while using embedded user records in the timeline.
-    embedded_user_steps = [
-        s for s in all_steps
-        if isinstance(s, dict) and s.get("role") == "user"
-    ]
+    embedded_user_steps = [s for s in all_steps if isinstance(s, dict) and s.get("role") == "user"]
     # KPI denominators stay assistant-focused: v1 records carry no role or
     # role == "assistant"; v2 additionally emits deterministic records for
     # user and other roles (system/developer/"?"), which must not count as
     # unclassified assistant work.
-    steps = [
-        s for s in all_steps
-        if isinstance(s, dict) and s.get("role", "assistant") == "assistant"
-    ]
+    steps = [s for s in all_steps if isinstance(s, dict) and s.get("role", "assistant") == "assistant"]
     total = len(steps)
-    unknown = sum(
-        1 for s in steps
-        if s.get("phase") == "unknown" or s.get("action") == "unknown"
-    )
+    unknown = sum(1 for s in steps if s.get("phase") == "unknown" or s.get("action") == "unknown")
     classified = total - unknown
 
     # Phase (level 1) counts and durations
@@ -84,9 +75,7 @@ def aggregate_labels(data: dict) -> dict:
 
     # Filter timeline steps to exclude unknown labels
     classified_steps = [
-        s for s in steps
-        if s.get("phase", "unknown") != "unknown"
-        and s.get("action", "unknown") != "unknown"
+        s for s in steps if s.get("phase", "unknown") != "unknown" and s.get("action", "unknown") != "unknown"
     ]
 
     # Load user steps from the original trajectory for the timeline
@@ -99,8 +88,7 @@ def aggregate_labels(data: dict) -> dict:
     if traj_path and not os.path.isfile(traj_path):
         labeled_path = data.get("_labeled_path", "")
         if labeled_path and os.path.isfile(labeled_path):
-            sibling = os.path.join(os.path.dirname(labeled_path),
-                                   os.path.basename(traj_path))
+            sibling = os.path.join(os.path.dirname(labeled_path), os.path.basename(traj_path))
             if os.path.isfile(sibling):
                 traj_path = sibling
     session_end_ms: float | None = None
@@ -114,27 +102,24 @@ def aggregate_labels(data: dict) -> dict:
             raw = load_trajectory(traj_path)
             if "_error" not in raw:
                 traj_steps = parse_steps(raw)
-                embedded_user_indices = {
-                    s.get("index")
-                    for s in timeline_steps
-                    if s.get("role") == "user"
-                }
+                embedded_user_indices = {s.get("index") for s in timeline_steps if s.get("role") == "user"}
                 for s in traj_steps:
-                    if (s.get("role") == "user"
-                            and s.get("index") not in embedded_user_indices):
-                        timeline_steps.append({
-                            "index": s.get("index", 0),
-                            "role": "user",
-                            "phase": "user",
-                            "action": "user_prompt",
-                            "duration_s": s.get("duration") or 0,
-                            "tokens_total": s.get("tokens", {}).get("total", 0),
-                            "tool_calls": [],
-                            "finish": "",
-                            "agent": "",
-                            "model_id": "",
-                            "text_preview": s.get("text_preview", ""),
-                        })
+                    if s.get("role") == "user" and s.get("index") not in embedded_user_indices:
+                        timeline_steps.append(
+                            {
+                                "index": s.get("index", 0),
+                                "role": "user",
+                                "phase": "user",
+                                "action": "user_prompt",
+                                "duration_s": s.get("duration") or 0,
+                                "tokens_total": s.get("tokens", {}).get("total", 0),
+                                "tool_calls": [],
+                                "finish": "",
+                                "agent": "",
+                                "model_id": "",
+                                "text_preview": s.get("text_preview", ""),
+                            }
+                        )
                         embedded_user_indices.add(s.get("index"))
                 # Extract trajectory-end timestamp so we can backfill the last
                 # labeled step's duration if its completion time was missing.
@@ -143,14 +128,15 @@ def aggregate_labels(data: dict) -> dict:
                 if isinstance(finished_at, str) and finished_at:
                     try:
                         from datetime import datetime
+
                         dt = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
                         session_end_ms = dt.timestamp() * 1000
                     except (ValueError, TypeError):
                         session_end_ms = None
         except Exception as exc:
             import logging
-            logging.getLogger(__name__).debug(
-                "Could not load trajectory for timeline: %s", exc)
+
+            logging.getLogger(__name__).debug("Could not load trajectory for timeline: %s", exc)
     timeline_steps.sort(key=lambda s: s.get("index", 0))
 
     # Backfill the last step's duration if its completion timestamp is missing

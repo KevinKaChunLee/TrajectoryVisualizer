@@ -37,32 +37,34 @@ class WorkflowDetailUiTests(unittest.TestCase):
     def test_detail_tabs_stay_visible_inside_scrollable_detail_panel(self):
         styles = Path("trajviz/insight/styles.py").read_text()
 
-        self.assertIn("position: sticky", styles[styles.index(".dp-tabs"):styles.index(".dp-tab {")])
-        self.assertIn("top: 0", styles[styles.index(".dp-tabs"):styles.index(".dp-tab {")])
+        self.assertIn("position: sticky", styles[styles.index(".dp-tabs") : styles.index(".dp-tab {")])
+        self.assertIn("top: 0", styles[styles.index(".dp-tabs") : styles.index(".dp-tab {")])
 
     def test_detail_tabs_do_not_use_fragile_inline_click_handler(self):
         from trajviz.insight.rendering import format_step_detail
 
-        html = format_step_detail({
-            "index": 1,
-            "role": "assistant",
-            "parts": [{"type": "text", "content": "hello"}],
-            "tokens": {
-                "total": 0,
-                "input": 0,
-                "output": 0,
-                "reasoning": 0,
-                "cache_read": 0,
-                "cache_write": 0,
-            },
-            "tool_calls": [],
-            "tool_call_count": 0,
-            "error_count": 0,
-            "has_reasoning": False,
-        })
+        html = format_step_detail(
+            {
+                "index": 1,
+                "role": "assistant",
+                "parts": [{"type": "text", "content": "hello"}],
+                "tokens": {
+                    "total": 0,
+                    "input": 0,
+                    "output": 0,
+                    "reasoning": 0,
+                    "cache_read": 0,
+                    "cache_write": 0,
+                },
+                "tool_calls": [],
+                "tool_call_count": 0,
+                "error_count": 0,
+                "has_reasoning": False,
+            }
+        )
 
         self.assertIn("class='dp-tabs'", html)
-        self.assertNotIn("onclick=", html[html.index("class='dp-tabs'"):html.index("data-tab-content='content'")])
+        self.assertNotIn("onclick=", html[html.index("class='dp-tabs'") : html.index("data-tab-content='content'")])
 
     def test_workflow_registers_delegated_detail_tab_handler(self):
         from trajviz.insight import insight
@@ -122,8 +124,12 @@ class WorkflowDetailUiTests(unittest.TestCase):
         from trajviz.insight.rendering import _format_metrics_tab
 
         tokens = {
-            "total": 0, "input": 0, "output": 0,
-            "reasoning": 0, "cache_read": 0, "cache_write": 0,
+            "total": 0,
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache_read": 0,
+            "cache_write": 0,
         }
         html = _format_metrics_tab(self._metric_step(tokens=tokens))
 

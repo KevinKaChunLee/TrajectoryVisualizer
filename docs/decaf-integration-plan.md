@@ -54,23 +54,31 @@ A thin, UI-agnostic wrapper (pure functions, no Gradio imports — so it is unit
 # trajviz/insight/attribution.py
 from dataclasses import dataclass
 
+
 @dataclass
 class AttributionResult:
-    available: bool                 # False => degraded (see reason)
-    reason: str | None              # why unavailable (e.g. "no gold reference for <id>")
-    mode: str                       # "corpus" | "gold_provided" | "gold_free"
+    available: bool  # False => degraded (see reason)
+    reason: str | None  # why unavailable (e.g. "no gold reference for <id>")
+    mode: str  # "corpus" | "gold_provided" | "gold_free"
     instance_id: str | None
     agent: str | None
-    blame_status: str | None        # primary | conjunctive | refuted_unattributed
-    primary: dict | None            # {capability, error_type, ...}
-    scorecard: list[dict]           # per-capability: {capability, blamed, weight, tier, top_error}
-    faults: list[dict]              # each: {label, capability, error_type, confidence,
-                                    #        blame_weight, is_primary, evidence_chain, audit,
-                                    #        code_evidence, recommendation}
-    used_judge: bool                # 7-cap (cache present) vs 5-cap offline
+    blame_status: str | None  # primary | conjunctive | refuted_unattributed
+    primary: dict | None  # {capability, error_type, ...}
+    scorecard: list[dict]  # per-capability: {capability, blamed, weight, tier, top_error}
+    faults: list[dict]  # each: {label, capability, error_type, confidence,
+    #        blame_weight, is_primary, evidence_chain, audit,
+    #        code_evidence, recommendation}
+    used_judge: bool  # 7-cap (cache present) vs 5-cap offline
 
-def diagnose(raw: dict, fmt: str, agent: str | None, instance_id: str | None,
-             argus_root: str | None = None, use_judge: str = "auto") -> AttributionResult: ...
+
+def diagnose(
+    raw: dict,
+    fmt: str,
+    agent: str | None,
+    instance_id: str | None,
+    argus_root: str | None = None,
+    use_judge: str = "auto",
+) -> AttributionResult: ...
 ```
 
 `diagnose` steps:

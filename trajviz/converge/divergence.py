@@ -35,6 +35,7 @@ _ORDERING_INVERSION_FRACTION = 0.30
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_subtree(path: str, depth: int = 2) -> str:
     """Extract the first N path segments as a directory subtree identifier."""
     parts = path.replace("\\", "/").strip("/").split("/")
@@ -68,12 +69,7 @@ def _unique_action_signatures(
 
 def _count_inversions(ranks: list[int]) -> int:
     """Count pairwise inversions in a short sequence of unique ranks."""
-    return sum(
-        1
-        for i in range(len(ranks))
-        for j in range(i + 1, len(ranks))
-        if ranks[i] > ranks[j]
-    )
+    return sum(1 for i in range(len(ranks)) for j in range(i + 1, len(ranks)) if ranks[i] > ranks[j])
 
 
 def _ordering_inefficiency_pattern(
@@ -110,8 +106,7 @@ def _ordering_inefficiency_pattern(
     return _make_pattern(
         ptype="ordering_inefficiency",
         evidence=[
-            f"{inversions} inversions across {len(common)} unique common actions "
-            f"(threshold {threshold})",
+            f"{inversions} inversions across {len(common)} unique common actions (threshold {threshold})",
         ],
         steps=[common_steps[sig] for sig in compared_order if sig in common_steps],
         tokens=0,
@@ -145,6 +140,7 @@ def _make_pattern(
 # ---------------------------------------------------------------------------
 # Pattern classification
 # ---------------------------------------------------------------------------
+
 
 def classify_divergences(
     extra_actions: list[CanonicalAction],
@@ -183,10 +179,7 @@ def classify_divergences(
             write_targets_seen.setdefault(a.target, []).append((i, a))
 
     for target, reverted_entries in write_targets_seen.items():
-        all_writes_to_target = [
-            a for a in all_compared_actions
-            if a.action_type == "FILE_WRITE" and a.target == target
-        ]
+        all_writes_to_target = [a for a in all_compared_actions if a.action_type == "FILE_WRITE" and a.target == target]
         for extra_idx, ra in reverted_entries:
             if _is_classified(ra, extra_idx):
                 continue
@@ -205,14 +198,16 @@ def classify_divergences(
                 ptype = "iterative_refinement"
                 conf = max(0.3, 0.5 - (step_distance - _CLOSE_REWRITE_STEPS) * 0.02)
 
-            patterns.append(_make_pattern(
-                ptype=ptype,
-                evidence=[f"FILE_WRITE({target}) [reverted] → rewrite at +{step_distance} steps"],
-                steps=[ra.step_index],
-                tokens=ra.cost.token_share,
-                confidence=conf,
-                parent_type="write_retry",
-            ))
+            patterns.append(
+                _make_pattern(
+                    ptype=ptype,
+                    evidence=[f"FILE_WRITE({target}) [reverted] → rewrite at +{step_distance} steps"],
+                    steps=[ra.step_index],
+                    tokens=ra.cost.token_share,
+                    confidence=conf,
+                    parent_type="write_retry",
+                )
+            )
             _mark_classified(ra, extra_idx)
 
     # ── error_recovery_overhead ──
@@ -220,15 +215,17 @@ def classify_divergences(
         if _is_classified(a, i):
             continue
         if a.effect_label == "failed":
-            for j, b in enumerate(extra_actions[i + 1:], start=i + 1):
+            for j, b in enumerate(extra_actions[i + 1 :], start=i + 1):
                 if b.action_type == a.action_type and b.target == a.target:
-                    patterns.append(_make_pattern(
-                        ptype="error_recovery_overhead",
-                        evidence=[f"{a.action_type}({a.target}) [failed]", f"{b.action_type}({b.target})"],
-                        steps=[a.step_index, b.step_index],
-                        tokens=a.cost.token_share + b.cost.token_share,
-                        confidence=0.8,
-                    ))
+                    patterns.append(
+                        _make_pattern(
+                            ptype="error_recovery_overhead",
+                            evidence=[f"{a.action_type}({a.target}) [failed]", f"{b.action_type}({b.target})"],
+                            steps=[a.step_index, b.step_index],
+                            tokens=a.cost.token_share + b.cost.token_share,
+                            confidence=0.8,
+                        )
+                    )
                     _mark_classified(a, i)
                     _mark_classified(b, j)
                     break
@@ -240,18 +237,21 @@ def classify_divergences(
             default=float("inf"),
         )
         from .milestones import DEFAULT_VALIDATION_PATTERNS
+
         for i, a in enumerate(extra_actions):
             if _is_classified(a, i):
                 continue
             if a.action_type == "COMMAND" and a.step_index < first_write_step:
                 base_cmd = a.target.split("/")[-1] if "/" in a.target else a.target
                 if any(vp in base_cmd for vp in DEFAULT_VALIDATION_PATTERNS):
-                    patterns.append(_make_pattern(
-                        ptype="premature_validation",
-                        evidence=[f"COMMAND({a.target}) before first write"],
-                        steps=[a.step_index],
-                        tokens=a.cost.token_share,
-                    ))
+                    patterns.append(
+                        _make_pattern(
+                            ptype="premature_validation",
+                            evidence=[f"COMMAND({a.target}) before first write"],
+                            steps=[a.step_index],
+                            tokens=a.cost.token_share,
+                        )
+                    )
                     _mark_classified(a, i)
 
     # ── redundant_search ──
@@ -266,12 +266,14 @@ def classify_divergences(
         if a.action_type == "SEARCH":
             extra_search_counts[a.target] = extra_search_counts.get(a.target, 0) + 1
             if a.target in matched_search_targets or extra_search_counts[a.target] > 1:
-                patterns.append(_make_pattern(
-                    ptype="redundant_search",
-                    evidence=[f"SEARCH({a.target}) repeated"],
-                    steps=[a.step_index],
-                    tokens=a.cost.token_share,
-                ))
+                patterns.append(
+                    _make_pattern(
+                        ptype="redundant_search",
+                        evidence=[f"SEARCH({a.target}) repeated"],
+                        steps=[a.step_index],
+                        tokens=a.cost.token_share,
+                    )
+                )
                 _mark_classified(a, i)
 
     # ── broad_exploration (with subtree check when anchor available) ──
@@ -284,10 +286,7 @@ def classify_divergences(
         if _is_classified(a, i):
             continue
         if a.action_type == "FILE_READ" and a.effect_label in _UNKNOWN_LABELS:
-            is_dead_end = not any(
-                b.target == a.target and b.step_index > a.step_index
-                for b in matched_actions
-            )
+            is_dead_end = not any(b.target == a.target and b.step_index > a.step_index for b in matched_actions)
             if not is_dead_end:
                 continue
 
@@ -304,14 +303,15 @@ def classify_divergences(
             if a.phase_label in _INVESTIGATION_PHASES or a.action_label in _INVESTIGATION_ACTIONS:
                 conf = max(0.3, conf - 0.2)
 
-            patterns.append(_make_pattern(
-                ptype="broad_exploration",
-                evidence=[f"FILE_READ({a.target})"
-                          + (f" [phase={a.phase_label}]" if a.phase_label else "")],
-                steps=[a.step_index],
-                tokens=a.cost.token_share,
-                confidence=conf,
-            ))
+            patterns.append(
+                _make_pattern(
+                    ptype="broad_exploration",
+                    evidence=[f"FILE_READ({a.target})" + (f" [phase={a.phase_label}]" if a.phase_label else "")],
+                    steps=[a.step_index],
+                    tokens=a.cost.token_share,
+                    confidence=conf,
+                )
+            )
             _mark_classified(a, i)
 
     # ── ordering_inefficiency ──
@@ -332,13 +332,15 @@ def classify_divergences(
     def _flush_dead_end():
         if len(dead_end_run) >= 2:
             conf = min(0.8, 0.5 + len(dead_end_run) * 0.1)
-            patterns.append(_make_pattern(
-                ptype="dead_end_branch",
-                evidence=[f"{x.action_type}({x.target})" for _, x in dead_end_run],
-                steps=[x.step_index for _, x in dead_end_run],
-                tokens=sum(x.cost.token_share for _, x in dead_end_run),
-                confidence=conf,
-            ))
+            patterns.append(
+                _make_pattern(
+                    ptype="dead_end_branch",
+                    evidence=[f"{x.action_type}({x.target})" for _, x in dead_end_run],
+                    steps=[x.step_index for _, x in dead_end_run],
+                    tokens=sum(x.cost.token_share for _, x in dead_end_run),
+                    confidence=conf,
+                )
+            )
             for idx, x in dead_end_run:
                 _mark_classified(x, idx)
 
@@ -361,6 +363,7 @@ def classify_divergences(
 # ---------------------------------------------------------------------------
 # Cost attribution
 # ---------------------------------------------------------------------------
+
 
 def compute_pattern_costs(
     patterns: list[dict],

@@ -16,6 +16,7 @@ DEFAULT_VALIDATION_PATTERNS = {"test", "build", "lint", "check", "verify"}
 # Milestone extraction
 # ---------------------------------------------------------------------------
 
+
 def extract_milestones(
     actions: list[CanonicalAction],
     validation_patterns: set[str] | None = None,
@@ -33,6 +34,7 @@ def extract_milestones(
         validation_patterns = DEFAULT_VALIDATION_PATTERNS
 
     import os
+
     def _norm(p: str) -> str:
         return os.path.normpath(p) if p else p
 
@@ -42,10 +44,7 @@ def extract_milestones(
         """Normalize-and-suffix-match against the target set (R26: hoisted
         from three verbatim copies below; behavior unchanged)."""
         nt = _norm(target)
-        return any(
-            nt == t or nt.endswith("/" + t) or t.endswith("/" + nt)
-            for t in norm_targets
-        )
+        return any(nt == t or nt.endswith("/" + t) or t.endswith("/" + nt) for t in norm_targets)
 
     milestones: dict[str, int | None] = {
         "first_relevant_file": None,
@@ -91,8 +90,7 @@ def extract_milestones(
             reason = a.effect_detail.get("reason") if isinstance(a.effect_detail, dict) else None
             base_cmd = a.target.split("/")[-1] if "/" in a.target else a.target
             if reason == "validation_command" or (
-                a.effect_label in ("justified", "survived")
-                and any(vp in base_cmd for vp in validation_patterns)
+                a.effect_label in ("justified", "survived") and any(vp in base_cmd for vp in validation_patterns)
             ):
                 milestones["first_passing_validation"] = a.step_index
 
@@ -107,6 +105,7 @@ def extract_milestones(
 # ---------------------------------------------------------------------------
 # Milestone deltas
 # ---------------------------------------------------------------------------
+
 
 def compute_milestone_deltas(
     ref_milestones: dict[str, int | None],
@@ -128,6 +127,7 @@ def compute_milestone_deltas(
 # Segmentation
 # ---------------------------------------------------------------------------
 
+
 def _milestone_order(milestones: dict[str, int | None]) -> list[str]:
     """Return milestone names in order of occurrence, excluding None."""
     present = [(name, step) for name, step in milestones.items() if step is not None]
@@ -146,12 +146,14 @@ def segment_by_milestones(
     order = _milestone_order(milestones)
     if not order:
         non_reason = [a for a in actions if a.action_type != "REASON"]
-        return [{
-            "label": "start → end",
-            "actions": non_reason,
-            "start_step": non_reason[0].step_index if non_reason else 0,
-            "end_step": non_reason[-1].step_index if non_reason else 0,
-        }]
+        return [
+            {
+                "label": "start → end",
+                "actions": non_reason,
+                "start_step": non_reason[0].step_index if non_reason else 0,
+                "end_step": non_reason[-1].step_index if non_reason else 0,
+            }
+        ]
 
     non_reason = [a for a in actions if a.action_type != "REASON"]
     boundaries = [("start", 0)]
@@ -161,16 +163,18 @@ def segment_by_milestones(
 
     segments = []
     for i in range(len(boundaries) - 1):
-        label = f"{boundaries[i][0]} → {boundaries[i+1][0]}"
+        label = f"{boundaries[i][0]} → {boundaries[i + 1][0]}"
         start = boundaries[i][1]
         end = boundaries[i + 1][1]
         seg_actions = [a for a in non_reason if start <= a.step_index < end]
-        segments.append({
-            "label": label,
-            "actions": seg_actions,
-            "start_step": start,
-            "end_step": end,
-        })
+        segments.append(
+            {
+                "label": label,
+                "actions": seg_actions,
+                "start_step": start,
+                "end_step": end,
+            }
+        )
 
     return segments
 
@@ -178,6 +182,7 @@ def segment_by_milestones(
 # ---------------------------------------------------------------------------
 # Segment comparison
 # ---------------------------------------------------------------------------
+
 
 def _unique_step_count(actions: list[CanonicalAction]) -> int:
     """Count unique step indices (original trajectory steps, not action count)."""
@@ -212,8 +217,7 @@ def compare_segments(
 
             if ref_seg_actions and cmp_seg_actions:
                 seg_alignment = align_trajectories(ref_seg_actions, cmp_seg_actions)
-                seg_metrics = compute_alignment_metrics(
-                    seg_alignment, ref_seg_actions, cmp_seg_actions, token_rate)
+                seg_metrics = compute_alignment_metrics(seg_alignment, ref_seg_actions, cmp_seg_actions, token_rate)
                 recall = seg_metrics["reference_recall"]
                 precision = seg_metrics["behavioral_precision"]
                 overhead = seg_metrics["overhead_ratio"]
@@ -224,12 +228,14 @@ def compare_segments(
                 precision = 1.0 if not cmp_seg_actions else 0.0
                 overhead = cmp_cost / ref_cost if ref_cost > 0 else 0.0
 
-            paired.append({
-                "segment": ref_seg["label"],
-                "recall": round(recall, 4),
-                "precision": round(precision, 4),
-                "overhead": round(overhead, 2),
-            })
+            paired.append(
+                {
+                    "segment": ref_seg["label"],
+                    "recall": round(recall, 4),
+                    "precision": round(precision, 4),
+                    "overhead": round(overhead, 2),
+                }
+            )
         return {
             "milestone_order_matches": True,
             "segment_comparison": paired,
@@ -238,18 +244,22 @@ def compare_segments(
         # Per-trajectory segments — report step counts and tokens
         ref_segs = []
         for seg in ref_segments:
-            ref_segs.append({
-                "segment": seg["label"],
-                "steps": _unique_step_count(seg["actions"]),
-                "tokens": sum(a.cost.token_share for a in seg["actions"]),
-            })
+            ref_segs.append(
+                {
+                    "segment": seg["label"],
+                    "steps": _unique_step_count(seg["actions"]),
+                    "tokens": sum(a.cost.token_share for a in seg["actions"]),
+                }
+            )
         cmp_segs = []
         for seg in cmp_segments:
-            cmp_segs.append({
-                "segment": seg["label"],
-                "steps": _unique_step_count(seg["actions"]),
-                "tokens": sum(a.cost.token_share for a in seg["actions"]),
-            })
+            cmp_segs.append(
+                {
+                    "segment": seg["label"],
+                    "steps": _unique_step_count(seg["actions"]),
+                    "tokens": sum(a.cost.token_share for a in seg["actions"]),
+                }
+            )
         return {
             "milestone_order_matches": False,
             "reference_segments": ref_segs,

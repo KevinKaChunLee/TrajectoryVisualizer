@@ -55,31 +55,31 @@ def compute_step_analytics(steps: list[dict]) -> list[dict]:
         if i > 0:
             prev_completed = steps[i - 1].get("time_completed_ms")
             this_created = step.get("time_created_ms")
-            if (isinstance(prev_completed, (int, float))
-                    and isinstance(this_created, (int, float))):
+            if isinstance(prev_completed, (int, float)) and isinstance(this_created, (int, float)):
                 idle_before_s = round((this_created - prev_completed) / 1000, 2)
 
-        analytics.append({
-            "index": step["index"],
-            "role": step["role"],
-            "agent": step.get("agent", ""),
-            "model_id": step.get("model_id", ""),
-            "duration_s": duration_s,
-            "tool_time_ms": tool_time_ms,
-            "tool_time_share": tool_time_share,
-            "tok_total": tok_total,
-            "tok_per_s": tok_per_s,
-            "cache_ratio": cache_ratio,
-            "non_cache_tok": non_cache_tok,
-            "out_in_ratio": out_in_ratio,
-            "tool_calls": step["tool_call_count"],
-            "finish": step["finish"],
-            "part_mix": part_mix,
-            "idle_before_s": idle_before_s,
-        })
+        analytics.append(
+            {
+                "index": step["index"],
+                "role": step["role"],
+                "agent": step.get("agent", ""),
+                "model_id": step.get("model_id", ""),
+                "duration_s": duration_s,
+                "tool_time_ms": tool_time_ms,
+                "tool_time_share": tool_time_share,
+                "tok_total": tok_total,
+                "tok_per_s": tok_per_s,
+                "cache_ratio": cache_ratio,
+                "non_cache_tok": non_cache_tok,
+                "out_in_ratio": out_in_ratio,
+                "tool_calls": step["tool_call_count"],
+                "finish": step["finish"],
+                "part_mix": part_mix,
+                "idle_before_s": idle_before_s,
+            }
+        )
 
     return analytics
-
 
 
 def generate_insights(
@@ -95,16 +95,16 @@ def generate_insights(
     insights: list[str] = []
 
     # 1. Latency source
-    high_tool = [(a["index"], a["tool_time_share"])
-                 for a in asst
-                 if a["tool_time_share"] is not None and a["tool_time_share"] > 0.5]
+    high_tool = [
+        (a["index"], a["tool_time_share"])
+        for a in asst
+        if a["tool_time_share"] is not None and a["tool_time_share"] > 0.5
+    ]
     if high_tool:
         ex = ", ".join(f"step {idx} ({s * 100:.0f}%)" for idx, s in high_tool[:3])
         insights.append(f"Tool-heavy steps (tool_time > 50% of step duration): {ex}.")
     else:
-        insights.append(
-            "Most latency is model-side, not tool-side. "
-            "No step has tool_time_share > 50%.")
+        insights.append("Most latency is model-side, not tool-side. No step has tool_time_share > 50%.")
 
     # 2. Cache behavior
     crs = [a["cache_ratio"] for a in asst if a["tok_total"] > 0]
@@ -112,32 +112,30 @@ def generate_insights(
         sorted_crs = sorted(crs)
         med_cr = statistics.median(crs)
         min_cr = sorted_crs[0]
-        min_step = next(
-            a["index"] for a in asst
-            if a["tok_total"] > 0 and a["cache_ratio"] == min_cr)
+        min_step = next(a["index"] for a in asst if a["tok_total"] > 0 and a["cache_ratio"] == min_cr)
         insights.append(
-            f"Cache behavior: median cache read = {med_cr * 100:.1f}%. "
-            f"Lowest: step {min_step} ({min_cr * 100:.1f}%).")
+            f"Cache behavior: median cache read = {med_cr * 100:.1f}%. Lowest: step {min_step} ({min_cr * 100:.1f}%)."
+        )
 
     # 3. Slow-turn outliers (no tool waiting)
-    slow = [(a["index"], a["duration_s"])
-            for a in asst
-            if a["duration_s"] is not None and a["duration_s"] > 30
-            and (a["tool_time_share"] is None or a["tool_time_share"] < 0.3)]
+    slow = [
+        (a["index"], a["duration_s"])
+        for a in asst
+        if a["duration_s"] is not None
+        and a["duration_s"] > 30
+        and (a["tool_time_share"] is None or a["tool_time_share"] < 0.3)
+    ]
     if slow:
         slow.sort(key=lambda x: -x[1])
         ex = ", ".join(f"step {idx} ({d:.1f}s)" for idx, d in slow[:3])
-        insights.append(
-            f"Slow turns without tool waiting: {ex} "
-            "\u2014 likely long internal reasoning.")
+        insights.append(f"Slow turns without tool waiting: {ex} \u2014 likely long internal reasoning.")
 
     # 4. High-token turns near end
     sorted_by_tok = sorted(asst, key=lambda a: -a["tok_total"])
     top_tok = sorted_by_tok[:3]
     late = [a for a in top_tok if a["index"] >= len(analytics) * 0.7]
     if late:
-        ex = ", ".join(
-            f"step {a['index']} ({a['tok_total']:,} tok)" for a in late)
+        ex = ", ".join(f"step {a['index']} ({a['tok_total']:,} tok)" for a in late)
         insights.append(f"Largest token turns near end: {ex}.")
 
     # 5. Context escalation — monotonically increasing input tokens
@@ -161,6 +159,7 @@ def generate_insights(
     # 6. Tool retry / repetition detection
     if steps:
         from collections import Counter
+
         tool_targets: list[tuple[str, str]] = []
         for s in steps:
             for tc in s.get("tool_calls", []):
@@ -169,8 +168,7 @@ def generate_insights(
                 # Build a target key from tool name + primary input field
                 target = ""
                 if isinstance(inp, dict):
-                    for k in ("file_path", "command", "pattern", "url",
-                              "path", "query", "prompt"):
+                    for k in ("file_path", "command", "pattern", "url", "path", "query", "prompt"):
                         if inp.get(k):
                             v = str(inp[k])
                             target = v[:80]
@@ -187,8 +185,7 @@ def generate_insights(
                     short_target = target[:40] + "..." if len(target) > 40 else target
                     examples.append(f"{tool}({short_target}) x{cnt}")
                 insights.append(
-                    f"Tool repetition detected: {', '.join(examples)}. "
-                    "Agent may be retrying or stuck in a loop."
+                    f"Tool repetition detected: {', '.join(examples)}. Agent may be retrying or stuck in a loop."
                 )
 
     return insights if insights else ["Insufficient data for behavioral insights."]

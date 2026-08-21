@@ -20,6 +20,7 @@ DECAF's dossier artifacts), so a drift in DECAF's diagnosis fails loudly here.
 Skipped only when DECAF itself is absent (the standalone CI job); the
 integration job sets TRAJVIZ_REQUIRE_ATTRIBUTION=1 so absence fails hard.
 """
+
 import json
 import shutil
 
@@ -28,25 +29,27 @@ import pytest
 from trajviz.insight import attribution
 
 GOLD_AGENT = "claude_code"
-GOLD_INST = "astropy__astropy-13033"            # deductive-only case
+GOLD_INST = "astropy__astropy-13033"  # deductive-only case
 ARB_AGENT, ARB_INST = "claude_code", "django__django-11477"  # arbiter-refuted case
 
 # ---- pinned v0.33 golden expectations (do not read from DECAF artifacts) ----
 GOLD_EXPECT = {
     "blame_status": "primary",
     "primary": {"capability": "code_editing", "error_type": "incorrect_patch"},
-    "fault_set": {("code_editing", "incorrect_patch"),
-                  ("code_verification", "gating_test_modified"),
-                  ("self_repair_loop", "repeated_ineffective_attempt")},
+    "fault_set": {
+        ("code_editing", "incorrect_patch"),
+        ("code_verification", "gating_test_modified"),
+        ("self_repair_loop", "repeated_ineffective_attempt"),
+    },
 }
 ARB_EXPECT = {"blame_status": "refuted_unattributed", "primary": None}
 
-pytestmark = pytest.mark.skipif(
-    not attribution.DECAF_AVAILABLE, reason="DECAF (awe) not importable")
+pytestmark = pytest.mark.skipif(not attribution.DECAF_AVAILABLE, reason="DECAF (awe) not importable")
 
 
 def _traj_path(agent, inst):
     from awe import config
+
     return str(config.TRAJECTORY_DIR / agent / f"{inst}.json")
 
 
@@ -54,25 +57,24 @@ def _corpus_present() -> bool:
     if not attribution.DECAF_AVAILABLE:
         return False
     from awe import config
+
     return config.requirements_path(GOLD_INST).is_file()
 
 
-requires_corpus = pytest.mark.skipif(
-    not _corpus_present(), reason="fixture corpus not present")
+requires_corpus = pytest.mark.skipif(not _corpus_present(), reason="fixture corpus not present")
 
 
 # --------------------------------------------------------------- golden
 @requires_corpus
 def test_golden_deductive_case_matches_pinned_expectations():
-    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
-                               source_path=_traj_path(GOLD_AGENT, GOLD_INST),
-                               fmt="ccsession")
+    res = attribution.diagnose(
+        agent=GOLD_AGENT, instance_id=GOLD_INST, source_path=_traj_path(GOLD_AGENT, GOLD_INST), fmt="ccsession"
+    )
     assert res.available is True
     assert res.mode == "corpus"
     assert res.blame_status == GOLD_EXPECT["blame_status"]
     assert res.primary == GOLD_EXPECT["primary"]
-    assert {(f["capability"], f["error_type"]) for f in res.faults} == \
-        GOLD_EXPECT["fault_set"]
+    assert {(f["capability"], f["error_type"]) for f in res.faults} == GOLD_EXPECT["fault_set"]
     for f in res.faults:
         chain = f.get("evidence_chain") or {}
         assert chain.get("strength") in {"deductive", "associational", "model_inferred"}
@@ -84,11 +86,11 @@ def test_golden_arbiter_refuted_case_is_not_blamed():
     """Pins the model-namespace default (glm caches) + refuted-not-blamed
     semantics: under a wrong judge-model namespace the arbiter would be inert and
     this case would show a blamed primary."""
-    res = attribution.diagnose(agent=ARB_AGENT, instance_id=ARB_INST,
-                               source_path=_traj_path(ARB_AGENT, ARB_INST),
-                               fmt="ccsession")
+    res = attribution.diagnose(
+        agent=ARB_AGENT, instance_id=ARB_INST, source_path=_traj_path(ARB_AGENT, ARB_INST), fmt="ccsession"
+    )
     assert res.available
-    assert res.notes == []               # vendored verdicts are provenance-stamped
+    assert res.notes == []  # vendored verdicts are provenance-stamped
     assert res.blame_status == ARB_EXPECT["blame_status"]
     assert res.primary is None
     assert not any(s.blamed for s in res.scorecard)
@@ -98,6 +100,7 @@ def test_golden_arbiter_refuted_case_is_not_blamed():
     assert res.used_judge is True
     by_cap = {s.capability: s for s in res.scorecard}
     from awe.detect import detect
+
     opp = detect(ARB_INST, ARB_AGENT)["opportunities"]
     for cap in ("requirement_understanding", "task_planning"):
         assert by_cap[cap].assessed == bool(opp.get(cap))
@@ -146,8 +149,7 @@ def test_changed_gold_invalidates_llm_verdicts(tmp_path):
     req["problem_statement"] = "A COMPLETELY DIFFERENT TASK STATEMENT."
     rp.write_text(json.dumps(req))
 
-    res = attribution.diagnose(agent=ARB_AGENT, instance_id=ARB_INST,
-                               argus_root=root)
+    res = attribution.diagnose(agent=ARB_AGENT, instance_id=ARB_INST, argus_root=root)
     assert res.available
     # old verdicts unverifiable for the changed task -> LLM layers disabled,
     # the rule-elected primary stands, and the mismatch is noted
@@ -165,17 +167,16 @@ def test_toctou_mutated_canonical_file_is_refused(tmp_path):
     shutil.copytree(attribution._DEFAULT_ROOT / "data", root / "data")
     tpath = root / "data" / "trajectory" / "claude_code" / f"{GOLD_INST}.json"
     import hashlib
+
     loaded_sha = hashlib.sha256(tpath.read_bytes()).hexdigest()  # captured at "load"
     # the canonical file mutates after load
     raw = json.loads(tpath.read_text())
     raw["_mutated_after_load"] = True
     tpath.write_text(json.dumps(raw))
 
-    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
-                               expected_sha=loaded_sha, argus_root=root)
+    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST, expected_sha=loaded_sha, argus_root=root)
     assert res.available is False
-    assert "changed after it was loaded" in (res.reason or "") or \
-           "does not match the canonical" in (res.reason or "")
+    assert "changed after it was loaded" in (res.reason or "") or "does not match the canonical" in (res.reason or "")
 
 
 def test_path_traversal_instance_id_is_rejected():
@@ -194,8 +195,7 @@ def test_byte_identical_copy_passes_identity_check(tmp_path):
     # a Gradio upload is a verbatim copy at a temp path with a hash parent dir
     copy = tmp_path / "upload.json"
     shutil.copyfile(_traj_path(GOLD_AGENT, GOLD_INST), copy)
-    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
-                               source_path=str(copy), fmt="ccsession")
+    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST, source_path=str(copy), fmt="ccsession")
     assert res.available is True
     assert res.blame_status == GOLD_EXPECT["blame_status"]
 
@@ -210,8 +210,7 @@ def test_mismatched_displayed_trajectory_is_refused(tmp_path):
         raw = json.load(f)
     raw["_tampered"] = True
     doctored.write_text(json.dumps(raw))
-    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST,
-                               source_path=str(doctored), fmt="ccsession")
+    res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST, source_path=str(doctored), fmt="ccsession")
     assert res.available is False
     assert "does not match the canonical" in (res.reason or "")
     assert res.faults == [] and res.primary is None
@@ -228,8 +227,7 @@ def test_diagnose_offline_without_api_key(monkeypatch):
 
 # --------------------------------------------------------------- degradation
 def test_gold_free_upload_degrades_cleanly():
-    res = attribution.diagnose(agent=GOLD_AGENT,
-                               instance_id="nonexistent__instance-99999")
+    res = attribution.diagnose(agent=GOLD_AGENT, instance_id="nonexistent__instance-99999")
     assert res.available is False
     assert res.mode == "gold_free"
     reason = (res.reason or "").lower()
@@ -250,6 +248,7 @@ def test_configure_clears_outcome_and_gold_caches(tmp_path):
     lru_cache lives on load_outcomes (resolved() is uncached) — clearing the
     wrong symbol left stale outcomes active."""
     from awe.outcomes import resolved
+
     orig_root = attribution._DEFAULT_ROOT
     try:
         assert resolved(GOLD_AGENT, GOLD_INST) is False  # warm the cache
@@ -283,8 +282,7 @@ def test_scorecard_semantics_and_tier_alignment():
     assert res.used_judge is False
     assert by_cap["requirement_understanding"].assessed is False
     # tier belongs to the displayed top_error's fault
-    tier_of = {(f["capability"], f["error_type"]): (f.get("evidence_chain") or {}).get("strength")
-               for f in res.faults}
+    tier_of = {(f["capability"], f["error_type"]): (f.get("evidence_chain") or {}).get("strength") for f in res.faults}
     for s in res.scorecard:
         if s.blamed and s.top_error:
             assert s.tier == tier_of[(s.capability, s.top_error)]
@@ -303,9 +301,11 @@ def test_adapter_parity_claude_code():
     assert disk is not None
     assert len(direct.steps) == len(disk.steps)
     for a, b in zip(direct.steps, disk.steps, strict=False):
-        assert (a.actor, a.type, a.canonical_action, tuple(a.files or []),
-                a.test_run, a.tool_error) == \
-               (b.actor, b.type, b.canonical_action, tuple(b.files or []),
-                b.test_run, b.tool_error)
-
-
+        assert (a.actor, a.type, a.canonical_action, tuple(a.files or []), a.test_run, a.tool_error) == (
+            b.actor,
+            b.type,
+            b.canonical_action,
+            tuple(b.files or []),
+            b.test_run,
+            b.tool_error,
+        )

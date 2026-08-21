@@ -52,19 +52,19 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertEqual(metrics["output_throughput_coverage_pct"], 50.0)
         self.assertTrue(metrics["output_throughput_incomplete"])
 
-        throughput = {
-            verdict["metric"]: verdict
-            for verdict in compute_health_verdict(metrics, [])
-        }["Throughput"]
+        throughput = {verdict["metric"]: verdict for verdict in compute_health_verdict(metrics, [])}["Throughput"]
         self.assertEqual(throughput["status"], "bad")
         self.assertEqual(throughput["label"], "10.0 output tok/s")
         self.assertIn("1/2 assistant steps with timing", throughput["detail"])
 
     def test_complete_timing_reports_full_coverage(self):
-        metrics = compute_metrics([
-            _assistant_step(0, output_tokens=100, duration=10.0),
-            _assistant_step(1, output_tokens=400, duration=20.0),
-        ], {})
+        metrics = compute_metrics(
+            [
+                _assistant_step(0, output_tokens=100, duration=10.0),
+                _assistant_step(1, output_tokens=400, duration=20.0),
+            ],
+            {},
+        )
 
         self.assertEqual(metrics["output_tokens_per_sec"], 16.7)
         self.assertEqual(metrics["output_throughput_coverage_pct"], 100.0)
@@ -103,10 +103,13 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertIn("10.0 output tok/s", banner)
         self.assertNotIn("100.0 tok/s", banner)
 
-        computed_metrics = compute_metrics([
-            _assistant_step(0, output_tokens=100, duration=10.0),
-            _assistant_step(1, output_tokens=900, duration=None),
-        ], {})
+        computed_metrics = compute_metrics(
+            [
+                _assistant_step(0, output_tokens=100, duration=10.0),
+                _assistant_step(1, output_tokens=900, duration=None),
+            ],
+            {},
+        )
         performance = format_performance_md(computed_metrics, "10s")
         self.assertIn("Total processed tok/sec", performance)
         self.assertIn("Median processed tok/sec", performance)
@@ -127,9 +130,7 @@ class WrappedShellSearchTests(unittest.TestCase):
                 self.assertTrue(patterns._is_search_call(_bash_call(command)))
 
     def test_lowercase_bash_tool_name_is_recognized(self):
-        self.assertTrue(patterns._is_search_call(
-            _bash_call("FOO=1 ripgrep needle .", tool_name="bash")
-        ))
+        self.assertTrue(patterns._is_search_call(_bash_call("FOO=1 ripgrep needle .", tool_name="bash")))
 
     def test_commands_that_only_mention_search_tools_are_not_searches(self):
         commands = [
@@ -147,15 +148,27 @@ class WrappedShellSearchTests(unittest.TestCase):
 
     def test_wrapped_empty_searches_form_a_fruitless_streak(self):
         steps = [
-            {"index": 0, "role": "assistant", "tool_calls": [
-                _bash_call("cd src && rg first ."),
-            ]},
-            {"index": 1, "role": "assistant", "tool_calls": [
-                _bash_call("env LANG=C grep -R second ."),
-            ]},
-            {"index": 2, "role": "assistant", "tool_calls": [
-                _bash_call("git grep third"),
-            ]},
+            {
+                "index": 0,
+                "role": "assistant",
+                "tool_calls": [
+                    _bash_call("cd src && rg first ."),
+                ],
+            },
+            {
+                "index": 1,
+                "role": "assistant",
+                "tool_calls": [
+                    _bash_call("env LANG=C grep -R second ."),
+                ],
+            },
+            {
+                "index": 2,
+                "role": "assistant",
+                "tool_calls": [
+                    _bash_call("git grep third"),
+                ],
+            },
         ]
 
         streaks = patterns.detect_fruitless_streaks(steps)

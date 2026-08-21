@@ -5,7 +5,8 @@ from trajviz.converge.styles import CONVERGE_CSS as _CONVERGE_CSS
 
 _pygments_css = _HtmlFormatter(style="github-dark").get_style_defs(".wf-code-hl")
 
-APP_CSS = """
+APP_CSS = (
+    """
 /* CJK and non-Latin font fallback */
 .gradio-container, .gradio-container * {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
@@ -1139,10 +1140,14 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 }
 
 /* ===== Converge comparison styles (merged) ===== */
-""" + _CONVERGE_CSS + """
 """
+    + _CONVERGE_CSS
+    + """
+"""
+)
 
-WORKFLOW_CSS = """
+WORKFLOW_CSS = (
+    """
 <style>
 .wf-scroll {
     max-height: 75vh; overflow-y: auto; padding: 8px 4px 8px 0;
@@ -1192,8 +1197,11 @@ WORKFLOW_CSS = """
     white-space: pre; display: block;
 }
 /* Pygments syntax highlighting (github-dark) */
-""" + _pygments_css + """
+"""
+    + _pygments_css
+    + """
 .wf-icons { font-size: 11px; color: var(--wf-meta-color); }
 </style>
 <!-- Click handling via Gradio js_on_load + trigger() -->
 """
+)

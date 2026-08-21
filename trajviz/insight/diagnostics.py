@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from trajviz.tool_vocab import (WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
-                                write_target_path as _write_target_path)
+from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOL_SET, write_target_path as _write_target_path
 
 import os
 import re
@@ -27,12 +26,12 @@ _TOOL_FILE_FIELDS: dict[str, tuple[tuple[str, ...], str]] = {
     # Multiple keys per tool let us handle scaffolds that use different field
     # spellings — e.g. Claude Code emits ``file_path`` (snake) while OpenCode
     # emits ``filePath`` (camel). The lookup picks whichever the call carries.
-    "Read":         (("file_path", "filePath"), "read"),
-    "read":         (("file_path", "filePath"), "read"),
-    "Write":        (("file_path", "filePath"), "write"),
-    "write":        (("file_path", "filePath"), "write"),
-    "Edit":         (("file_path", "filePath"), "write"),
-    "edit":         (("file_path", "filePath"), "write"),
+    "Read": (("file_path", "filePath"), "read"),
+    "read": (("file_path", "filePath"), "read"),
+    "Write": (("file_path", "filePath"), "write"),
+    "write": (("file_path", "filePath"), "write"),
+    "Edit": (("file_path", "filePath"), "write"),
+    "edit": (("file_path", "filePath"), "write"),
     "NotebookEdit": (("notebook_path", "notebookPath"), "write"),
 }
 
@@ -48,11 +47,11 @@ _TOOL_SEARCH_FIELDS: dict[str, tuple[str, str]] = {
 # Matches: /unix/path, ./relative, ../parent, d:/windows/path
 # Handles both unquoted and quoted paths ("d:/foo", 'd:/foo')
 _PATH_RE = re.compile(
-    r"""(?:^|[\s=;|&(])"""                       # preceded by whitespace or delimiter
+    r"""(?:^|[\s=;|&(])"""  # preceded by whitespace or delimiter
     r"""(?:"""
-    r"""["']((?:/|\.\.?/|[a-zA-Z]:[/\\])[^"']*?)["']"""   # quoted path
+    r"""["']((?:/|\.\.?/|[a-zA-Z]:[/\\])[^"']*?)["']"""  # quoted path
     r"""|"""
-    r"""((?:/|\.\.?/|[a-zA-Z]:[/\\])[^\s;|&)'"]+)"""      # unquoted path
+    r"""((?:/|\.\.?/|[a-zA-Z]:[/\\])[^\s;|&)'"]+)"""  # unquoted path
     r""")"""
 )
 
@@ -123,21 +122,26 @@ def extract_file_interactions(steps: list[dict]) -> list[dict]:
                 if command:
                     for p in _extract_bash_paths(command):
                         # Classify: if command looks like a write operation
-                        write_cmds = ("mv ", "cp ", "rm ", "mkdir ", "touch ",
-                                      "> ", ">> ", "tee ")
-                        itype = "write" if any(command.strip().startswith(c) or f" {c}" in command for c in write_cmds) else "read"
+                        write_cmds = ("mv ", "cp ", "rm ", "mkdir ", "touch ", "> ", ">> ", "tee ")
+                        itype = (
+                            "write"
+                            if any(command.strip().startswith(c) or f" {c}" in command for c in write_cmds)
+                            else "read"
+                        )
                         found_paths.append((p, itype))
 
             for path, itype in found_paths:
                 # Normalize backslashes to forward slashes for consistency
                 path = path.replace("\\", "/")
-                interactions.append({
-                    "step": step_idx,
-                    "tool": tool_name,
-                    "path": path,
-                    "type": itype,
-                    "tokens": step_tokens,
-                })
+                interactions.append(
+                    {
+                        "step": step_idx,
+                        "tool": tool_name,
+                        "path": path,
+                        "type": itype,
+                        "tokens": step_tokens,
+                    }
+                )
 
     return interactions
 
@@ -259,6 +263,7 @@ def compute_file_targeting_metrics(
 # 2. Failure Chain Analysis
 # ---------------------------------------------------------------------------
 
+
 def _step_has_error(step: dict) -> bool:
     """Check if a step has at least one error tool call or non-zero exit code."""
     if step.get("error_count", 0) > 0:
@@ -300,19 +305,23 @@ def detect_failure_chains(steps: list[dict]) -> list[dict]:
             current_chain.append(step["index"])
         else:
             if current_chain:
-                chains.append({
-                    "start": current_chain[0],
-                    "end": current_chain[-1],
-                    "steps": list(current_chain),
-                })
+                chains.append(
+                    {
+                        "start": current_chain[0],
+                        "end": current_chain[-1],
+                        "steps": list(current_chain),
+                    }
+                )
                 current_chain = []
 
     if current_chain:
-        chains.append({
-            "start": current_chain[0],
-            "end": current_chain[-1],
-            "steps": list(current_chain),
-        })
+        chains.append(
+            {
+                "start": current_chain[0],
+                "end": current_chain[-1],
+                "steps": list(current_chain),
+            }
+        )
 
     return chains
 
@@ -406,13 +415,16 @@ def compute_failure_chain_metrics(chains: list[dict], total_assistant_steps: int
         "total_chains": len(chains),
         "total_chain_steps": total_chain_steps,
         "longest_chain": longest,
-        "chain_step_pct": round(total_chain_steps / total_assistant_steps * 100, 1) if total_assistant_steps > 0 else 0.0,
+        "chain_step_pct": round(total_chain_steps / total_assistant_steps * 100, 1)
+        if total_assistant_steps > 0
+        else 0.0,
     }
 
 
 # ---------------------------------------------------------------------------
 # 3. Root-Cause Attribution
 # ---------------------------------------------------------------------------
+
 
 def _error_pattern(tc: dict) -> str:
     """Extract a short error pattern from a tool call."""
@@ -447,9 +459,8 @@ def cluster_errors(steps: list[dict]) -> list[dict]:
 
     for step in steps:
         for tc in step.get("tool_calls", []):
-            is_error = (
-                tc.get("status") in _ERROR_STATUSES
-                or (isinstance(tc.get("metadata"), dict) and tc["metadata"].get("exit") not in (None, 0))
+            is_error = tc.get("status") in _ERROR_STATUSES or (
+                isinstance(tc.get("metadata"), dict) and tc["metadata"].get("exit") not in (None, 0)
             )
             if not is_error:
                 continue
@@ -508,7 +519,11 @@ def format_root_cause_summary(clusters: list[dict]) -> list[str]:
     """Generate human-readable summary text per root-cause cluster."""
     summaries: list[str] = []
     for c in clusters:
-        steps_range = f"steps {c['first_step']}..{c['last_step']}" if c["first_step"] != c["last_step"] else f"step {c['first_step']}"
+        steps_range = (
+            f"steps {c['first_step']}..{c['last_step']}"
+            if c["first_step"] != c["last_step"]
+            else f"step {c['first_step']}"
+        )
         text = f"{c['count']}x {c['tool']} failures: '{c['pattern']}' ({steps_range})"
         if c.get("parent_agent"):
             text += f" \u2014 traced to {c['parent_agent']} step {c['parent_step']}"
@@ -519,6 +534,7 @@ def format_root_cause_summary(clusters: list[dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 # 4. Bottleneck Explanation
 # ---------------------------------------------------------------------------
+
 
 def decompose_hotspot_duration(
     step: dict,
@@ -533,9 +549,14 @@ def decompose_hotspot_duration(
     duration = step.get("duration") or 0
     if duration <= 0:
         return {
-            "tool_s": 0, "inference_s": 0, "idle_s": 0,
-            "tool_pct": 0, "inference_pct": 0, "idle_pct": 0,
-            "timing_incomplete": True, "dominant_tool": None,
+            "tool_s": 0,
+            "inference_s": 0,
+            "idle_s": 0,
+            "tool_pct": 0,
+            "inference_pct": 0,
+            "idle_pct": 0,
+            "timing_incomplete": True,
+            "dominant_tool": None,
         }
 
     idle_s = max(0, idle_gap or 0)
@@ -664,12 +685,14 @@ def compute_bottleneck_explanations(
         decomp = decompose_hotspot_duration(step, analytics_row, idle_gap)
         explanation = explain_hotspot(step, decomp)
 
-        results.append({
-            "step_idx": idx,
-            "duration": step.get("duration", 0),
-            "decomposition": decomp,
-            "explanation": explanation,
-        })
+        results.append(
+            {
+                "step_idx": idx,
+                "duration": step.get("duration", 0),
+                "decomposition": decomp,
+                "explanation": explanation,
+            }
+        )
 
     return results
 
@@ -844,7 +867,7 @@ def _next_agent_occupancy(
     index: int,
     agent_id: str,
 ) -> int | None:
-    for step in steps[index + 1:]:
+    for step in steps[index + 1 :]:
         if not _is_occupancy_step(step):
             continue
         if _pressure_agent(step) != agent_id:
@@ -919,28 +942,28 @@ def _splice_compaction_into_points(
             continue
         if src_after is None:
             src_after = src_before
-        out.append({
-            "step": step,
-            "local_turn": src_before.get("local_turn", 0),
-            "fresh": src_before.get("fresh", 0),
-            "cache_read": src_before.get("cache_read", 0),
-            "occupancy": int(before),
-        })
-        out.append({
-            "step": step,
-            "local_turn": src_after.get("local_turn", 0),
-            "fresh": src_after.get("fresh", 0),
-            "cache_read": src_after.get("cache_read", 0),
-            "occupancy": int(after),
-        })
+        out.append(
+            {
+                "step": step,
+                "local_turn": src_before.get("local_turn", 0),
+                "fresh": src_before.get("fresh", 0),
+                "cache_read": src_before.get("cache_read", 0),
+                "occupancy": int(before),
+            }
+        )
+        out.append(
+            {
+                "step": step,
+                "local_turn": src_after.get("local_turn", 0),
+                "fresh": src_after.get("fresh", 0),
+                "cache_read": src_after.get("cache_read", 0),
+                "occupancy": int(after),
+            }
+        )
     out.sort(key=lambda p: (p["step"], -int(p["occupancy"])))
     deduped: list[dict] = []
     for point in out:
-        if (
-            deduped
-            and deduped[-1]["step"] == point["step"]
-            and deduped[-1]["occupancy"] == point["occupancy"]
-        ):
+        if deduped and deduped[-1]["step"] == point["step"] and deduped[-1]["occupancy"] == point["occupancy"]:
             continue
         deduped.append(point)
     return deduped
@@ -1040,8 +1063,7 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
             if idx in explicit_steps or (agent_id, idx) in explicit_at:
                 continue
             # Adjacent explicit compaction (part on the previous user turn, etc.)
-            if any(abs(idx - estep) <= 1 and eagent == agent_id
-                   for eagent, estep in explicit_at):
+            if any(abs(idx - estep) <= 1 and eagent == agent_id for eagent, estep in explicit_at):
                 continue
             if i + 1 < len(points):
                 next_occ = points[i + 1][1]
@@ -1051,10 +1073,15 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
             elif occ >= prev_occ * 0.4:
                 # Last point: only count a severe drop we cannot confirm.
                 continue
-            events.append(_event(
-                step, "occupancy_drop", agent_id,
-                occupancy_before=prev_occ, occupancy_after=occ,
-            ))
+            events.append(
+                _event(
+                    step,
+                    "occupancy_drop",
+                    agent_id,
+                    occupancy_before=prev_occ,
+                    occupancy_after=occ,
+                )
+            )
             explicit_steps.add(idx)
 
     events.sort(key=lambda e: (e["step"], e["kind"]))
@@ -1113,27 +1140,32 @@ def context_pressure_series(
             local_turn[agent_id] = 0
         local_turn[agent_id] += 1
         occ = step_context_occupancy(step)
-        points_by_agent[agent_id].append({
-            "step": int(step.get("index", 0)),
-            "local_turn": local_turn[agent_id],
-            "fresh": occ["fresh"],
-            "cache_read": occ["cache_read"],
-            "occupancy": occ["occupancy"],
-        })
+        points_by_agent[agent_id].append(
+            {
+                "step": int(step.get("index", 0)),
+                "local_turn": local_turn[agent_id],
+                "fresh": occ["fresh"],
+                "cache_read": occ["cache_read"],
+                "occupancy": occ["occupancy"],
+            }
+        )
 
     window_limit = infer_context_window_limit(steps, raw)
     labels = _disambiguate_pressure_labels(agents_order, steps)
     agents = []
     for agent_id in agents_order:
         agent_events = [e for e in events if e.get("agent") == agent_id]
-        agents.append({
-            "agent_id": agent_id,
-            "key": pressure_agent_key(agent_id),
-            "label": labels[agent_id],
-            "points": _splice_compaction_into_points(
-                points_by_agent[agent_id], agent_events,
-            ),
-        })
+        agents.append(
+            {
+                "agent_id": agent_id,
+                "key": pressure_agent_key(agent_id),
+                "label": labels[agent_id],
+                "points": _splice_compaction_into_points(
+                    points_by_agent[agent_id],
+                    agent_events,
+                ),
+            }
+        )
     return {
         "agents": agents,
         "events": events,

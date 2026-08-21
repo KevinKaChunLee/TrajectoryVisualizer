@@ -49,41 +49,39 @@ def build_anchor_analysis_html(anchor_analysis: dict) -> str:
     ref_tw = ref_data.get("files_written", 0)
     cmp_aw = cmp_data.get("anchor_files_written", 0)
     cmp_tw = cmp_data.get("files_written", 0)
-    parts.append(f"<tr><td>Write Precision</td>"
-                 f"<td>{ref_wp * 100:.1f}% ({ref_aw}/{ref_tw})</td>"
-                 f"<td>{cmp_wp * 100:.1f}% ({cmp_aw}/{cmp_tw})</td></tr>")
+    parts.append(
+        f"<tr><td>Write Precision</td>"
+        f"<td>{ref_wp * 100:.1f}% ({ref_aw}/{ref_tw})</td>"
+        f"<td>{cmp_wp * 100:.1f}% ({cmp_aw}/{cmp_tw})</td></tr>"
+    )
 
     # Write recall
     ref_wr = ref_data.get("write_recall") or 0
     cmp_wr = cmp_data.get("write_recall") or 0
-    parts.append(f"<tr><td>Write Recall</td>"
-                 f"<td>{ref_wr * 100:.1f}% ({ref_aw}/{total_anchor})</td>"
-                 f"<td>{cmp_wr * 100:.1f}% ({cmp_aw}/{total_anchor})</td></tr>")
+    parts.append(
+        f"<tr><td>Write Recall</td>"
+        f"<td>{ref_wr * 100:.1f}% ({ref_aw}/{total_anchor})</td>"
+        f"<td>{cmp_wr * 100:.1f}% ({cmp_aw}/{total_anchor})</td></tr>"
+    )
 
     # Off-patch ratio
     ref_opr = ref_data.get("off_patch_write_ratio") or 0
     cmp_opr = cmp_data.get("off_patch_write_ratio") or 0
-    parts.append(f"<tr><td>Off-Patch Ratio</td>"
-                 f"<td>{ref_opr * 100:.1f}%</td>"
-                 f"<td>{cmp_opr * 100:.1f}%</td></tr>")
+    parts.append(f"<tr><td>Off-Patch Ratio</td><td>{ref_opr * 100:.1f}%</td><td>{cmp_opr * 100:.1f}%</td></tr>")
 
     # First anchor read
     ref_fr = ref_data.get("time_to_first_anchor_read")
     cmp_fr = cmp_data.get("time_to_first_anchor_read")
     ref_fr_str = f"Step {ref_fr}" if ref_fr is not None else "N/A"
     cmp_fr_str = f"Step {cmp_fr}" if cmp_fr is not None else "N/A"
-    parts.append(f"<tr><td>First Anchor Read</td>"
-                 f"<td>{_esc(ref_fr_str)}</td>"
-                 f"<td>{_esc(cmp_fr_str)}</td></tr>")
+    parts.append(f"<tr><td>First Anchor Read</td><td>{_esc(ref_fr_str)}</td><td>{_esc(cmp_fr_str)}</td></tr>")
 
     # First anchor write
     ref_fw = ref_data.get("time_to_first_anchor_write")
     cmp_fw = cmp_data.get("time_to_first_anchor_write")
     ref_fw_str = f"Step {ref_fw}" if ref_fw is not None else "N/A"
     cmp_fw_str = f"Step {cmp_fw}" if cmp_fw is not None else "N/A"
-    parts.append(f"<tr><td>First Anchor Write</td>"
-                 f"<td>{_esc(ref_fw_str)}</td>"
-                 f"<td>{_esc(cmp_fw_str)}</td></tr>")
+    parts.append(f"<tr><td>First Anchor Write</td><td>{_esc(ref_fw_str)}</td><td>{_esc(cmp_fw_str)}</td></tr>")
 
     parts.append("</tbody></table>")
 
@@ -94,17 +92,21 @@ def build_anchor_analysis_html(anchor_analysis: dict) -> str:
     if all_classes:
         parts.append("<h3>Per-Class Anchor Write Recall</h3>")
         parts.append('<table class="cvg-anchor-table">')
-        parts.append("<thead><tr><th>File Class</th><th>Anchor Files</th>"
-                     "<th>Reference Recall</th><th>Compared Recall</th></tr></thead>")
+        parts.append(
+            "<thead><tr><th>File Class</th><th>Anchor Files</th>"
+            "<th>Reference Recall</th><th>Compared Recall</th></tr></thead>"
+        )
         parts.append("<tbody>")
         for cls_name in all_classes:
             anchor_count = file_classes.get(cls_name, 0)
             ref_recall = ref_by_class.get(cls_name) or 0
             cmp_recall = cmp_by_class.get(cls_name) or 0
-            parts.append(f"<tr><td>{_esc(cls_name)}</td>"
-                         f"<td>{anchor_count}</td>"
-                         f"<td>{ref_recall * 100:.1f}%</td>"
-                         f"<td>{cmp_recall * 100:.1f}%</td></tr>")
+            parts.append(
+                f"<tr><td>{_esc(cls_name)}</td>"
+                f"<td>{anchor_count}</td>"
+                f"<td>{ref_recall * 100:.1f}%</td>"
+                f"<td>{cmp_recall * 100:.1f}%</td></tr>"
+            )
         parts.append("</tbody></table>")
 
     parts.append("</div>")
@@ -156,25 +158,33 @@ def build_comparison_report_html(report: dict) -> str:
 
     ref_filename = outcome.get("reference_filename") or ref_agent
     cmp_filename = outcome.get("compared_filename") or cmp_agent
-    parts.append("<thead><tr><th>Metric</th>"
-                 f"<th>{_esc(ref_filename)}</th>"
-                 f"<th>{_esc(cmp_filename)}</th></tr></thead>")
+    parts.append(f"<thead><tr><th>Metric</th><th>{_esc(ref_filename)}</th><th>{_esc(cmp_filename)}</th></tr></thead>")
     parts.append("<tbody>")
-    parts.append(f"<tr><td>Format</td>"
-                 f"<td>{_esc(outcome.get('reference_format', '—'))}</td>"
-                 f"<td>{_esc(outcome.get('compared_format', '—'))}</td></tr>")
-    parts.append(f"<tr><td>Steps</td>"
-                 f"<td>{_esc(outcome.get('reference_steps', 0))}</td>"
-                 f"<td>{_esc(outcome.get('compared_steps', 0))}</td></tr>")
-    parts.append(f"<tr><td>Total Tokens</td>"
-                 f"<td>{outcome.get('reference_tokens', 0):,}</td>"
-                 f"<td>{outcome.get('compared_tokens', 0):,}</td></tr>")
-    parts.append(f"<tr><td>Total Tool Calls</td>"
-                 f"<td>{_esc(outcome.get('reference_tool_calls', 0))}</td>"
-                 f"<td>{_esc(outcome.get('compared_tool_calls', 0))}</td></tr>")
-    parts.append(f"<tr><td>Duration</td>"
-                 f"<td>{_esc(_fmt_duration(outcome.get('reference_duration_s')))}</td>"
-                 f"<td>{_esc(_fmt_duration(outcome.get('compared_duration_s')))}</td></tr>")
+    parts.append(
+        f"<tr><td>Format</td>"
+        f"<td>{_esc(outcome.get('reference_format', '—'))}</td>"
+        f"<td>{_esc(outcome.get('compared_format', '—'))}</td></tr>"
+    )
+    parts.append(
+        f"<tr><td>Steps</td>"
+        f"<td>{_esc(outcome.get('reference_steps', 0))}</td>"
+        f"<td>{_esc(outcome.get('compared_steps', 0))}</td></tr>"
+    )
+    parts.append(
+        f"<tr><td>Total Tokens</td>"
+        f"<td>{outcome.get('reference_tokens', 0):,}</td>"
+        f"<td>{outcome.get('compared_tokens', 0):,}</td></tr>"
+    )
+    parts.append(
+        f"<tr><td>Total Tool Calls</td>"
+        f"<td>{_esc(outcome.get('reference_tool_calls', 0))}</td>"
+        f"<td>{_esc(outcome.get('compared_tool_calls', 0))}</td></tr>"
+    )
+    parts.append(
+        f"<tr><td>Duration</td>"
+        f"<td>{_esc(_fmt_duration(outcome.get('reference_duration_s')))}</td>"
+        f"<td>{_esc(_fmt_duration(outcome.get('compared_duration_s')))}</td></tr>"
+    )
     parts.append("</tbody></table>")
 
     # ── Milestones table — per-trajectory step index ─────────
@@ -200,49 +210,50 @@ def build_comparison_report_html(report: dict) -> str:
 
         parts.append("<h2>Milestones</h2>")
         parts.append('<table class="cvg-milestone-table">')
-        parts.append("<thead><tr><th>Milestone</th>"
-                     f"<th>{_esc(ref_filename)}</th>"
-                     f"<th>{_esc(cmp_filename)}</th></tr></thead>")
+        parts.append(
+            f"<thead><tr><th>Milestone</th><th>{_esc(ref_filename)}</th><th>{_esc(cmp_filename)}</th></tr></thead>"
+        )
         parts.append("<tbody>")
         for name in ordered_keys:
             label = _MILESTONE_LABELS.get(name, name.replace("_", " ").title())
-            parts.append(f"<tr><td>{_esc(label)}</td>"
-                         f"<td>{_esc(_fmt_step(ref_ms.get(name)))}</td>"
-                         f"<td>{_esc(_fmt_step(cmp_ms.get(name)))}</td></tr>")
+            parts.append(
+                f"<tr><td>{_esc(label)}</td>"
+                f"<td>{_esc(_fmt_step(ref_ms.get(name)))}</td>"
+                f"<td>{_esc(_fmt_step(cmp_ms.get(name)))}</td></tr>"
+            )
         parts.append("</tbody></table>")
 
     # ── Top divergence patterns ──────────────────────────────
     if patterns:
         parts.append("<h2>Divergence Patterns</h2>")
         _PATTERN_GLOSSARY = [
-            ("dead_end_branch",
-             "Agent started a line of work and later abandoned it without any surviving effect."),
-            ("reverted_and_rewritten",
-             "Write that was overwritten or undone by a later write to the same file — instability."),
-            ("iterative_refinement",
-             "Repeated writes to the same file that gradually improved the result — possibly intentional."),
-            ("broad_exploration",
-             "Reads or searches that ranged far outside the files that actually needed changing."),
-            ("error_recovery_overhead",
-             "Extra steps the agent spent handling or working around tool errors."),
-            ("redundant_search",
-             "Back-to-back searches that duplicated or barely refined an earlier query."),
-            ("ordering_inefficiency",
-             "Correct actions performed in an order that cost extra steps (e.g., edit before reading)."),
-            ("premature_validation",
-             "Ran tests/build/lint before the necessary edits were in place."),
+            ("dead_end_branch", "Agent started a line of work and later abandoned it without any surviving effect."),
+            (
+                "reverted_and_rewritten",
+                "Write that was overwritten or undone by a later write to the same file — instability.",
+            ),
+            (
+                "iterative_refinement",
+                "Repeated writes to the same file that gradually improved the result — possibly intentional.",
+            ),
+            ("broad_exploration", "Reads or searches that ranged far outside the files that actually needed changing."),
+            ("error_recovery_overhead", "Extra steps the agent spent handling or working around tool errors."),
+            ("redundant_search", "Back-to-back searches that duplicated or barely refined an earlier query."),
+            (
+                "ordering_inefficiency",
+                "Correct actions performed in an order that cost extra steps (e.g., edit before reading).",
+            ),
+            ("premature_validation", "Ran tests/build/lint before the necessary edits were in place."),
         ]
         parts.append(
             '<p style="font-size:12px;color:var(--ov-muted,#6b7280);margin:4px 0 10px;">'
-            'Each row is a cluster of unmatched compared-agent actions attributed to one pattern. '
-            'Pattern meanings:</p>'
+            "Each row is a cluster of unmatched compared-agent actions attributed to one pattern. "
+            "Pattern meanings:</p>"
         )
         parts.append('<ul style="font-size:12px;color:var(--ov-muted,#6b7280);margin:0 0 12px 18px;padding:0;">')
         for name, desc in _PATTERN_GLOSSARY:
-            parts.append(
-                f'<li style="margin:2px 0;"><code>{_esc(name)}</code> &mdash; {_esc(desc)}</li>'
-            )
-        parts.append('</ul>')
+            parts.append(f'<li style="margin:2px 0;"><code>{_esc(name)}</code> &mdash; {_esc(desc)}</li>')
+        parts.append("</ul>")
         # Sort by token cost descending
         sorted_patterns = sorted(
             patterns,
@@ -250,18 +261,14 @@ def build_comparison_report_html(report: dict) -> str:
             reverse=True,
         )
         parts.append('<table class="cvg-outcome-table">')
-        parts.append("<thead><tr><th>Pattern</th><th>Steps</th>"
-                     "<th>Extra Tokens</th><th>Evidence</th></tr></thead>")
+        parts.append("<thead><tr><th>Pattern</th><th>Steps</th><th>Extra Tokens</th><th>Evidence</th></tr></thead>")
         parts.append("<tbody>")
         for p in sorted_patterns:
             ptype = _esc(p.get("type", "unknown"))
             steps = len(p.get("steps", []))
             tokens = p.get("estimated_extra_cost", {}).get("tokens", 0)
             evidence = "; ".join(p.get("evidence", [])[:3])
-            parts.append(
-                f"<tr><td>{ptype}</td><td>{steps}</td>"
-                f"<td>{tokens:,}</td><td>{_esc(evidence)}</td></tr>"
-            )
+            parts.append(f"<tr><td>{ptype}</td><td>{steps}</td><td>{tokens:,}</td><td>{_esc(evidence)}</td></tr>")
         parts.append("</tbody></table>")
 
     # ── Anchor analysis (external anchor mode only) ──────────

@@ -6,14 +6,19 @@ import os
 import re
 
 from .canonical import (
-    CanonicalAction, compute_action_cost, semantic_equivalent,
-    canonicalize_steps, assign_effect_labels, DEFAULT_TOKEN_RATE,
+    CanonicalAction,
+    compute_action_cost,
+    semantic_equivalent,
+    canonicalize_steps,
+    assign_effect_labels,
+    DEFAULT_TOKEN_RATE,
 )
 
 
 def _describe_format(raw: dict) -> str:
     """Human-readable format name for a loaded trajectory (best-effort)."""
     from trajviz.insight.loaders import detect_format, FORMAT_LABELS
+
     fmt = detect_format(raw) if isinstance(raw, dict) else "unknown"
     return FORMAT_LABELS.get(fmt, fmt or "unknown")
 
@@ -28,6 +33,7 @@ def _session_duration_s(raw: dict) -> float | None:
         return None
     try:
         from datetime import datetime
+
         s = datetime.fromisoformat(started.replace("Z", "+00:00"))
         f = datetime.fromisoformat(finished.replace("Z", "+00:00"))
         delta = (f - s).total_seconds()
@@ -39,6 +45,7 @@ def _session_duration_s(raw: dict) -> float | None:
 # ---------------------------------------------------------------------------
 # Greedy forward-match alignment
 # ---------------------------------------------------------------------------
+
 
 def align_trajectories(
     reference: list[CanonicalAction],
@@ -122,6 +129,7 @@ def align_trajectories(
 # Alignment metrics
 # ---------------------------------------------------------------------------
 
+
 def compute_alignment_metrics(
     alignment: dict,
     reference: list[CanonicalAction],
@@ -135,28 +143,19 @@ def compute_alignment_metrics(
     reference_weight = sum(compute_action_cost(a, token_rate) for a in ref_non_reason)
     compared_weight = sum(compute_action_cost(a, token_rate) for a in cmp_non_reason)
 
-    matched_ref_weight = sum(
-        compute_action_cost(reference[i], token_rate)
-        for i, _ in alignment["matched_pairs"]
-    )
-    matched_cmp_weight = sum(
-        compute_action_cost(compared[j], token_rate)
-        for _, j in alignment["matched_pairs"]
-    )
+    matched_ref_weight = sum(compute_action_cost(reference[i], token_rate) for i, _ in alignment["matched_pairs"])
+    matched_cmp_weight = sum(compute_action_cost(compared[j], token_rate) for _, j in alignment["matched_pairs"])
 
     # Fall back to count-based metrics when token weights are 0
     # (e.g., Codex trajectories which lack per-action token data).
     # The fallback is JOINT (B24): if either side lacks cost data, BOTH sides
     # switch to counts, so overhead_ratio and P/R/F1 never divide an action
     # count by a token weight (mixed units made them meaningless).
-    if ((reference_weight == 0 and ref_non_reason)
-            or (compared_weight == 0 and cmp_non_reason)):
+    if (reference_weight == 0 and ref_non_reason) or (compared_weight == 0 and cmp_non_reason):
         reference_weight = len(ref_non_reason)
         compared_weight = len(cmp_non_reason)
-        matched_ref_weight = sum(1 for i, _ in alignment["matched_pairs"]
-                                 if reference[i].action_type != "REASON")
-        matched_cmp_weight = sum(1 for _, j in alignment["matched_pairs"]
-                                 if compared[j].action_type != "REASON")
+        matched_ref_weight = sum(1 for i, _ in alignment["matched_pairs"] if reference[i].action_type != "REASON")
+        matched_cmp_weight = sum(1 for _, j in alignment["matched_pairs"] if compared[j].action_type != "REASON")
 
     recall = matched_ref_weight / reference_weight if reference_weight > 0 else 0.0
     precision = matched_cmp_weight / compared_weight if compared_weight > 0 else 0.0
@@ -174,6 +173,7 @@ def compute_alignment_metrics(
 # ---------------------------------------------------------------------------
 # Harmful divergence
 # ---------------------------------------------------------------------------
+
 
 def compute_harmful_divergence(
     extra_indices: list[int],
@@ -194,8 +194,7 @@ def compute_harmful_divergence(
     for idx in extra_indices:
         if idx < len(compared):
             a = compared[idx]
-            if (a.effect_label in ("failed", "reverted")
-                    or a.step_index in dead_end_steps):
+            if a.effect_label in ("failed", "reverted") or a.step_index in dead_end_steps:
                 harmful_cost_tokens += a.cost.token_share
                 harmful_cost_latency += a.cost.latency_ms
 
@@ -215,6 +214,7 @@ def compute_harmful_divergence(
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
+
 def _parse_anchor_files(patch_path: str | None) -> set[str] | None:
     """Extract anchor file paths from a unified diff's ``a/``/``b/`` headers.
 
@@ -232,7 +232,7 @@ def _parse_anchor_files(patch_path: str | None) -> set[str] | None:
             content = f.read()
     except Exception:
         return None
-    anchor_files = set(re.findall(r'^[+-]{3}\s+[ab]/(.+)$', content, re.MULTILINE))
+    anchor_files = set(re.findall(r"^[+-]{3}\s+[ab]/(.+)$", content, re.MULTILINE))
     return anchor_files or None
 
 
@@ -266,7 +266,10 @@ def build_comparison_report(
     cmp_steps = parse_steps(cmp_raw)
 
     return build_comparison_report_from_steps(
-        ref_raw, cmp_raw, ref_steps, cmp_steps,
+        ref_raw,
+        cmp_raw,
+        ref_steps,
+        cmp_steps,
         token_rate=token_rate,
         fuzzy_commands=fuzzy_commands,
         anchor_files=_parse_anchor_files(anchor_patch),
@@ -299,8 +302,10 @@ def build_comparison_report_from_steps(
     trajviz.insight.comparison.run_comparison (pre-loaded dicts).
     """
     from .milestones import (
-        extract_milestones, compute_milestone_deltas,
-        segment_by_milestones, compare_segments,
+        extract_milestones,
+        compute_milestone_deltas,
+        segment_by_milestones,
+        compare_segments,
     )
     from .divergence import classify_divergences, compute_pattern_costs
 
@@ -342,8 +347,10 @@ def build_comparison_report_from_steps(
 
     # Determine target files for milestone grounding
     from trajviz.insight.diagnostics import identify_target_files
+
     def _norm(p):
         return os.path.normpath(p) if p else p
+
     if anchor_files:
         milestone_targets = {_norm(f) for f in anchor_files}
     else:
@@ -359,17 +366,26 @@ def build_comparison_report_from_steps(
     ref_segments = segment_by_milestones(ref_actions, ref_milestones)
     cmp_segments = segment_by_milestones(cmp_actions, cmp_milestones)
     segment_result = compare_segments(
-        ref_segments, cmp_segments, ref_milestones, cmp_milestones,
-        ref_actions, cmp_actions, token_rate,
+        ref_segments,
+        cmp_segments,
+        ref_milestones,
+        cmp_milestones,
+        ref_actions,
+        cmp_actions,
+        token_rate,
     )
 
     # Layer 3: Divergence
     extra_actions = [cmp_actions[j] for j in alignment["extra"] if j < len(cmp_actions)]
     matched_actions = [cmp_actions[j] for _, j in alignment["matched_pairs"] if j < len(cmp_actions)]
-    patterns = classify_divergences(extra_actions, matched_actions, cmp_actions,
-                                     matched_pairs=alignment["matched_pairs"],
-                                     anchor_files=anchor_files,
-                                     reference_actions=ref_actions)
+    patterns = classify_divergences(
+        extra_actions,
+        matched_actions,
+        cmp_actions,
+        matched_pairs=alignment["matched_pairs"],
+        anchor_files=anchor_files,
+        reference_actions=ref_actions,
+    )
     compute_pattern_costs(patterns, token_rate)
 
     # Collect dead_end_branch steps for harmful divergence
@@ -377,8 +393,7 @@ def build_comparison_report_from_steps(
     for p in patterns:
         if p.get("type") == "dead_end_branch":
             dead_end_steps.update(p.get("steps", []))
-    harmful = compute_harmful_divergence(
-        alignment["extra"], cmp_actions, token_rate, dead_end_steps)
+    harmful = compute_harmful_divergence(alignment["extra"], cmp_actions, token_rate, dead_end_steps)
 
     # Anchor mode and notes
     anchor_mode = "external" if anchor_files else "self"
@@ -393,10 +408,12 @@ def build_comparison_report_from_steps(
         )
     # Check patch-content divergence (same outcome but different files modified)
     if anchor_mode == "self" and ref_success == cmp_success:
-        ref_write_targets = {a.target for a in ref_actions
-                            if a.action_type == "FILE_WRITE" and a.effect_label == "survived"}
-        cmp_write_targets = {a.target for a in cmp_actions
-                            if a.action_type == "FILE_WRITE" and a.effect_label == "survived"}
+        ref_write_targets = {
+            a.target for a in ref_actions if a.action_type == "FILE_WRITE" and a.effect_label == "survived"
+        }
+        cmp_write_targets = {
+            a.target for a in cmp_actions if a.action_type == "FILE_WRITE" and a.effect_label == "survived"
+        }
         if ref_write_targets != cmp_write_targets and (ref_write_targets or cmp_write_targets):
             notes.append(
                 "Warning: runs produced different patches (different files modified). "
@@ -406,19 +423,28 @@ def build_comparison_report_from_steps(
     notes.append("Patterns are not promoted to general knowledge until confirmed across tasks.")
 
     # Determine agent names from metadata
-    ref_agent = ref_raw.get("metadata", {}).get("generator_name", "reference") if isinstance(ref_raw.get("metadata"), dict) else "reference"
-    cmp_agent = cmp_raw.get("metadata", {}).get("generator_name", "compared") if isinstance(cmp_raw.get("metadata"), dict) else "compared"
+    ref_agent = (
+        ref_raw.get("metadata", {}).get("generator_name", "reference")
+        if isinstance(ref_raw.get("metadata"), dict)
+        else "reference"
+    )
+    cmp_agent = (
+        cmp_raw.get("metadata", {}).get("generator_name", "compared")
+        if isinstance(cmp_raw.get("metadata"), dict)
+        else "compared"
+    )
 
     # Anchor analysis (only when externally anchored)
     anchor_analysis = None
     if anchor_mode == "external" and anchor_files:
         from .anchor import compute_anchor_analysis
-        anchor_analysis = compute_anchor_analysis(
-            ref_actions, cmp_actions, anchor_files)
+
+        anchor_analysis = compute_anchor_analysis(ref_actions, cmp_actions, anchor_files)
 
     # Evaluation layers (R25: compute_eval_layers reads only patterns and
     # anchor_analysis; the old throwaway alignment dict was never consumed)
     from .eval_layers import compute_eval_layers
+
     eval_layers = compute_eval_layers(patterns, anchor_analysis)
 
     # Confidence badges

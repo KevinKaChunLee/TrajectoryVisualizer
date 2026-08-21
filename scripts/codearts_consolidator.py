@@ -71,9 +71,7 @@ def _read_json(path: Path, expected_type: type) -> Any:
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ConsolidationError(f"Cannot read JSON from {path}: {exc}") from exc
     if not isinstance(value, expected_type):
-        raise ConsolidationError(
-            f"Expected {expected_type.__name__} in {path}, got {type(value).__name__}"
-        )
+        raise ConsolidationError(f"Expected {expected_type.__name__} in {path}, got {type(value).__name__}")
     return value
 
 
@@ -90,9 +88,7 @@ def _decode_db_json(value: Any, *, context: str, expected_type: type = dict) -> 
         except json.JSONDecodeError as exc:
             raise ConsolidationError(f"Invalid JSON in {context}: {exc}") from exc
     if not isinstance(value, expected_type):
-        raise ConsolidationError(
-            f"Expected {expected_type.__name__} in {context}, got {type(value).__name__}"
-        )
+        raise ConsolidationError(f"Expected {expected_type.__name__} in {context}, got {type(value).__name__}")
     return value
 
 
@@ -138,9 +134,7 @@ def _legacy_message_files(session_dir: Path) -> list[tuple[int, Path]]:
     return matches
 
 
-def _missing_shard_summary(
-    indices: Sequence[int], *, preview_limit: int = 20
-) -> tuple[int, list[int]]:
+def _missing_shard_summary(indices: Sequence[int], *, preview_limit: int = 20) -> tuple[int, list[int]]:
     """Count missing shard indexes without allocating ``range(max_index)``."""
     missing_count = 0
     preview: list[int] = []
@@ -178,10 +172,7 @@ def consolidate_legacy_session(session_dir: str | Path) -> dict[str, Any]:
         if sum(1 for candidate, _ in message_files if candidate == index) > 1
     )
     if duplicate_indices:
-        raise ConsolidationError(
-            "Ambiguous legacy message shards: multiple files map to indexes "
-            f"{duplicate_indices}"
-        )
+        raise ConsolidationError(f"Ambiguous legacy message shards: multiple files map to indexes {duplicate_indices}")
 
     base_info: dict[str, Any] = _read_json(base_path, dict)
     messages: list[dict[str, Any]] = []
@@ -190,9 +181,7 @@ def consolidate_legacy_session(session_dir: str | Path) -> dict[str, Any]:
         shard: list[Any] = _read_json(path, list)
         invalid = [i for i, message in enumerate(shard) if not isinstance(message, dict)]
         if invalid:
-            raise ConsolidationError(
-                f"Expected message objects in {path}; invalid indexes: {invalid[:5]}"
-            )
+            raise ConsolidationError(f"Expected message objects in {path}; invalid indexes: {invalid[:5]}")
         messages.extend(shard)
         shard_counts.append({"index": index, "file": path.name, "messages": len(shard)})
 
@@ -220,9 +209,7 @@ def consolidate_legacy_session(session_dir: str | Path) -> dict[str, Any]:
         "metadata": {
             "session_id": session_id,
             "title": base_info.get("title", ""),
-            "agent": selected_agent.get(
-                "en_name", selected_agent.get("agent_id", "CodeArts")
-            ),
+            "agent": selected_agent.get("en_name", selected_agent.get("agent_id", "CodeArts")),
             "agent_id": selected_agent.get("real_agent_id", ""),
             "model": "",
             "timestamp_utc": base_info.get("timestamp", ""),
@@ -291,9 +278,7 @@ def _validate_database_schema(connection: sqlite3.Connection) -> None:
             raise ConsolidationError(f"Cannot inspect table {table}: {exc}") from exc
         missing = sorted(required.difference(columns))
         if missing:
-            raise ConsolidationError(
-                f"Unsupported CodeArts database: table {table} is missing columns {missing}"
-            )
+            raise ConsolidationError(f"Unsupported CodeArts database: table {table} is missing columns {missing}")
 
 
 def _get_session_row(connection: sqlite3.Connection, session_id: str) -> sqlite3.Row | None:
@@ -309,9 +294,7 @@ def _session_info(row: sqlite3.Row) -> dict[str, Any]:
         "deletions": _row_value(row, "summary_deletions", 0),
         "files": _row_value(row, "summary_files", 0),
     }
-    diffs = _decode_optional_db_json(
-        _row_value(row, "summary_diffs"), context=f"session {row['id']} summary_diffs"
-    )
+    diffs = _decode_optional_db_json(_row_value(row, "summary_diffs"), context=f"session {row['id']} summary_diffs")
     if diffs is not None:
         summary["diffs"] = diffs
 
@@ -337,12 +320,8 @@ def _session_info(row: sqlite3.Row) -> dict[str, Any]:
         "summary": summary,
         "time": time_info,
     }
-    revert = _decode_optional_db_json(
-        _row_value(row, "revert"), context=f"session {row['id']} revert"
-    )
-    permission = _decode_optional_db_json(
-        _row_value(row, "permission"), context=f"session {row['id']} permission"
-    )
+    revert = _decode_optional_db_json(_row_value(row, "revert"), context=f"session {row['id']} revert")
+    permission = _decode_optional_db_json(_row_value(row, "permission"), context=f"session {row['id']} permission")
     if revert is not None:
         info["revert"] = revert
     if permission is not None:
@@ -370,13 +349,9 @@ def _optional_rows(
     return [{key: row[key] for key in row.keys()} for row in rows]  # noqa: SIM118
 
 
-def _message_extra_map(
-    connection: sqlite3.Connection, session_id: str
-) -> dict[str, list[dict[str, Any]]]:
+def _message_extra_map(connection: sqlite3.Connection, session_id: str) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in _optional_rows(
-        connection, "cag_message_extra", "session_id", session_id
-    ):
+    for row in _optional_rows(connection, "cag_message_extra", "session_id", session_id):
         message_id = row.get("message_id")
         if isinstance(message_id, str) and message_id:
             grouped.setdefault(message_id, []).append(row)
@@ -415,9 +390,7 @@ def _attach_storage_fields(
     record[storage_key] = storage
 
 
-def _message_parts(
-    connection: sqlite3.Connection, message_id: str
-) -> list[dict[str, Any]]:
+def _message_parts(connection: sqlite3.Connection, message_id: str) -> list[dict[str, Any]]:
     part_columns = _table_columns(connection, "part")
     order_by = "time_created, id" if "time_created" in part_columns else "id"
     rows = connection.execute(
@@ -479,9 +452,7 @@ def _session_messages(
             if "isSubAgent" in info and info["isSubAgent"] is not True:
                 info["_codeartsOriginalIsSubAgent"] = info["isSubAgent"]
             info["isSubAgent"] = True
-            info.setdefault(
-                "parentSessionID", session_info.get("parentID") or traversal_parent_id
-            )
+            info.setdefault("parentSessionID", session_info.get("parentID") or traversal_parent_id)
             info.setdefault("sessionDepth", depth)
             info.setdefault("sessionTitle", session_info.get("title", ""))
 
@@ -513,9 +484,7 @@ def _session_messages(
         extras = message_extras.get(str(row["id"]), [])
         if extras:
             message_record["codearts_extra"] = extras
-        messages.append(
-            ((sort_created, ordinal, str(row["id"])), message_record)
-        )
+        messages.append(((sort_created, ordinal, str(row["id"])), message_record))
     return messages, metadata_children
 
 
@@ -533,9 +502,7 @@ def _relational_children(connection: sqlite3.Connection, session_id: str) -> set
     }
 
 
-def _trajectory_statistics(
-    messages: Sequence[dict[str, Any]], session_count: int
-) -> dict[str, int]:
+def _trajectory_statistics(messages: Sequence[dict[str, Any]], session_count: int) -> dict[str, int]:
     role_counts: dict[str, int] = {}
     part_count = 0
     tool_parts = 0
@@ -583,9 +550,7 @@ def consolidate_database_session(
 
         root_info = _session_info(root_row)
         visited: set[str] = set()
-        queue: list[tuple[str, int, str | None, str]] = [
-            (session_id, 0, None, "root")
-        ]
+        queue: list[tuple[str, int, str | None, str]] = [(session_id, 0, None, "root")]
         sorted_messages: list[tuple[tuple[int, int, str], dict[str, Any]]] = []
         session_manifest: list[dict[str, Any]] = []
         warnings: list[str] = []
@@ -595,16 +560,12 @@ def consolidate_database_session(
             if current_id in visited:
                 continue
             if max_depth is not None and depth > max_depth:
-                warnings.append(
-                    f"Skipped session {current_id}: maximum depth {max_depth} exceeded"
-                )
+                warnings.append(f"Skipped session {current_id}: maximum depth {max_depth} exceeded")
                 continue
 
             row = _get_session_row(connection, current_id)
             if row is None:
-                warnings.append(
-                    f"Referenced child session {current_id} does not exist in the database"
-                )
+                warnings.append(f"Referenced child session {current_id} does not exist in the database")
                 continue
             visited.add(current_id)
             info = _session_info(row)
@@ -622,9 +583,7 @@ def consolidate_database_session(
                 "message_count": len(current_messages),
                 "info": info,
             }
-            session_extras = _optional_rows(
-                connection, "cag_session_extra", "session_id", current_id
-            )
+            session_extras = _optional_rows(connection, "cag_session_extra", "session_id", current_id)
             todos = _optional_rows(connection, "todo", "session_id", current_id)
             events = _optional_rows(connection, "event", "aggregate_id", current_id)
             if session_extras:
@@ -653,18 +612,10 @@ def consolidate_database_session(
         sorted_messages.sort(key=lambda item: item[0])
         messages = [message for _, message in sorted_messages]
         statistics = _trajectory_statistics(messages, len(session_manifest))
-        statistics["session_extra_rows"] = sum(
-            len(entry.get("codearts_extra", [])) for entry in session_manifest
-        )
-        statistics["message_extra_rows"] = sum(
-            len(message.get("codearts_extra", [])) for message in messages
-        )
-        statistics["todo_rows"] = sum(
-            len(entry.get("todos", [])) for entry in session_manifest
-        )
-        statistics["event_rows"] = sum(
-            len(entry.get("events", [])) for entry in session_manifest
-        )
+        statistics["session_extra_rows"] = sum(len(entry.get("codearts_extra", [])) for entry in session_manifest)
+        statistics["message_extra_rows"] = sum(len(message.get("codearts_extra", [])) for message in messages)
+        statistics["todo_rows"] = sum(len(entry.get("todos", [])) for entry in session_manifest)
+        statistics["event_rows"] = sum(len(entry.get("events", [])) for entry in session_manifest)
         optional_tables = {
             table: ("included" if _table_columns(connection, table) else "not_present")
             for table in ("cag_session_extra", "cag_message_extra", "todo", "event")
@@ -713,9 +664,7 @@ def write_output(data: dict[str, Any], output_path: str | Path) -> None:
     _common.write_json_atomic(path, data)
 
 
-def ensure_output_is_not_source(
-    output_path: str | Path, source_paths: Iterable[str | Path]
-) -> None:
+def ensure_output_is_not_source(output_path: str | Path, source_paths: Iterable[str | Path]) -> None:
     """Refuse to replace a database or legacy shard with exported JSON."""
     _common.ensure_output_does_not_overwrite(
         output_path,
@@ -746,17 +695,13 @@ def _safe_filename_component(value: Any, fallback: str = "session") -> str:
 
 
 def _default_database_path() -> Path:
-    configured = os.environ.get("CODEARTS_DATABASE") or os.environ.get(
-        "OPENCODE_DATABASE"
-    )
+    configured = os.environ.get("CODEARTS_DATABASE") or os.environ.get("OPENCODE_DATABASE")
     if configured:
         return Path(configured).expanduser()
     return Path.home() / ".codeartsdoer" / "codearts-data" / "opencode.db"
 
 
-def _resolve_mode(
-    raw_input: str, explicit_session_id: str | None
-) -> tuple[str, Path, str | None]:
+def _resolve_mode(raw_input: str, explicit_session_id: str | None) -> tuple[str, Path, str | None]:
     input_path = Path(raw_input).expanduser()
     if input_path.exists():
         resolved = input_path.resolve()
@@ -773,20 +718,14 @@ def _resolve_mode(
     # means "use the configured/default database".
     if raw_input.startswith("ses_"):
         if explicit_session_id and explicit_session_id != raw_input:
-            raise ConsolidationError(
-                f"Conflicting session IDs: {raw_input} and {explicit_session_id}"
-            )
+            raise ConsolidationError(f"Conflicting session IDs: {raw_input} and {explicit_session_id}")
         return "database", _default_database_path().resolve(), raw_input
     raise ConsolidationError(f"Input not found: {input_path}")
 
 
 def _print_summary(data: dict[str, Any], output: str | Path) -> None:
     stats = data.get("statistics", {})
-    session_id = (
-        data.get("metadata", {}).get("session_id")
-        or data.get("info", {}).get("id")
-        or "unknown"
-    )
+    session_id = data.get("metadata", {}).get("session_id") or data.get("info", {}).get("id") or "unknown"
     print(f"Consolidated: {session_id}", file=sys.stderr)
     print(
         f"  Sessions: {stats.get('sessions', 1)}; "
@@ -803,9 +742,7 @@ def _print_summary(data: dict[str, Any], output: str | Path) -> None:
         print("  Completeness: partial (see warnings above)", file=sys.stderr)
 
 
-def _batch_legacy(
-    parent: Path, output_dir: Path | None
-) -> tuple[int, int, int, int]:
+def _batch_legacy(parent: Path, output_dir: Path | None) -> tuple[int, int, int, int]:
     processed = 0
     ignored = 0
     failed = 0
@@ -826,9 +763,7 @@ def _batch_legacy(
             )
             resolved_destination = destination.resolve()
             if resolved_destination in used_destinations:
-                raise ConsolidationError(
-                    f"Multiple sessions map to the same output: {resolved_destination}"
-                )
+                raise ConsolidationError(f"Multiple sessions map to the same output: {resolved_destination}")
             ensure_output_is_not_source(
                 destination,
                 [
@@ -855,8 +790,7 @@ def _batch_legacy(
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Export a complete CodeArts trajectory from legacy JSON shards or the "
-            "current opencode.db database."
+            "Export a complete CodeArts trajectory from legacy JSON shards or the current opencode.db database."
         )
     )
     parser.add_argument(
@@ -900,8 +834,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_dir.mkdir(parents=True, exist_ok=True)
             processed, ignored, failed, partial = _batch_legacy(source, output_dir)
             print(
-                f"Done: {processed} sessions exported, {ignored} ignored, "
-                f"{failed} failed, {partial} partial.",
+                f"Done: {processed} sessions exported, {ignored} ignored, {failed} failed, {partial} partial.",
                 file=sys.stderr,
             )
             if failed:
@@ -941,9 +874,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 Path(f"{source}-shm"),
             ]
         else:
-            raise ConsolidationError(
-                f"{source} is neither a legacy session nor an opencode.db directory"
-            )
+            raise ConsolidationError(f"{source} is neither a legacy session nor an opencode.db directory")
 
         output: str | Path = args.output or default_output
         ensure_output_is_not_source(output, protected_sources)

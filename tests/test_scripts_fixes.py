@@ -72,9 +72,24 @@ def _insert_session(conn: sqlite3.Connection, session_id: str, parent_id=None) -
     conn.execute(
         "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            session_id, "project", "workspace", parent_id, session_id, "/workspace",
-            f"Session {session_id}", "test", 0, 0, 0, 1_000, 2_000, None, None,
-            None, None, None,
+            session_id,
+            "project",
+            "workspace",
+            parent_id,
+            session_id,
+            "/workspace",
+            f"Session {session_id}",
+            "test",
+            0,
+            0,
+            0,
+            1_000,
+            2_000,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
     )
 
@@ -93,9 +108,7 @@ def _insert_message(
     )
 
 
-def _insert_spawn_part(
-    conn: sqlite3.Connection, part_id: str, msg_id: str, session_id: str, child_id: str
-) -> None:
+def _insert_spawn_part(conn: sqlite3.Connection, part_id: str, msg_id: str, session_id: str, child_id: str) -> None:
     data = {
         "type": "tool",
         "tool": "task",
@@ -133,17 +146,13 @@ class OpencodeDiamondTraversalTests(unittest.TestCase):
         conn.commit()
 
         with contextlib.redirect_stderr(io.StringIO()):
-            result = opencode_consolidator.export_session_and_collect_children(
-                conn, "ses_root", set()
-            )
+            result = opencode_consolidator.export_session_and_collect_children(conn, "ses_root", set())
         conn.close()
 
         exported_ids = [m["info"]["id"] for m in result["messages"]]
         self.assertEqual(exported_ids.count("m_d"), 1)
         self.assertEqual(len(exported_ids), len(set(exported_ids)))
-        self.assertEqual(
-            sorted(exported_ids), ["m_b", "m_c", "m_d", "m_root_b", "m_root_c"]
-        )
+        self.assertEqual(sorted(exported_ids), ["m_b", "m_c", "m_d", "m_root_b", "m_root_c"])
 
 
 class OpencodePersistedTimingTests(unittest.TestCase):
@@ -156,9 +165,7 @@ class OpencodePersistedTimingTests(unittest.TestCase):
         _insert_message(conn, "m_0", "ses_root", payload, created, updated)
         conn.commit()
         with contextlib.redirect_stderr(io.StringIO()):
-            result = opencode_consolidator.export_session_and_collect_children(
-                conn, "ses_root", set()
-            )
+            result = opencode_consolidator.export_session_and_collect_children(conn, "ses_root", set())
         conn.close()
         return result["messages"][0]["info"]
 
@@ -252,19 +259,13 @@ class CommonOverwriteGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "input.json"
             source.write_text("{}", encoding="utf-8")
-            _common.ensure_output_does_not_overwrite(
-                Path(tmp) / "output.json", [source], exc=ValueError
-            )
+            _common.ensure_output_does_not_overwrite(Path(tmp) / "output.json", [source], exc=ValueError)
 
     def test_stdout_dash_bypass_is_opt_in(self) -> None:
         dash_source = Path("-")
-        _common.ensure_output_does_not_overwrite(
-            "-", [dash_source], exc=ValueError, allow_stdout_dash=True
-        )
+        _common.ensure_output_does_not_overwrite("-", [dash_source], exc=ValueError, allow_stdout_dash=True)
         with self.assertRaises(ValueError):
-            _common.ensure_output_does_not_overwrite(
-                "-", [dash_source], exc=ValueError, allow_stdout_dash=False
-            )
+            _common.ensure_output_does_not_overwrite("-", [dash_source], exc=ValueError, allow_stdout_dash=False)
 
 
 class StepLabelerV1CliTests(unittest.TestCase):
@@ -330,9 +331,16 @@ class StepLabelerV1CliTests(unittest.TestCase):
             output = Path(tmp) / "trajectory_labeled.json"
             self._run_cli(
                 [
-                    "step_labeler.py", str(trajectory), "-o", str(output),
-                    "--base-url", "https://example.invalid/v1",
-                    "--api-key", "test", "--model", "test-model",
+                    "step_labeler.py",
+                    str(trajectory),
+                    "-o",
+                    str(output),
+                    "--base-url",
+                    "https://example.invalid/v1",
+                    "--api-key",
+                    "test",
+                    "--model",
+                    "test-model",
                 ]
             )
             data = json.loads(output.read_text(encoding="utf-8"))
@@ -362,9 +370,16 @@ class StepLabelerV1CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 self._run_cli(
                     [
-                        "step_labeler.py", str(trajectory), "-o", str(trajectory),
-                        "--base-url", "https://example.invalid/v1",
-                        "--api-key", "test", "--model", "test-model",
+                        "step_labeler.py",
+                        str(trajectory),
+                        "-o",
+                        str(trajectory),
+                        "--base-url",
+                        "https://example.invalid/v1",
+                        "--api-key",
+                        "test",
+                        "--model",
+                        "test-model",
                     ]
                 )
             self.assertEqual(raised.exception.code, 1)

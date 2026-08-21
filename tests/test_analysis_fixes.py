@@ -31,8 +31,7 @@ def _step(idx, tool_calls, role="assistant"):
         "tool_calls": tool_calls,
         "tool_call_count": len(tool_calls),
         "parts": [],
-        "tokens": {"total": 0, "input": 0, "output": 0,
-                   "reasoning": 0, "cache_read": 0},
+        "tokens": {"total": 0, "input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
     }
 
 
@@ -40,20 +39,30 @@ class CommandMetricsExitNoneTests(unittest.TestCase):
     """B7: exit=None (cancelled/unfinished command) is not a failure."""
 
     def test_exit_none_is_not_a_failure(self):
-        steps = [_step(0, [
-            {"tool_name": "Bash", "status": "success", "metadata": {"exit": None}},
-            {"tool_name": "Bash", "status": "success", "metadata": {"exit": 0}},
-        ])]
+        steps = [
+            _step(
+                0,
+                [
+                    {"tool_name": "Bash", "status": "success", "metadata": {"exit": None}},
+                    {"tool_name": "Bash", "status": "success", "metadata": {"exit": 0}},
+                ],
+            )
+        ]
         m = _compute_command_metrics(steps)
         self.assertEqual(m["command_call_count"], 2)
         self.assertEqual(m["command_failures"], 0)
         self.assertEqual(m["command_success_rate"], 1.0)
 
     def test_nonzero_exit_still_counts_as_failure(self):
-        steps = [_step(0, [
-            {"tool_name": "Bash", "status": "error", "metadata": {"exit": 1}},
-            {"tool_name": "Bash", "status": "success", "metadata": {"exit": 0}},
-        ])]
+        steps = [
+            _step(
+                0,
+                [
+                    {"tool_name": "Bash", "status": "error", "metadata": {"exit": 1}},
+                    {"tool_name": "Bash", "status": "success", "metadata": {"exit": 0}},
+                ],
+            )
+        ]
         m = _compute_command_metrics(steps)
         self.assertEqual(m["command_call_count"], 2)
         self.assertEqual(m["command_failures"], 1)
@@ -88,8 +97,8 @@ class PercentileNearestRankTests(unittest.TestCase):
 
     def test_boundary_guards_unchanged(self):
         vals = [3.0, 1.0, 2.0]
-        self.assertEqual(_percentile(vals, 0.0), 1.0)   # q<=0 -> min
-        self.assertEqual(_percentile(vals, 1.0), 3.0)   # q>=1 -> max
+        self.assertEqual(_percentile(vals, 0.0), 1.0)  # q<=0 -> min
+        self.assertEqual(_percentile(vals, 1.0), 3.0)  # q>=1 -> max
 
 
 class ToolSelectionLowercaseBashTests(unittest.TestCase):
@@ -97,18 +106,15 @@ class ToolSelectionLowercaseBashTests(unittest.TestCase):
 
     def test_lowercase_bash_is_flagged(self):
         steps = [
-            _step(0, [{"tool_name": "bash",
-                       "input": {"command": "cat /etc/hosts"}}]),
-            _step(1, [{"tool_name": "Bash",
-                       "input": {"command": "cat /etc/hosts"}}]),
+            _step(0, [{"tool_name": "bash", "input": {"command": "cat /etc/hosts"}}]),
+            _step(1, [{"tool_name": "Bash", "input": {"command": "cat /etc/hosts"}}]),
         ]
         flagged = detect_tool_selection_antipatterns(steps)
         self.assertEqual(len(flagged), 2)
         self.assertEqual(sorted(f["step"] for f in flagged), [0, 1])
 
     def test_other_tools_are_not_flagged(self):
-        steps = [_step(0, [{"tool_name": "Read",
-                            "input": {"command": "cat /etc/hosts"}}])]
+        steps = [_step(0, [{"tool_name": "Read", "input": {"command": "cat /etc/hosts"}}])]
         self.assertEqual(detect_tool_selection_antipatterns(steps), [])
 
 
@@ -116,8 +122,7 @@ class EditPrecisionFailureStatusTests(unittest.TestCase):
     """B12: cancelled/timed-out edits are failures, not successes."""
 
     def _diag(self, statuses):
-        steps = [_step(i, [{"tool_name": "Edit", "status": st, "input": {}}])
-                 for i, st in enumerate(statuses)]
+        steps = [_step(i, [{"tool_name": "Edit", "status": st, "input": {}}]) for i, st in enumerate(statuses)]
         return compute_diagnostic_metrics(steps, trajectory=[])
 
     def test_cancelled_edit_is_not_a_success(self):

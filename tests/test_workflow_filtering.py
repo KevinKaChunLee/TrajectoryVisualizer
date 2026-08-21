@@ -13,8 +13,8 @@ def _chip_state_source():
     begin = source.index("__WF_CHIP_STATE_BEGIN__")
     end = source.index("__WF_CHIP_STATE_END__")
     block = source[begin:end]
-    block = block[block.index("window.__wfComputeChipState"):]
-    return block[:block.rindex("};") + 2]
+    block = block[block.index("window.__wfComputeChipState") :]
+    return block[: block.rindex("};") + 2]
 
 
 def _run_chip_state(scenarios):
@@ -22,13 +22,18 @@ def _run_chip_state(scenarios):
     script = (
         "var window = {};\n"
         + _chip_state_source()
-        + "\nvar scenarios = " + json.dumps(scenarios) + ";\n"
+        + "\nvar scenarios = "
+        + json.dumps(scenarios)
+        + ";\n"
         + "console.log(JSON.stringify(scenarios.map(function(s) {\n"
         + "    return window.__wfComputeChipState(s.state, s.action);\n"
         + "})));"
     )
     proc = subprocess.run(
-        ["node", "-e", script], capture_output=True, text=True, timeout=30,
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if proc.returncode != 0:
         raise AssertionError(f"node failed: {proc.stderr}")
@@ -61,10 +66,12 @@ def _step(
 ):
     tool_calls = []
     if tool:
-        tool_calls.append({
-            "tool_name": tool_name,
-            "input": tool_input or {},
-        })
+        tool_calls.append(
+            {
+                "tool_name": tool_name,
+                "input": tool_input or {},
+            }
+        )
     return {
         "index": index,
         "role": role,
@@ -236,7 +243,7 @@ class WorkflowFilteringTests(unittest.TestCase):
         self.assertIn("window.__wfComputeChipState(", source)
         self.assertIn("window.__wfReadChipState(bar)", source)
         self.assertIn("window.__wfApplyChipState(bar, next)", source)
-        self.assertIn("data-wf-action=\"reset-filters\"", source)
+        self.assertIn('data-wf-action="reset-filters"', source)
         self.assertIn("window.__updateWorkflowFilterQuery(root)", source)
         self.assertIn("window.__syncWorkflowFilters(bar)", source)
 
@@ -245,8 +252,8 @@ class WorkflowFilteringTests(unittest.TestCase):
 
         source = inspect.getsource(insight.build_ui)
 
-        hidden_filter_source = source[source.index("wf_filter_hidden = gr.Textbox("):]
-        hidden_filter_source = hidden_filter_source[:hidden_filter_source.index("wf_count_html")]
+        hidden_filter_source = source[source.index("wf_filter_hidden = gr.Textbox(") :]
+        hidden_filter_source = hidden_filter_source[: hidden_filter_source.index("wf_count_html")]
         self.assertIn("visible=True", hidden_filter_source)
         self.assertIn("hiddenEl.tagName === 'TEXTAREA'", source)
         self.assertIn("descriptor.set.call(hiddenEl, active.join(','))", source)
@@ -261,7 +268,7 @@ class WorkflowFilteringTests(unittest.TestCase):
         styles = Path("trajviz/insight/styles.py").read_text()
 
         start = styles.index("#wf-filter-hidden")
-        bridge_css = styles[start:styles.index(".filter-summary {", start)]
+        bridge_css = styles[start : styles.index(".filter-summary {", start)]
         self.assertIn("display: none !important", bridge_css)
 
     def test_filter_rerender_preserves_collapsed_toc(self):
@@ -269,13 +276,19 @@ class WorkflowFilteringTests(unittest.TestCase):
 
         collapsed_toc = "<nav class='wf-toc-sidebar toc-hidden' id='wf-toc-sidebar'></nav>"
         _, _, toc = _build_filtered_workflow_outputs(
-            self.steps, "Assistant,All", "", collapsed_toc,
+            self.steps,
+            "Assistant,All",
+            "",
+            collapsed_toc,
         )
         self.assertIn("toc-hidden", toc)
 
         open_toc = "<nav class='wf-toc-sidebar' id='wf-toc-sidebar'></nav>"
         _, _, toc = _build_filtered_workflow_outputs(
-            self.steps, "Assistant,All", "", open_toc,
+            self.steps,
+            "Assistant,All",
+            "",
+            open_toc,
         )
         self.assertNotIn("toc-hidden", toc)
 
@@ -285,7 +298,8 @@ class WorkflowFilteringTests(unittest.TestCase):
         source = inspect.getsource(insight.build_ui)
 
         self.assertIn(
-            "inputs=[state_steps, wf_filter_hidden, wf_search, toc_html]", source,
+            "inputs=[state_steps, wf_filter_hidden, wf_search, toc_html]",
+            source,
         )
         self.assertIn("outputs=[workflow_html, wf_count_html, toc_html]", source)
 
@@ -303,10 +317,10 @@ class WorkflowFilteringTests(unittest.TestCase):
         self.assertIn("data-wf-hidden-msg", source)
         self.assertIn("data-wf-detail-placeholder", source)
         self.assertIn("Selected step is hidden by the current filters", source)
-        watcher = source[source.index("__wfHiddenStepObserverAttached"):]
-        watcher = watcher[:watcher.index("MutationObserver")]
+        watcher = source[source.index("__wfHiddenStepObserverAttached") :]
+        watcher = watcher[: watcher.index("MutationObserver")]
         self.assertIn("selectCard(card)", watcher)
-        deep_link = source[source.index("Deep link: on load"):source.index("Hidden-selection watcher")]
+        deep_link = source[source.index("Deep link: on load") : source.index("Hidden-selection watcher")]
         self.assertNotIn("hidden by the current filters", deep_link)
         self.assertIn("history.replaceState(", deep_link)
 
@@ -316,10 +330,14 @@ class WorkflowChipStateMachineTests(unittest.TestCase):
     """Execute the embedded __wfComputeChipState source against real scenarios."""
 
     def test_selecting_a_feature_makes_it_exclusive_with_all(self):
-        (result,) = _run_chip_state([{
-            "state": _chip_state(),
-            "action": {"type": "toggle", "group": "feature", "name": "Errors"},
-        }])
+        (result,) = _run_chip_state(
+            [
+                {
+                    "state": _chip_state(),
+                    "action": {"type": "toggle", "group": "feature", "name": "Errors"},
+                }
+            ]
+        )
 
         self.assertFalse(result["rejected"])
         self.assertFalse(result["features"]["All"])
@@ -327,29 +345,41 @@ class WorkflowChipStateMachineTests(unittest.TestCase):
         self.assertEqual(result["roles"], {"Assistant": True, "User": True})
 
     def test_deselecting_the_last_feature_auto_restores_all(self):
-        (result,) = _run_chip_state([{
-            "state": _chip_state(features={"All": False, "Errors": True}),
-            "action": {"type": "toggle", "group": "feature", "name": "Errors"},
-        }])
+        (result,) = _run_chip_state(
+            [
+                {
+                    "state": _chip_state(features={"All": False, "Errors": True}),
+                    "action": {"type": "toggle", "group": "feature", "name": "Errors"},
+                }
+            ]
+        )
 
         self.assertTrue(result["features"]["All"])
         self.assertFalse(result["features"]["Errors"])
 
     def test_deselecting_one_of_two_features_keeps_the_other_without_all(self):
-        (result,) = _run_chip_state([{
-            "state": _chip_state(features={"All": False, "Errors": True, "Reasoning": True}),
-            "action": {"type": "toggle", "group": "feature", "name": "Errors"},
-        }])
+        (result,) = _run_chip_state(
+            [
+                {
+                    "state": _chip_state(features={"All": False, "Errors": True, "Reasoning": True}),
+                    "action": {"type": "toggle", "group": "feature", "name": "Errors"},
+                }
+            ]
+        )
 
         self.assertFalse(result["features"]["All"])
         self.assertFalse(result["features"]["Errors"])
         self.assertTrue(result["features"]["Reasoning"])
 
     def test_selecting_all_clears_every_specific_feature(self):
-        (result,) = _run_chip_state([{
-            "state": _chip_state(features={"All": False, "Errors": True, "Reasoning": True}),
-            "action": {"type": "toggle", "group": "feature", "name": "All"},
-        }])
+        (result,) = _run_chip_state(
+            [
+                {
+                    "state": _chip_state(features={"All": False, "Errors": True, "Reasoning": True}),
+                    "action": {"type": "toggle", "group": "feature", "name": "All"},
+                }
+            ]
+        )
 
         self.assertEqual(
             result["features"],
@@ -357,26 +387,32 @@ class WorkflowChipStateMachineTests(unittest.TestCase):
         )
 
     def test_the_last_active_role_cannot_be_deselected(self):
-        (result,) = _run_chip_state([{
-            "state": _chip_state(roles={"Assistant": True, "User": False}),
-            "action": {"type": "toggle", "group": "role", "name": "Assistant"},
-        }])
+        (result,) = _run_chip_state(
+            [
+                {
+                    "state": _chip_state(roles={"Assistant": True, "User": False}),
+                    "action": {"type": "toggle", "group": "role", "name": "Assistant"},
+                }
+            ]
+        )
 
         self.assertTrue(result["rejected"])
         self.assertTrue(result["roles"]["Assistant"])
         self.assertFalse(result["roles"]["User"])
 
     def test_role_toggles_do_not_touch_features(self):
-        results = _run_chip_state([
-            {
-                "state": _chip_state(features={"All": False, "Tool Calls": True}),
-                "action": {"type": "toggle", "group": "role", "name": "User"},
-            },
-            {
-                "state": _chip_state(roles={"Assistant": False, "User": True}),
-                "action": {"type": "toggle", "group": "role", "name": "Assistant"},
-            },
-        ])
+        results = _run_chip_state(
+            [
+                {
+                    "state": _chip_state(features={"All": False, "Tool Calls": True}),
+                    "action": {"type": "toggle", "group": "role", "name": "User"},
+                },
+                {
+                    "state": _chip_state(roles={"Assistant": False, "User": True}),
+                    "action": {"type": "toggle", "group": "role", "name": "Assistant"},
+                },
+            ]
+        )
 
         self.assertFalse(results[0]["roles"]["User"])
         self.assertEqual(
@@ -387,13 +423,17 @@ class WorkflowChipStateMachineTests(unittest.TestCase):
         self.assertTrue(results[1]["roles"]["User"])
 
     def test_reset_restores_all_roles_and_the_all_feature(self):
-        (result,) = _run_chip_state([{
-            "state": _chip_state(
-                roles={"Assistant": False, "User": True},
-                features={"All": False, "Tool Calls": True, "Errors": True},
-            ),
-            "action": {"type": "reset"},
-        }])
+        (result,) = _run_chip_state(
+            [
+                {
+                    "state": _chip_state(
+                        roles={"Assistant": False, "User": True},
+                        features={"All": False, "Tool Calls": True, "Errors": True},
+                    ),
+                    "action": {"type": "reset"},
+                }
+            ]
+        )
 
         self.assertEqual(result["roles"], {"Assistant": True, "User": True})
         self.assertEqual(

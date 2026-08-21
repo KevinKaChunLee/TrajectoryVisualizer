@@ -49,9 +49,7 @@ _TOKEN_METRIC_FIELDS = {
 def _missing_token_metric_fields(tokens_info: dict) -> list[str]:
     """Return display labels for token fields absent from the source payload."""
     missing = [
-        label
-        for key, label in _TOKEN_METRIC_FIELDS.items()
-        if key not in tokens_info or tokens_info.get(key) is None
+        label for key, label in _TOKEN_METRIC_FIELDS.items() if key not in tokens_info or tokens_info.get(key) is None
     ]
     cache = tokens_info.get("cache")
     if not isinstance(cache, dict) or "read" not in cache or cache.get("read") is None:
@@ -108,27 +106,33 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
 
         if ptype == "text":
             txt = p.get("text", "")
-            parts.append({
-                "type": "text", "text": txt,
-                "synthetic": bool(p.get("synthetic", False)),
-                "metadata": p.get("metadata", {}) if isinstance(p.get("metadata"), dict) else {},
-                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
-                "part_id": p.get("id", ""),
-                "session_id": p.get("sessionID", ""),
-                "message_id": p.get("messageID", ""),
-            })
+            parts.append(
+                {
+                    "type": "text",
+                    "text": txt,
+                    "synthetic": bool(p.get("synthetic", False)),
+                    "metadata": p.get("metadata", {}) if isinstance(p.get("metadata"), dict) else {},
+                    "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                    "part_id": p.get("id", ""),
+                    "session_id": p.get("sessionID", ""),
+                    "message_id": p.get("messageID", ""),
+                }
+            )
             if p.get("synthetic") and not synthetic_text_preview:
                 synthetic_text_preview = txt
             elif not p.get("synthetic") and not text_preview:
                 text_preview = txt
         elif ptype == "reasoning":
-            parts.append({
-                "type": "reasoning", "text": p.get("text", ""),
-                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
-                "part_id": p.get("id", ""),
-                "session_id": p.get("sessionID", ""),
-                "message_id": p.get("messageID", ""),
-            })
+            parts.append(
+                {
+                    "type": "reasoning",
+                    "text": p.get("text", ""),
+                    "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                    "part_id": p.get("id", ""),
+                    "session_id": p.get("sessionID", ""),
+                    "message_id": p.get("messageID", ""),
+                }
+            )
             has_reasoning = True
             if not text_preview:
                 text_preview = p.get("text", "")
@@ -142,8 +146,10 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
             tool_output = state.get("output", p.get("output", ""))
             compacted_at = safe_get(state, "time", "compacted", default=None)
             tc = {
-                "type": "tool_call", "tool_name": tool_name,
-                "tool_id": p.get("tool_id", p.get("callID", p.get("id", ""))), "status": status,
+                "type": "tool_call",
+                "tool_name": tool_name,
+                "tool_id": p.get("tool_id", p.get("callID", p.get("id", ""))),
+                "status": status,
                 "title": state.get("title", ""),
                 "input": tool_input,
                 "output": tool_output,
@@ -165,34 +171,42 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
             if not text_preview:
                 text_preview = f"[Tool: {tool_name}] {tc['title']}"
         elif ptype in ("step_start", "step-start"):
-            parts.append({
-                "type": "step_start", "name": p.get("name", ""),
-                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
-                "part_id": p.get("id", ""),
-            })
+            parts.append(
+                {
+                    "type": "step_start",
+                    "name": p.get("name", ""),
+                    "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                    "part_id": p.get("id", ""),
+                }
+            )
         elif ptype in ("step_finish", "step-finish"):
-            parts.append({
-                "type": "step_finish", "name": p.get("name", ""),
-                "reason": p.get("reason", ""),
-                "tokens": p.get("tokens", {}) if isinstance(p.get("tokens"), dict) else {},
-                "cost": p.get("cost"),
-                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
-                "part_id": p.get("id", ""),
-            })
+            parts.append(
+                {
+                    "type": "step_finish",
+                    "name": p.get("name", ""),
+                    "reason": p.get("reason", ""),
+                    "tokens": p.get("tokens", {}) if isinstance(p.get("tokens"), dict) else {},
+                    "cost": p.get("cost"),
+                    "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                    "part_id": p.get("id", ""),
+                }
+            )
         elif ptype == "compaction":
             summary_text = p.get("summary") or p.get("text") or ""
             if not isinstance(summary_text, str):
                 summary_text = str(summary_text) if summary_text else ""
-            parts.append({
-                "type": "compaction",
-                "summary": summary_text,
-                "reason": p.get("reason", ""),
-                "recent": p.get("recent", ""),
-                "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
-                "part_id": p.get("id", ""),
-                "session_id": p.get("sessionID", ""),
-                "message_id": p.get("messageID", ""),
-            })
+            parts.append(
+                {
+                    "type": "compaction",
+                    "summary": summary_text,
+                    "reason": p.get("reason", ""),
+                    "recent": p.get("recent", ""),
+                    "time": p.get("time", {}) if isinstance(p.get("time"), dict) else {},
+                    "part_id": p.get("id", ""),
+                    "session_id": p.get("sessionID", ""),
+                    "message_id": p.get("messageID", ""),
+                }
+            )
             if not text_preview and summary_text:
                 text_preview = summary_text
         elif ptype == "snapshot":
@@ -201,13 +215,17 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
             patch_raw = p.get("raw", p)
             if not isinstance(patch_raw, dict):
                 patch_raw = {}
-            parts.append({
-                "type": "patch", "hash": patch_raw.get("hash", ""),
-                "files": patch_raw.get("files", []), "id": patch_raw.get("id", ""),
-                "session_id": patch_raw.get("sessionID", ""),
-                "message_id": patch_raw.get("messageID", ""),
-                "diff_content": patch_raw.get("diff", patch_raw.get("diff_content", "")),
-            })
+            parts.append(
+                {
+                    "type": "patch",
+                    "hash": patch_raw.get("hash", ""),
+                    "files": patch_raw.get("files", []),
+                    "id": patch_raw.get("id", ""),
+                    "session_id": patch_raw.get("sessionID", ""),
+                    "message_id": patch_raw.get("messageID", ""),
+                    "diff_content": patch_raw.get("diff", patch_raw.get("diff_content", "")),
+                }
+            )
         else:
             parts.append({"type": ptype, "raw": p})
 
@@ -272,36 +290,46 @@ def parse_steps(raw: dict) -> list[dict]:
         path_info = safe_get(info, "path", default={})
         if not isinstance(path_info, dict):
             path_info = {}
-        steps.append({
-            "index": idx, "raw_index": idx, "role": role, "tokens": tokens, "duration": duration,
-            "parts": parts, "tool_calls": tool_calls,
-            "tool_call_count": len(tool_calls), "error_count": errors,
-            "has_reasoning": has_reasoning, "text_preview": text_preview,
-            "finish": finish,
-            "model_id": safe_get(info, "modelID", default=""),
-            "provider_id": safe_get(info, "providerID", default=""),
-            "time_created_ms": t_created, "time_completed_ms": t_completed,
-            "agent": safe_get(info, "agent", default=""),
-            "mode": safe_get(info, "mode", default=""),
-            "message_id": (
-                msg.get("message_id", "")
-                or (info.get("id", "") if raw.get("_codearts_format") else "")
-            ),
-            "id": safe_get(info, "id", default=""),
-            "parent_id": safe_get(info, "parentID", default=""),
-            "session_id": safe_get(info, "sessionID", default=""),
-            "cwd": path_info.get("cwd", ""), "root": path_info.get("root", ""),
-            "is_sub_agent": info.get("isSubAgent", False),
-            "parent_session_id": info.get("parentSessionID", ""),
-            "session_depth": info.get("sessionDepth"),
-            "session_title": info.get("sessionTitle", ""),
-            "summary": summary_flag,
-            "message_type": message_type,
-            "is_compaction_checkpoint": is_compaction_checkpoint,
-            "compaction_reason": info.get("reason", "") if is_compaction_checkpoint else "",
-            "_metrics_unavailable_fields": metrics_unavailable_fields,
-            "_metrics_source_format": metrics_source_format,
-        })
+        steps.append(
+            {
+                "index": idx,
+                "raw_index": idx,
+                "role": role,
+                "tokens": tokens,
+                "duration": duration,
+                "parts": parts,
+                "tool_calls": tool_calls,
+                "tool_call_count": len(tool_calls),
+                "error_count": errors,
+                "has_reasoning": has_reasoning,
+                "text_preview": text_preview,
+                "finish": finish,
+                "model_id": safe_get(info, "modelID", default=""),
+                "provider_id": safe_get(info, "providerID", default=""),
+                "time_created_ms": t_created,
+                "time_completed_ms": t_completed,
+                "agent": safe_get(info, "agent", default=""),
+                "mode": safe_get(info, "mode", default=""),
+                "message_id": (
+                    msg.get("message_id", "") or (info.get("id", "") if raw.get("_codearts_format") else "")
+                ),
+                "id": safe_get(info, "id", default=""),
+                "parent_id": safe_get(info, "parentID", default=""),
+                "session_id": safe_get(info, "sessionID", default=""),
+                "cwd": path_info.get("cwd", ""),
+                "root": path_info.get("root", ""),
+                "is_sub_agent": info.get("isSubAgent", False),
+                "parent_session_id": info.get("parentSessionID", ""),
+                "session_depth": info.get("sessionDepth"),
+                "session_title": info.get("sessionTitle", ""),
+                "summary": summary_flag,
+                "message_type": message_type,
+                "is_compaction_checkpoint": is_compaction_checkpoint,
+                "compaction_reason": info.get("reason", "") if is_compaction_checkpoint else "",
+                "_metrics_unavailable_fields": metrics_unavailable_fields,
+                "_metrics_source_format": metrics_source_format,
+            }
+        )
 
     _fill_missing_last_step_duration(steps, raw)
     _annotate_spawned_subagents(steps, raw)
@@ -321,11 +349,7 @@ def spawned_child_session_id(
     """
     if not isinstance(metadata, dict):
         return ""
-    child_id = (
-        metadata.get("sessionId")
-        or metadata.get("sessionID")
-        or metadata.get("session_id")
-    )
+    child_id = metadata.get("sessionId") or metadata.get("sessionID") or metadata.get("session_id")
     if not isinstance(child_id, str) or not child_id:
         return ""
     if caller_session_id and child_id == caller_session_id:
@@ -380,18 +404,11 @@ def _annotate_spawned_subagents(steps: list[dict], raw: dict | None = None) -> N
                 or meta.get("parent_session_id")
                 or parent_sid
             )
-            if (
-                isinstance(parent_from_meta, str)
-                and parent_from_meta
-                and parent_sid
-                and parent_from_meta != parent_sid
-            ):
+            if isinstance(parent_from_meta, str) and parent_from_meta and parent_sid and parent_from_meta != parent_sid:
                 # Metadata disagrees with the calling session — skip.
                 continue
             if child_id not in child_to_parent:
-                child_to_parent[child_id] = (
-                    parent_from_meta if isinstance(parent_from_meta, str) else ""
-                )
+                child_to_parent[child_id] = parent_from_meta if isinstance(parent_from_meta, str) else ""
 
     if not child_to_parent:
         return
@@ -434,6 +451,7 @@ def _fill_missing_last_step_duration(steps: list[dict], raw: dict) -> None:
     if isinstance(finished_at, str) and finished_at:
         try:
             from datetime import datetime
+
             dt = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
             end_ms = dt.timestamp() * 1000
         except (ValueError, TypeError):
@@ -441,8 +459,9 @@ def _fill_missing_last_step_duration(steps: list[dict], raw: dict) -> None:
 
     # Fall back to the latest completion timestamp observed on earlier steps.
     if end_ms is None:
-        completed = [s.get("time_completed_ms") for s in steps[:-1]
-                     if isinstance(s.get("time_completed_ms"), (int, float))]
+        completed = [
+            s.get("time_completed_ms") for s in steps[:-1] if isinstance(s.get("time_completed_ms"), (int, float))
+        ]
         if completed:
             end_ms = max(completed)
 

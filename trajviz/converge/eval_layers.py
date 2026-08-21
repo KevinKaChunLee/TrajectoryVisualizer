@@ -23,9 +23,21 @@ LAYER_DEFINITIONS = {
         "description": "Is the agent's editing reliable?",
         "intervention_targets": "Model quality, context window, edit verification steps",
         "metrics": {
-            "reverted_and_rewritten_count": {"source": "patterns", "pattern_type": "reverted_and_rewritten", "good_dir": "lower"},
-            "iterative_refinement_count": {"source": "patterns", "pattern_type": "iterative_refinement", "good_dir": "lower"},
-            "error_recovery_count": {"source": "patterns", "pattern_type": "error_recovery_overhead", "good_dir": "lower"},
+            "reverted_and_rewritten_count": {
+                "source": "patterns",
+                "pattern_type": "reverted_and_rewritten",
+                "good_dir": "lower",
+            },
+            "iterative_refinement_count": {
+                "source": "patterns",
+                "pattern_type": "iterative_refinement",
+                "good_dir": "lower",
+            },
+            "error_recovery_count": {
+                "source": "patterns",
+                "pattern_type": "error_recovery_overhead",
+                "good_dir": "lower",
+            },
         },
     },
     "completion_quality": {
@@ -58,6 +70,7 @@ DEFAULT_VERDICT_THRESHOLDS: dict[str, dict[str, float | int]] = {
 # Metric extraction
 # ---------------------------------------------------------------------------
 
+
 def _extract_layer_metric(
     metric_def: dict,
     patterns: list[dict],
@@ -87,6 +100,7 @@ def _extract_layer_metric(
 # ---------------------------------------------------------------------------
 # Layer computation
 # ---------------------------------------------------------------------------
+
 
 def compute_eval_layers(
     patterns: list[dict],
