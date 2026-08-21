@@ -348,13 +348,13 @@ class ChartBuilderTests(unittest.TestCase):
         ]
         series = context_pressure_series(steps, agent_key="ses_a")
         ys = [p["occupancy"] for p in series["agents"][0]["points"]]
-        self.assertTrue(any(a == 10_000 and b == 2_000 for a, b in zip(ys, ys[1:])))
+        self.assertTrue(any(a == 10_000 and b == 2_000 for a, b in zip(ys, ys[1:], strict=False)))
 
         fig = build_context_pressure_chart(steps, agent_key="ses_a")
         occ = next(t for t in fig.data if t.name == "Occupancy")
         occ_ys = list(occ.y)
         self.assertTrue(
-            any(a == 10_000 and b == 2_000 for a, b in zip(occ_ys, occ_ys[1:]))
+            any(a == 10_000 and b == 2_000 for a, b in zip(occ_ys, occ_ys[1:], strict=False))
         )
         self.assertNotEqual(occ.line.color, "#3b82f6")
 

@@ -304,7 +304,109 @@ def parse_steps(raw: dict) -> list[dict]:
         })
 
     _fill_missing_last_step_duration(steps, raw)
+    _annotate_spawned_subagents(steps, raw)
     return steps
+
+
+def spawned_child_session_id(
+    metadata: object,
+    *,
+    caller_session_id: str = "",
+    root_session_id: str = "",
+) -> str:
+    """Child session id from Task-tool metadata, or '' if this is not a spawn.
+
+    Ignores self-spawns and (when given) the trajectory root session, which
+    nested tool parts sometimes echo incorrectly.
+    """
+    if not isinstance(metadata, dict):
+        return ""
+    child_id = (
+        metadata.get("sessionId")
+        or metadata.get("sessionID")
+        or metadata.get("session_id")
+    )
+    if not isinstance(child_id, str) or not child_id:
+        return ""
+    if caller_session_id and child_id == caller_session_id:
+        return ""
+    if root_session_id and child_id == root_session_id:
+        return ""
+    return child_id
+
+
+def _annotate_spawned_subagents(steps: list[dict], raw: dict | None = None) -> None:
+    """Mark child sessions spawned via Task/agent tools as sub-agents.
+
+    OpenCode exports often leave ``isSubAgent`` unset on child messages while
+    recording ``metadata.sessionId`` / ``parentSessionId`` on the parent's
+    task tool part. Infer those links so timelines, agent cards, and
+    sub-agent session grouping see the real hierarchy.
+
+    Never treats the trajectory root session as a spawned child (nested tool
+    parts can incorrectly echo the parent session id).
+    """
+    root_sid = ""
+    if isinstance(raw, dict):
+        info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+        candidate = info.get("id") or ""
+        if isinstance(candidate, str):
+            root_sid = candidate
+    if not root_sid:
+        for step in steps:
+            if isinstance(step, dict) and step.get("session_id"):
+                root_sid = str(step["session_id"])
+                break
+
+    child_to_parent: dict[str, str] = {}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        parent_sid = step.get("session_id") or ""
+        for tc in step.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            meta = tc.get("metadata") if isinstance(tc.get("metadata"), dict) else {}
+            child_id = spawned_child_session_id(
+                meta,
+                caller_session_id=str(parent_sid or ""),
+                root_session_id=root_sid,
+            )
+            if not child_id:
+                continue
+            parent_from_meta = (
+                meta.get("parentSessionId")
+                or meta.get("parentSessionID")
+                or meta.get("parent_session_id")
+                or parent_sid
+            )
+            if (
+                isinstance(parent_from_meta, str)
+                and parent_from_meta
+                and parent_sid
+                and parent_from_meta != parent_sid
+            ):
+                # Metadata disagrees with the calling session — skip.
+                continue
+            if child_id not in child_to_parent:
+                child_to_parent[child_id] = (
+                    parent_from_meta if isinstance(parent_from_meta, str) else ""
+                )
+
+    if not child_to_parent:
+        return
+
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        sid = step.get("session_id") or ""
+        if sid not in child_to_parent:
+            continue
+        step["is_sub_agent"] = True
+        if not step.get("parent_session_id"):
+            parent = child_to_parent[sid]
+            if parent:
+                step["parent_session_id"] = parent
 
 
 def _fill_missing_last_step_duration(steps: list[dict], raw: dict) -> None:

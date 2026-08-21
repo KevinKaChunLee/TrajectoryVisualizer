@@ -9,13 +9,19 @@ import gradio as gr
 import plotly.graph_objects as go
 
 from .parser import (
-    load_trajectory, parse_steps, build_message_metrics, compute_metrics,
+    load_trajectory,
+    parse_steps,
+    build_message_metrics,
+    compute_metrics,
     _build_hotspots_md,
-    _build_per_message_md, compute_health_verdict, validate_token_integrity,
+    _build_per_message_md,
+    compute_health_verdict,
+    validate_token_integrity,
     format_performance_md,
     format_behavioral_md,
     extract_agent_info,
-    wall_clock_fmt, format_banner_html,
+    wall_clock_fmt,
+    format_banner_html,
     compute_agent_summary,
 )
 from .analytics import compute_step_analytics
@@ -33,7 +39,9 @@ from .diagnostics import (
     PRESSURE_ALL_AGENTS,
 )
 from .charts import (
-    build_token_chart, build_duration_chart, build_tool_chart,
+    build_token_chart,
+    build_duration_chart,
+    build_tool_chart,
     build_agent_swimlane_chart,
     build_agent_token_chart,
     build_tool_outcome_timeline,
@@ -43,26 +51,38 @@ from .charts import (
     build_label_action_duration_chart,
     build_label_timeline_chart,
     build_file_interaction_chart,
-
     build_plan_timeline_chart,
     build_error_classification_chart,
     build_context_growth_chart,
     build_context_pressure_chart,
+    build_run_group_agent_timeline,
 )
 
 from .comparison import run_comparison
+from .run_group import (
+    build_run_group_scorecard,
+    build_run_group_scorecard_html,
+    build_run_group_behavior_html,
+    normalize_run_paths,
+)
 from .patterns import (
-    detect_tool_sequences, detect_failure_patterns,
-    extract_plan_history, compute_plan_metrics,
-    detect_fruitless_streaks, detect_tool_selection_antipatterns,
+    detect_tool_sequences,
+    detect_failure_patterns,
+    extract_plan_history,
+    compute_plan_metrics,
+    detect_fruitless_streaks,
+    detect_tool_selection_antipatterns,
 )
 from .help import HELP_TEXT
 from .loaders import detect_format, FORMAT_LABELS
 from .parser import load_labeled_json, aggregate_labels
 from .formatting import format_context_pressure_html
 from .rendering import (
-    render_workflow_html, render_toc_sidebar, render_filter_chips,
-    format_step_detail, render_agent_summary_cards,
+    render_workflow_html,
+    render_toc_sidebar,
+    render_filter_chips,
+    format_step_detail,
+    render_agent_summary_cards,
     build_root_cause_html,
     build_antipattern_summary_html,
     _diag_jump_onclick,
@@ -93,7 +113,7 @@ def _prerender_step_details(steps: list[dict]) -> str:
     """
     details = {}
     for step in steps:
-        details[str(step['index'])] = format_step_detail(step)
+        details[str(step["index"])] = format_step_detail(step)
     b64 = base64.b64encode(json.dumps(details).encode()).decode()
     return f'<div data-b64="{b64}" style="display:none"></div>'
 
@@ -122,7 +142,9 @@ def _workflow_step_labels(step: dict) -> set[str]:
 
 
 def _filter_workflow_steps(
-    steps: list[dict], active_filters: list[str], keyword: str = "",
+    steps: list[dict],
+    active_filters: list[str],
+    keyword: str = "",
 ) -> list[int]:
     """Return positions matching required roles, optional features, and search.
 
@@ -169,7 +191,10 @@ def _filter_workflow_steps(
 
 
 def _build_filtered_workflow_outputs(
-    steps: list[dict], filter_csv: str, keyword: str, current_toc: str = "",
+    steps: list[dict],
+    filter_csv: str,
+    keyword: str,
+    current_toc: str = "",
 ) -> tuple[str, str, str]:
     """Build filtered Workflow cards, count, and matching TOC HTML.
 
@@ -184,9 +209,7 @@ def _build_filtered_workflow_outputs(
             "",
         )
 
-    active_filters = [
-        value.strip() for value in (filter_csv or "").split(",") if value.strip()
-    ]
+    active_filters = [value.strip() for value in (filter_csv or "").split(",") if value.strip()]
     indices = _filter_workflow_steps(steps, active_filters, keyword)
     filtered_steps = [steps[position] for position in indices]
 
@@ -198,10 +221,7 @@ def _build_filtered_workflow_outputs(
     else:
         workflow_html = render_workflow_html(filtered_steps)
 
-    count_html = (
-        f"<div class='wf-count'>Showing {len(filtered_steps)} of "
-        f"{len(steps)} steps</div>"
-    )
+    count_html = f"<div class='wf-count'>Showing {len(filtered_steps)} of {len(steps)} steps</div>"
     collapsed = "toc-hidden" in (current_toc or "")
     return workflow_html, count_html, render_toc_sidebar(filtered_steps, collapsed=collapsed)
 
@@ -216,51 +236,60 @@ def _compute_anomalies(message_rows: list[dict]) -> list[dict]:
     with_dur = [r for r in message_rows if r.get("duration") is not None]
     if with_dur:
         longest = max(with_dur, key=lambda r: r["duration"])
-        anomalies.append({
-            "type": "Slowest",
-            "step_idx": longest["index"],
-            "value": f"{longest['duration']:.1f}s",
-        })
+        anomalies.append(
+            {
+                "type": "Slowest",
+                "step_idx": longest["index"],
+                "value": f"{longest['duration']:.1f}s",
+            }
+        )
 
     # Highest token step
     if message_rows:
         highest_tok = max(message_rows, key=lambda r: r["tokens_total"])
         if highest_tok["tokens_total"] > 0:
-            anomalies.append({
-                "type": "Most Tokens",
-                "step_idx": highest_tok["index"],
-                "value": f"{highest_tok['tokens_total']:,} tok",
-            })
+            anomalies.append(
+                {
+                    "type": "Most Tokens",
+                    "step_idx": highest_tok["index"],
+                    "value": f"{highest_tok['tokens_total']:,} tok",
+                }
+            )
 
     # Lowest cache ratio (assistant steps with tokens)
-    asst_with_tok = [r for r in message_rows
-                     if r.get("role") == "assistant" and r["tokens_total"] > 0]
+    asst_with_tok = [r for r in message_rows if r.get("role") == "assistant" and r["tokens_total"] > 0]
     if asst_with_tok:
         lowest_cache = min(asst_with_tok, key=lambda r: r["cache_ratio"])
-        anomalies.append({
-            "type": "Lowest Cache",
-            "step_idx": lowest_cache["index"],
-            "value": f"{lowest_cache['cache_ratio'] * 100:.1f}%",
-        })
+        anomalies.append(
+            {
+                "type": "Lowest Cache",
+                "step_idx": lowest_cache["index"],
+                "value": f"{lowest_cache['cache_ratio'] * 100:.1f}%",
+            }
+        )
 
     # Most tool calls
     with_tools = [r for r in message_rows if r["tool_calls"] > 0]
     if with_tools:
         most_tools = max(with_tools, key=lambda r: r["tool_calls"])
-        anomalies.append({
-            "type": "Most Tools",
-            "step_idx": most_tools["index"],
-            "value": f"{most_tools['tool_calls']} calls",
-        })
+        anomalies.append(
+            {
+                "type": "Most Tools",
+                "step_idx": most_tools["index"],
+                "value": f"{most_tools['tool_calls']} calls",
+            }
+        )
 
     # Error steps
     error_steps = [r for r in message_rows if r.get("error_count", 0) > 0]
     if error_steps:
-        anomalies.append({
-            "type": "Errors",
-            "step_idx": error_steps[0]["index"],
-            "value": f"{len(error_steps)} step(s)",
-        })
+        anomalies.append(
+            {
+                "type": "Errors",
+                "step_idx": error_steps[0]["index"],
+                "value": f"{len(error_steps)} step(s)",
+            }
+        )
 
     return anomalies[:5]
 
@@ -305,8 +334,11 @@ def _build_sparkline_svg(values: list[float], width: int = 100, height: int = 20
 
 
 def _build_session_detail_html(
-    timing: dict, metadata: dict,
-    *, model_id: str = "", agent_id: str = "",
+    timing: dict,
+    metadata: dict,
+    *,
+    model_id: str = "",
+    agent_id: str = "",
 ) -> str:
     """Build Session Details panel as a chip grid of session environment fields.
 
@@ -347,9 +379,9 @@ def _build_session_detail_html(
     return f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>{chips}</div>"
 
 
-def _build_overview_kpi_html(metrics: dict, wall_fmt: str,
-                             verdicts: list[dict] | None = None,
-                             message_rows: list[dict] | None = None) -> str:
+def _build_overview_kpi_html(
+    metrics: dict, wall_fmt: str, verdicts: list[dict] | None = None, message_rows: list[dict] | None = None
+) -> str:
     """Build at-a-glance KPI card strip for Overview tab.
 
     When *verdicts* is provided, matching KPI cards get a colored left border
@@ -404,16 +436,16 @@ def _build_overview_kpi_html(metrics: dict, wall_fmt: str,
     ):
         throughput_sub += f" · {timed_steps}/{throughput_steps} timed"
 
-    user_steps = metrics.get('user_steps', 0)
+    user_steps = metrics.get("user_steps", 0)
     cards = [
-        ("Steps", f"{metrics.get('total_steps', 0):,}",
-         f"{metrics.get('assistant_steps', 0)} assistant, {user_steps} user"),
-        ("Wall-Clock", wall_fmt,
-         f"P95 {metrics.get('p95_duration', 0)}s"),
-        ("Tokens", f"{metrics.get('tokens', {}).get('total', 0):,}",
-         throughput_sub),
-        ("Tool Success", f"{metrics.get('tool_success_rate', 0)}%",
-         f"{metrics.get('tool_call_count', 0):,} calls"),
+        (
+            "Steps",
+            f"{metrics.get('total_steps', 0):,}",
+            f"{metrics.get('assistant_steps', 0)} assistant, {user_steps} user",
+        ),
+        ("Wall-Clock", wall_fmt, f"P95 {metrics.get('p95_duration', 0)}s"),
+        ("Tokens", f"{metrics.get('tokens', {}).get('total', 0):,}", throughput_sub),
+        ("Tool Success", f"{metrics.get('tool_success_rate', 0)}%", f"{metrics.get('tool_call_count', 0):,} calls"),
     ]
     card_html = []
     for label, value, sub in cards:
@@ -451,25 +483,25 @@ def _build_overview_kpi_html(metrics: dict, wall_fmt: str,
             f"{sparkline}"
             "</div>"
         )
-    return (
-        "<div class='ov-kpi-grid'>"
-        + "".join(card_html)
-        + "</div>"
-    )
+    return "<div class='ov-kpi-grid'>" + "".join(card_html) + "</div>"
 
 
 def _build_overview_outputs(
-    steps: list[dict], raw: dict, metrics: dict, message_rows: list[dict],
-    verdicts: list[dict], wfmt: str, file_path: str,
+    steps: list[dict],
+    raw: dict,
+    metrics: dict,
+    message_rows: list[dict],
+    verdicts: list[dict],
+    wfmt: str,
+    file_path: str,
     trajectory_format: str | None = None,
 ) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
-    banner = format_banner_html(os.path.basename(file_path), metrics, wfmt,
-                                trajectory_format=trajectory_format)
-    kpi_html = _build_overview_kpi_html(metrics, wfmt, verdicts=verdicts,
-                                        message_rows=message_rows)
+    banner = format_banner_html(os.path.basename(file_path), metrics, wfmt, trajectory_format=trajectory_format)
+    kpi_html = _build_overview_kpi_html(metrics, wfmt, verdicts=verdicts, message_rows=message_rows)
     metrics_text = format_performance_md(metrics, wfmt)
     from .metrics import compute_diagnostic_metrics
+
     traj = raw.get("trajectory") or raw.get("messages") or []
     diag_metrics = compute_diagnostic_metrics(steps, traj) if traj else None
     behavior_text = format_behavioral_md(metrics, diag_metrics=diag_metrics)
@@ -491,7 +523,8 @@ def _build_overview_outputs(
 
 
 def _build_chart_outputs(
-    steps: list[dict], message_rows: list[dict],
+    steps: list[dict],
+    message_rows: list[dict],
     agent_summaries: list[dict],
     dark: bool = False,
     trajectory_format: str | None = None,
@@ -523,7 +556,10 @@ def _build_chart_outputs(
     # New panels
     error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
     antipattern_html = build_antipattern_summary_html(
-        fruitless_streaks, tool_selection, plan_metrics, error_count=error_count,
+        fruitless_streaks,
+        tool_selection,
+        plan_metrics,
+        error_count=error_count,
     )
 
     return {
@@ -547,14 +583,18 @@ def trajectory_format_label(fmt: str | None) -> str:
 
 
 def _build_diagnostics_outputs(
-    steps: list[dict], step_analytics: list[dict],
-    agent_summaries: list[dict], dark: bool = False,
+    steps: list[dict],
+    step_analytics: list[dict],
+    agent_summaries: list[dict],
+    dark: bool = False,
     trajectory_format: str | None = None,
     raw: dict | None = None,
 ) -> dict:
     """Build all diagnostics outputs: file interactions, failure chains, root causes, bottlenecks."""
     _empty_fig = go.Figure()
-    _empty_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    _empty_fig.update_layout(
+        template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+    )
 
     # File interaction analysis
     interactions = extract_file_interactions(steps)
@@ -564,8 +604,7 @@ def _build_diagnostics_outputs(
     # Failure chain analysis (metrics feed the summary line; UI strip removed)
     chains = detect_failure_chains(steps)
     chains = link_chains_to_agents(chains, steps, agent_summaries)
-    chain_metrics = compute_failure_chain_metrics(
-        chains, sum(1 for s in steps if s.get("role") == "assistant"))
+    chain_metrics = compute_failure_chain_metrics(chains, sum(1 for s in steps if s.get("role") == "assistant"))
 
     # Root-cause attribution. The findings panel is suppressed for OpenCode,
     # CodeArts, and Codex because their tool-error reporting is noisy (e.g.
@@ -583,10 +622,15 @@ def _build_diagnostics_outputs(
     bottleneck_explanations = compute_bottleneck_explanations(steps, step_analytics)
 
     pressure_series = context_pressure_series(
-        steps, agent_key=PRESSURE_ALL_AGENTS, raw=raw,
+        steps,
+        agent_key=PRESSURE_ALL_AGENTS,
+        raw=raw,
     )
     pressure_fig = build_context_pressure_chart(
-        steps, agent_key=PRESSURE_ALL_AGENTS, raw=raw, dark=dark,
+        steps,
+        agent_key=PRESSURE_ALL_AGENTS,
+        raw=raw,
+        dark=dark,
     )
     pressure_html = format_context_pressure_html(pressure_series)
     pressure_choices = pressure_agent_choices(steps)
@@ -613,10 +657,7 @@ def _build_diagnostics_outputs(
     if compaction_count:
         parts.append(f"{compaction_count} compaction event(s)")
     summary = " &middot; ".join(parts) if parts else "No diagnostic issues detected."
-    summary_html = (
-        f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:8px;'>"
-        f"{summary}</div>"
-    )
+    summary_html = f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:8px;'>{summary}</div>"
 
     return {
         "diag_summary_html": summary_html,
@@ -670,21 +711,21 @@ def _render_tool_sequences_html(sequences: list[dict]) -> str:
         "<tr style='background:var(--ov-table-header-bg);'>"
         "<th style='text-align:left;padding:6px 10px;'>Sequence</th>"
         "<th style='text-align:center;padding:6px 10px;'>Count</th>"
-        "<th style='text-align:left;padding:6px 10px;'>Step Indices</th></tr>"
-        + "".join(rows)
-        + "</table>"
+        "<th style='text-align:left;padding:6px 10px;'>Step Indices</th></tr>" + "".join(rows) + "</table>"
     )
 
 
 def _count_bar_chart(counts: dict[str, int], title: str, dark: bool = False) -> go.Figure:
     """Build a small categorical count chart for label summaries."""
-    fig = go.Figure(go.Bar(
-        x=list(counts.keys()),
-        y=list(counts.values()),
-        text=list(counts.values()),
-        textposition="outside",
-        marker_color="#2563eb",
-    ))
+    fig = go.Figure(
+        go.Bar(
+            x=list(counts.keys()),
+            y=list(counts.values()),
+            text=list(counts.values()),
+            textposition="outside",
+            marker_color="#2563eb",
+        )
+    )
     fig.update_layout(template="plotly_dark" if dark else "plotly_white", height=380, title=title)
     return fig
 
@@ -704,21 +745,28 @@ def build_label_ui_payload(file_path: str, dark: bool = False) -> dict:
     n_phases = len(phase_counts)
 
     from .palette import LABEL_PHASE_COLORS
+
     bar_segments = "".join(
         f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
         f" title='{html.escape(str(phase))}: {count}'></span>"
-        for phase, count in phase_counts.items() if count > 0
+        for phase, count in phase_counts.items()
+        if count > 0
     )
     phase_bar = (
-        "<div style='display:flex;border-radius:4px;overflow:hidden;width:200px;margin-top:4px;'>"
-        f"{bar_segments}</div>"
-    ) if bar_segments else ""
+        (
+            "<div style='display:flex;border-radius:4px;overflow:hidden;width:200px;margin-top:4px;'>"
+            f"{bar_segments}</div>"
+        )
+        if bar_segments
+        else ""
+    )
 
     phase_chips = "".join(
         f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;"
         f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:white;'>"
         f"{html.escape(str(phase))}: {count}</span>"
-        for phase, count in phase_counts.items() if count > 0
+        for phase, count in phase_counts.items()
+        if count > 0
     )
 
     badge = (
@@ -759,10 +807,7 @@ def _render_failure_patterns_html(patterns: list[dict]) -> str:
         count = p.get("count", 0)
         example = html.escape(str(p.get("example_error", ""))[:200])
         recovery = p.get("recovery_path")
-        recovery_html = (
-            " → ".join(html.escape(t) for t in recovery)
-            if recovery else "<em>No recovery path found</em>"
-        )
+        recovery_html = " → ".join(html.escape(t) for t in recovery) if recovery else "<em>No recovery path found</em>"
         step_ids = p.get("steps") or []
         steps_html = (
             "".join(
@@ -771,7 +816,8 @@ def _render_failure_patterns_html(patterns: list[dict]) -> str:
                 f"font-size:11px;font-variant-numeric:tabular-nums;'>#{int(idx)}</span>"
                 for idx in step_ids
             )
-            if step_ids else "<em>—</em>"
+            if step_ids
+            else "<em>—</em>"
         )
         cards.append(
             f"<div class='overview-card' style='margin-bottom:8px;'>"
@@ -822,16 +868,14 @@ def build_ui() -> gr.Blocks:
                     file_types=[".json", ".jsonl"],
                     height=110,
                 )
-                load_btn = gr.Button("Load Trajectory", variant="primary",
-                                     size="sm", min_width=120)
+                load_btn = gr.Button("Load Trajectory", variant="primary", size="sm", min_width=120)
             with gr.Column(scale=2, min_width=200):
                 label_file_upload = gr.File(
                     label="Labels (optional)",
                     file_types=[".json"],
                     height=110,
                 )
-                label_load_btn = gr.Button("Load Labels", variant="secondary",
-                                           size="sm", min_width=120)
+                label_load_btn = gr.Button("Load Labels", variant="secondary", size="sm", min_width=120)
 
         # Summary banner + anomaly strip (hidden until load)
         with gr.Column(visible=False) as summary_area:
@@ -847,12 +891,16 @@ def build_ui() -> gr.Blocks:
                 overview_kpi_html = gr.HTML("", elem_classes=["overview-kpi-strip"])
 
                 overview_section_names = [
-                    "Performance", "Efficiency", "Tools", "Agents",
-                    "Diagnostics", "Deep Dive", "Labels",
+                    "Performance",
+                    "Efficiency",
+                    "Tools",
+                    "Agents",
+                    "Diagnostics",
+                    "Deep Dive",
+                    "Labels",
                 ]
                 with gr.Row(elem_classes=["overview-content-layout"]):
-                    with gr.Column(scale=0, min_width=160,
-                                   elem_classes=["overview-section-nav"]):
+                    with gr.Column(scale=0, min_width=160, elem_classes=["overview-section-nav"]):
                         gr.HTML("<div class='overview-nav-title'>Contents</div>")
                         overview_section = gr.Radio(
                             choices=overview_section_names,
@@ -862,17 +910,20 @@ def build_ui() -> gr.Blocks:
                             elem_classes=["overview-section-radio"],
                         )
 
-                    with gr.Column(scale=1, min_width=0,
-                                   elem_classes=["overview-section-content"]):
+                    with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                         with gr.Column(visible=True) as performance_section:
-                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>")
+                            gr.HTML(
+                                f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>"
+                            )
                             metrics_md = gr.Markdown("")
                             with gr.Row(equal_height=True):
                                 token_chart = gr.Plot(show_label=False, label="Token Usage")
                                 duration_chart = gr.Plot(show_label=False, label="Step Duration")
 
                         with gr.Column(visible=False) as efficiency_section:
-                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>")
+                            gr.HTML(
+                                f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>"
+                            )
                             context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
 
                         with gr.Column(visible=False) as tools_section:
@@ -894,10 +945,13 @@ def build_ui() -> gr.Blocks:
                                 agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
 
                         with gr.Column(visible=False) as diagnostics_section:
-                            gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>")
+                            gr.HTML(
+                                f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>"
+                            )
                             diag_summary_html = gr.HTML("")
-                            diag_file_chart = gr.Plot(show_label=False, label="File Interaction Timeline",
-                                                      elem_classes=["resizable-chart"])
+                            diag_file_chart = gr.Plot(
+                                show_label=False, label="File Interaction Timeline", elem_classes=["resizable-chart"]
+                            )
                             diag_pressure_html = gr.HTML("")
                             diag_pressure_agent = gr.Dropdown(
                                 label="Agent",
@@ -907,7 +961,8 @@ def build_ui() -> gr.Blocks:
                                 interactive=True,
                             )
                             diag_pressure_chart = gr.Plot(
-                                show_label=False, label="Context Window Pressure",
+                                show_label=False,
+                                label="Context Window Pressure",
                             )
                             diag_rootcause_html = gr.HTML("")
                             with gr.Row(equal_height=True):
@@ -937,7 +992,9 @@ def build_ui() -> gr.Blocks:
 
             # ===== Patterns Tab =====
             with gr.TabItem("Patterns"):
-                gr.HTML("<div class='section-subtitle'>Recurring patterns detected in the trajectory — tool sequences, failure clusters, and phase transition anomalies.</div>")
+                gr.HTML(
+                    "<div class='section-subtitle'>Recurring patterns detected in the trajectory — tool sequences, failure clusters, and phase transition anomalies.</div>"
+                )
                 with gr.Accordion("Tool Sequence Patterns", open=True, elem_classes=["per-message-acc"]):
                     patterns_tool_html = gr.HTML(
                         "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>Load a trajectory to detect tool sequence patterns.</div>"
@@ -968,28 +1025,85 @@ def build_ui() -> gr.Blocks:
                 )
                 attr_status_html = gr.HTML(_attr_placeholder)
                 with gr.Row(equal_height=True):
-                    attr_run_btn = gr.Button("Diagnose failure", variant="primary",
-                                             size="sm", scale=1, min_width=140)
-                with gr.Accordion("Override agent / instance / corpus (for uploaded files)",
-                                  open=False, elem_classes=["per-message-acc"]), gr.Row(equal_height=True):
-                    attr_agent_override = gr.Textbox(
-                        label="Agent", placeholder="auto-detected from path", scale=1)
-                    attr_inst_override = gr.Textbox(
-                        label="Instance id", placeholder="auto-detected from path", scale=2)
+                    attr_run_btn = gr.Button("Diagnose failure", variant="primary", size="sm", scale=1, min_width=140)
+                with (
+                    gr.Accordion(
+                        "Override agent / instance / corpus (for uploaded files)",
+                        open=False,
+                        elem_classes=["per-message-acc"],
+                    ),
+                    gr.Row(equal_height=True),
+                ):
+                    attr_agent_override = gr.Textbox(label="Agent", placeholder="auto-detected from path", scale=1)
+                    attr_inst_override = gr.Textbox(label="Instance id", placeholder="auto-detected from path", scale=2)
                     attr_root_override = gr.Textbox(
-                        label="ARGUS corpus root",
-                        placeholder="default: sibling TraceProbe checkout", scale=2)
+                        label="ARGUS corpus root", placeholder="default: sibling TraceProbe checkout", scale=2
+                    )
                 attr_result_html = gr.HTML("")
 
-            # ===== Comparison Tab (Converge embedded) =====
+            # ===== Comparison Tab (Converge embedded + N-run scorecard) =====
             with gr.TabItem("Comparison"):
                 _cmp_placeholder = (
                     "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
-                    "Load a trajectory in the Overview tab first &mdash; it will become the "
-                    "<b>compared</b> trajectory. Upload the <b>reference</b> (baseline) below.</div>"
+                    "Load a trajectory in the Overview tab first &mdash; it becomes the "
+                    "<b>baseline</b> for <b>Run group</b> and the <b>compared</b> trajectory "
+                    "for pairwise comparison."
+                    "<br><span style='font-size:12px;'>"
+                    "In Run group, upload one or more additional runs to scorecard against Overview."
+                    "</span></div>"
                 )
                 cmp_status_html = gr.HTML(_cmp_placeholder)
-                with gr.Accordion("Upload & Run", open=True, elem_classes=["per-message-acc"]):
+                with gr.Accordion("Run group (N trajectories)", open=True, elem_classes=["per-message-acc"]):
+                    gr.Markdown(
+                        "_The trajectory loaded in **Overview** is included as the "
+                        "**baseline**. Upload one or more additional runs of the same "
+                        "task (different models, harnesses, or prompts). Builds a "
+                        "metrics scorecard, agent timeline, behavioral similarity, "
+                        "tool/skill coverage, action/file matrices, and waste patterns "
+                        "vs the Overview run. For a full pairwise report, use "
+                        "**Pairwise comparison** below._",
+                    )
+                    with gr.Row(equal_height=True):
+                        rg_format_selector = gr.Dropdown(
+                            label="Format hint",
+                            choices=[
+                                ("Auto-detect", ""),
+                                ("Claude Code", "ccsession"),
+                                ("CodeArts", "codearts"),
+                                ("OpenCode", "opencode"),
+                                ("Codex CLI", "codex"),
+                            ],
+                            value="",
+                            interactive=True,
+                            scale=1,
+                            min_width=140,
+                        )
+                        rg_file_upload = gr.File(
+                            label="Comparison runs (.json / .jsonl) — select one or more",
+                            file_types=[".json", ".jsonl"],
+                            file_count="multiple",
+                            scale=3,
+                        )
+                    with gr.Row(equal_height=False):
+                        rg_run_btn = gr.Button(
+                            "Build scorecard",
+                            variant="primary",
+                            size="sm",
+                            scale=0,
+                            min_width=140,
+                        )
+                    rg_scorecard_html = gr.HTML(
+                        "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                        "Load a trajectory in <b>Overview</b>, upload one or more "
+                        "comparison runs, then click <b>Build scorecard</b>.</div>"
+                    )
+                    rg_agent_timeline_chart = gr.Plot(
+                        show_label=False,
+                        label="Agent timeline (by run)",
+                        visible=False,
+                    )
+                    rg_behavior_html = gr.HTML("")
+                with gr.Accordion("Pairwise comparison", open=False, elem_classes=["per-message-acc"]):
                     with gr.Row(equal_height=True):
                         cmp_format_selector = gr.Dropdown(
                             label="Format",
@@ -1023,20 +1137,26 @@ def build_ui() -> gr.Blocks:
                     with gr.Row(equal_height=False):
                         # Roles are fixed in the pipeline: the upload here is the
                         # reference/baseline, the Overview trajectory is compared.
-                        # (Replaced a Checkbox that was wired to nothing.)
                         gr.Markdown(
                             "_The uploaded trajectory is treated as the "
                             "**reference/baseline**; the trajectory loaded on the "
                             "Overview tab is the **compared** one._",
                         )
                         cmp_run_btn = gr.Button(
-                            "Run Comparison", variant="primary",
-                            size="sm", scale=1, min_width=140,
+                            "Run Comparison",
+                            variant="primary",
+                            size="sm",
+                            scale=1,
+                            min_width=140,
                         )
-                cmp_report_html = gr.HTML("")
-                with gr.Row(equal_height=True):
-                    cmp_phase_count_chart = gr.Plot(show_label=False, label="Step Count by Phase — Reference vs Compared")
-                    cmp_phase_duration_chart = gr.Plot(show_label=False, label="Duration by Phase — Reference vs Compared")
+                    cmp_report_html = gr.HTML("")
+                    with gr.Row(equal_height=True):
+                        cmp_phase_count_chart = gr.Plot(
+                            show_label=False, label="Step Count by Phase — Reference vs Compared"
+                        )
+                        cmp_phase_duration_chart = gr.Plot(
+                            show_label=False, label="Duration by Phase — Reference vs Compared"
+                        )
 
             # ===== Workflow Tab =====
             with gr.TabItem("Workflow"):
@@ -1047,7 +1167,8 @@ def build_ui() -> gr.Blocks:
                         elem_id="wf-filter-chips",
                     )
                     wf_search = gr.Textbox(
-                        label="Search", placeholder="Filter by keyword...",
+                        label="Search",
+                        placeholder="Filter by keyword...",
                         scale=1,
                     )
                 # Hidden textbox that JS writes active filters into (comma-separated)
@@ -1375,15 +1496,17 @@ def build_ui() -> gr.Blocks:
         # -- Callbacks --
 
         overview_sections = (
-            performance_section, efficiency_section, tools_section, agents_section,
-            diagnostics_section, deep_dive_section, labels_section,
+            performance_section,
+            efficiency_section,
+            tools_section,
+            agents_section,
+            diagnostics_section,
+            deep_dive_section,
+            labels_section,
         )
 
         def show_overview_section(selected):
-            return tuple(
-                gr.update(visible=name == selected)
-                for name in overview_section_names
-            )
+            return tuple(gr.update(visible=name == selected) for name in overview_section_names)
 
         overview_section.change(
             fn=show_overview_section,
@@ -1392,7 +1515,9 @@ def build_ui() -> gr.Blocks:
         )
 
         _empty_fig = go.Figure()
-        _empty_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        _empty_fig.update_layout(
+            template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+        )
 
         def _empty_result(banner="", detail="*No data*"):
             """Return the empty outputs tuple for error states."""
@@ -1401,54 +1526,58 @@ def build_ui() -> gr.Blocks:
             # error's specifics were dropped and only the generic banner shown).
             if detail and detail != "*No data*":
                 import html as _html
-                banner += ("<p style='color:var(--ov-muted);font-size:13px;margin:4px 0 0;'>"
-                           f"{_html.escape(detail.strip('*'))}</p>")
+
+                banner += (
+                    "<p style='color:var(--ov-muted);font-size:13px;margin:4px 0 0;'>"
+                    f"{_html.escape(detail.strip('*'))}</p>"
+                )
             return (
                 gr.update(visible=False),  # main_tabs
                 gr.update(visible=bool(banner)),  # summary_area (reveal so the error banner shows)
-                gr.update(),               # upload_accordion (no change)
-                [],              # state_steps
-                banner,          # summary_banner
-                "",              # anomaly_strip_html
-                "",              # overview_kpi_html
-                "",              # session_detail_html
-                "",              # metrics_md
-                f, f,            # token_chart, duration_chart
-                f,               # context_growth_chart
-                "",              # behavior_md
-                f,               # tool_chart
-                f,               # tool_outcome_chart
-                "",              # agent_summary_html
-                f,               # agent_token_chart
-                f,               # agent_swimlane_chart
-                "",              # diag_summary_html
-                "",              # diag_pressure_html
+                gr.update(),  # upload_accordion (no change)
+                [],  # state_steps
+                banner,  # summary_banner
+                "",  # anomaly_strip_html
+                "",  # overview_kpi_html
+                "",  # session_detail_html
+                "",  # metrics_md
+                f,
+                f,  # token_chart, duration_chart
+                f,  # context_growth_chart
+                "",  # behavior_md
+                f,  # tool_chart
+                f,  # tool_outcome_chart
+                "",  # agent_summary_html
+                f,  # agent_token_chart
+                f,  # agent_swimlane_chart
+                "",  # diag_summary_html
+                "",  # diag_pressure_html
                 gr.update(
                     choices=[("All agents", PRESSURE_ALL_AGENTS)],
                     value=PRESSURE_ALL_AGENTS,
                     visible=False,
-                ),               # diag_pressure_agent
-                f,               # diag_pressure_chart
-                f,               # diag_file_chart
-                "",              # diag_rootcause_html
+                ),  # diag_pressure_agent
+                f,  # diag_pressure_chart
+                f,  # diag_file_chart
+                "",  # diag_rootcause_html
                 # New diagnostic charts
-                f,               # error_class_chart
-                f,               # plan_timeline_chart
-                "",              # hotspots_md
-                "",              # per_message_md
+                f,  # error_class_chart
+                f,  # plan_timeline_chart
+                "",  # hotspots_md
+                "",  # per_message_md
                 render_filter_chips(),  # wf_filter_chips_html
                 ",".join(_FILTER_CHIPS_DEFAULT),  # wf_filter_hidden
-                "",              # wf_count_html
-                "",              # toc_html
-                "<div></div>",   # workflow_html
-                "",              # detail_store
+                "",  # wf_count_html
+                "",  # toc_html
+                "<div></div>",  # workflow_html
+                "",  # detail_store
                 _DETAIL_PLACEHOLDER,  # detail_html
-                "",              # raw_json
+                "",  # raw_json
                 # Patterns
-                "",              # patterns_tool_html
-                "",              # patterns_failure_html
-                "",              # antipattern_summary_html
-                {},              # state_raw
+                "",  # patterns_tool_html
+                "",  # patterns_failure_html
+                "",  # antipattern_summary_html
+                {},  # state_raw
             )
 
         def _do_load_inner(upload_obj, dark=False, selected_format="ccsession"):
@@ -1495,8 +1624,7 @@ def build_ui() -> gr.Blocks:
             token_warnings = validate_token_integrity(steps)
             for tw in token_warnings:
                 load_warnings += (
-                    f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>"
-                    f"&#9888; {html.escape(tw)}</p>"
+                    f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>&#9888; {html.escape(tw)}</p>"
                 )
             message_rows = build_message_metrics(steps)
             metrics = compute_metrics(steps, raw, message_rows=message_rows)
@@ -1507,23 +1635,26 @@ def build_ui() -> gr.Blocks:
             agent_summaries = compute_agent_summary(steps, raw)
 
             # Delegate to focused builders
-            dg = _build_diagnostics_outputs(steps, step_analytics, agent_summaries, dark=dark,
-                                            trajectory_format=detected, raw=raw)
-            ov = _build_overview_outputs(steps, raw, metrics, message_rows,
-                                         verdicts, wfmt, file_path,
-                                         trajectory_format=detected)
+            dg = _build_diagnostics_outputs(
+                steps, step_analytics, agent_summaries, dark=dark, trajectory_format=detected, raw=raw
+            )
+            ov = _build_overview_outputs(
+                steps, raw, metrics, message_rows, verdicts, wfmt, file_path, trajectory_format=detected
+            )
 
             def _d(k):
                 return raw.get(k, {}) if isinstance(raw.get(k), dict) else {}
+
             _md, _timing = _d("metadata"), _d("timing")
             _model_id, _, _agent_id = extract_agent_info(steps)
             session_detail = _build_session_detail_html(
-                _timing, _md, model_id=_model_id, agent_id=_agent_id,
+                _timing,
+                _md,
+                model_id=_model_id,
+                agent_id=_agent_id,
             )
 
-            ch = _build_chart_outputs(steps, message_rows,
-                                      agent_summaries, dark=dark,
-                                      trajectory_format=detected)
+            ch = _build_chart_outputs(steps, message_rows, agent_summaries, dark=dark, trajectory_format=detected)
             wf = _build_workflow_outputs(steps)
 
             # Pattern detection
@@ -1538,52 +1669,52 @@ def build_ui() -> gr.Blocks:
                 raw_str = raw_str[:500_000] + "\n\n... (truncated at 500KB)"
 
             return (
-                gr.update(visible=True),      # main_tabs
-                gr.update(visible=True),      # summary_area
-                gr.update(),                  # upload_accordion (keep visible)
-                steps,                        # state_steps
+                gr.update(visible=True),  # main_tabs
+                gr.update(visible=True),  # summary_area
+                gr.update(),  # upload_accordion (keep visible)
+                steps,  # state_steps
                 load_warnings + ov["banner"],  # summary_banner
-                ov["anomaly_html"],           # anomaly_strip_html
-                ov["kpi_html"],               # overview_kpi_html
-                session_detail,               # session_detail_html
-                ov["metrics_text"],           # metrics_md
-                ch["tok_fig"],                # token_chart
-                ch["dur_fig"],                # duration_chart
-                ch["context_growth_fig"],     # context_growth_chart
-                ov["behavior_text"],          # behavior_md
-                ch["tl_fig"],                 # tool_chart
-                ch["tool_outcome_fig"],       # tool_outcome_chart
-                ch["agent_cards_html"],       # agent_summary_html
-                ch["agent_tok_fig"],          # agent_token_chart
-                ch["swimlane_fig"],           # agent_swimlane_chart
-                dg["diag_summary_html"],      # diag_summary_html
-                dg["diag_pressure_html"],     # diag_pressure_html
+                ov["anomaly_html"],  # anomaly_strip_html
+                ov["kpi_html"],  # overview_kpi_html
+                session_detail,  # session_detail_html
+                ov["metrics_text"],  # metrics_md
+                ch["tok_fig"],  # token_chart
+                ch["dur_fig"],  # duration_chart
+                ch["context_growth_fig"],  # context_growth_chart
+                ov["behavior_text"],  # behavior_md
+                ch["tl_fig"],  # tool_chart
+                ch["tool_outcome_fig"],  # tool_outcome_chart
+                ch["agent_cards_html"],  # agent_summary_html
+                ch["agent_tok_fig"],  # agent_token_chart
+                ch["swimlane_fig"],  # agent_swimlane_chart
+                dg["diag_summary_html"],  # diag_summary_html
+                dg["diag_pressure_html"],  # diag_pressure_html
                 gr.update(
                     choices=dg["diag_pressure_dropdown"]["choices"],
                     value=dg["diag_pressure_dropdown"]["value"],
                     visible=dg["diag_pressure_dropdown"]["visible"],
-                ),                            # diag_pressure_agent
-                dg["diag_pressure_chart"],    # diag_pressure_chart
-                dg["diag_file_chart"],        # diag_file_chart
-                dg["diag_rootcause_html"],    # diag_rootcause_html
+                ),  # diag_pressure_agent
+                dg["diag_pressure_chart"],  # diag_pressure_chart
+                dg["diag_file_chart"],  # diag_file_chart
+                dg["diag_rootcause_html"],  # diag_rootcause_html
                 # New diagnostic charts
-                ch["error_class_fig"],        # error_class_chart
-                ch["plan_timeline_fig"],      # plan_timeline_chart
-                ov["hotspots_text"],          # hotspots_md
-                ov["per_message_text"],       # per_message_md
-                wf["wf_chips"],               # wf_filter_chips_html
-                wf["wf_filter_val"],          # wf_filter_hidden
-                wf["wf_count"],               # wf_count_html
-                wf["toc_html_val"],           # toc_html
-                wf["wf_html"],                # workflow_html
-                wf["detail_store_val"],       # detail_store
-                _DETAIL_PLACEHOLDER,          # detail_html
-                raw_str,                      # raw_json
+                ch["error_class_fig"],  # error_class_chart
+                ch["plan_timeline_fig"],  # plan_timeline_chart
+                ov["hotspots_text"],  # hotspots_md
+                ov["per_message_text"],  # per_message_md
+                wf["wf_chips"],  # wf_filter_chips_html
+                wf["wf_filter_val"],  # wf_filter_hidden
+                wf["wf_count"],  # wf_count_html
+                wf["toc_html_val"],  # toc_html
+                wf["wf_html"],  # workflow_html
+                wf["detail_store_val"],  # detail_store
+                _DETAIL_PLACEHOLDER,  # detail_html
+                raw_str,  # raw_json
                 # Patterns
-                pat_tool_html,                # patterns_tool_html
-                pat_fail_html,                # patterns_failure_html
-                ch["antipattern_html"],       # antipattern_summary_html
-                raw,                          # state_raw
+                pat_tool_html,  # patterns_tool_html
+                pat_fail_html,  # patterns_failure_html
+                ch["antipattern_html"],  # antipattern_summary_html
+                raw,  # state_raw
             )
 
         def do_load(upload_obj, dark=False, selected_format="ccsession"):
@@ -1593,10 +1724,10 @@ def build_ui() -> gr.Blocks:
                 return _do_load_inner(upload_obj, dark, selected_format)
             except Exception as exc:  # noqa: BLE001
                 import traceback
+
                 traceback.print_exc()
                 return _empty_result(
-                    banner=(f"<p style='color:#dc2626;'>Error loading trajectory: "
-                            f"{html.escape(str(exc))}</p>"),
+                    banner=(f"<p style='color:#dc2626;'>Error loading trajectory: {html.escape(str(exc))}</p>"),
                     detail="*Failed to load — see console for details.*",
                 )
 
@@ -1662,18 +1793,23 @@ def build_ui() -> gr.Blocks:
             if not steps:
                 empty = go.Figure()
                 empty.update_layout(
-                    template="plotly_white", height=380,
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    template="plotly_white",
+                    height=380,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
                 )
                 return empty, ""
             key = agent_key or PRESSURE_ALL_AGENTS
             fig = build_context_pressure_chart(
-                steps, agent_key=key, raw=raw if isinstance(raw, dict) else None,
+                steps,
+                agent_key=key,
+                raw=raw if isinstance(raw, dict) else None,
                 dark=bool(dark),
             )
             html_strip = format_context_pressure_html(
                 context_pressure_series(
-                    steps, agent_key=key,
+                    steps,
+                    agent_key=key,
                     raw=raw if isinstance(raw, dict) else None,
                 )
             )
@@ -1685,21 +1821,63 @@ def build_ui() -> gr.Blocks:
             outputs=[diag_pressure_chart, diag_pressure_html],
         )
 
-        # -- Comparison callback --
-        # Semantics: the trajectory uploaded in this tab's file slot is the
-        # **reference/baseline**; the trajectory loaded on the Overview tab
-        # is the **compared** trajectory.
-        def on_run_comparison(ref_file, anchor_file, ref_format,
-                              ref_labels_file, cmp_labels_file,
-                              overview_raw, dark):
+        # -- Run-group scorecard --
+        # Overview trajectory is the baseline; uploaded files are comparison runs.
+        def on_run_group_scorecard(files, format_hint, dark, overview_raw):
+            """Build an N-run scorecard; Overview trajectory is the baseline."""
             empty_fig = go.Figure()
-            empty_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            empty_fig.update_layout(
+                template="plotly_white",
+                height=200,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            paths = normalize_run_paths(files)
+            hint = format_hint or None
+            if hint == "":
+                hint = None
+            baseline = overview_raw if isinstance(overview_raw, dict) and overview_raw else None
+            result = build_run_group_scorecard(
+                paths,
+                format_hint=hint,
+                baseline_raw=baseline,
+            )
+            scorecard = build_run_group_scorecard_html(
+                result,
+                include_behavior=False,
+            )
+            timeline_runs = result.get("timeline_runs") or []
+            if result.get("ok") and timeline_runs:
+                fig = build_run_group_agent_timeline(
+                    timeline_runs,
+                    dark=bool(dark),
+                )
+                chart_update = gr.update(value=fig, visible=True)
+            else:
+                chart_update = gr.update(value=empty_fig, visible=False)
+            behavior = build_run_group_behavior_html(result) if result.get("ok") else ""
+            return scorecard, chart_update, behavior
+
+        rg_run_btn.click(
+            fn=on_run_group_scorecard,
+            inputs=[rg_file_upload, rg_format_selector, state_dark, state_raw],
+            outputs=[rg_scorecard_html, rg_agent_timeline_chart, rg_behavior_html],
+        )
+
+        def on_run_comparison(ref_file, anchor_file, ref_format, ref_labels_file, cmp_labels_file, overview_raw, dark):
+            # Pairwise: the file uploaded here is the reference/baseline;
+            # the Overview trajectory is the compared run.
+            empty_fig = go.Figure()
+            empty_fig.update_layout(
+                template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+            )
 
             if not overview_raw:
                 return (
                     "<div style='color:var(--ov-warn);padding:1em;text-align:center;'>"
                     "Load a trajectory in the Overview tab first — it will be the compared trajectory.</div>",
-                    empty_fig, empty_fig,
+                    empty_fig,
+                    empty_fig,
                     "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>"
                     "Load a trajectory in the Overview tab first.</div>",
                 )
@@ -1708,7 +1886,8 @@ def build_ui() -> gr.Blocks:
                 return (
                     "<div style='color:var(--ov-warn);padding:1em;text-align:center;'>"
                     "Upload a reference trajectory first.</div>",
-                    empty_fig, empty_fig,
+                    empty_fig,
+                    empty_fig,
                     "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>"
                     "Upload a reference trajectory.</div>",
                 )
@@ -1719,6 +1898,7 @@ def build_ui() -> gr.Blocks:
                 anchor_path = anchor_file if isinstance(anchor_file, str) else anchor_file.name
 
             from .loaders import load_trajectory as _load_traj
+
             ref_raw = _load_traj(ref_path, format_hint=ref_format)
 
             result = run_comparison(
@@ -1735,10 +1915,16 @@ def build_ui() -> gr.Blocks:
             # Overview tab's label upload; reference labels come from this tab.
             phase_count_fig = empty_fig
             phase_duration_fig = empty_fig
-            ref_labels_path = (ref_labels_file if isinstance(ref_labels_file, str)
-                               else (ref_labels_file.name if ref_labels_file else None))
-            cmp_labels_path = (cmp_labels_file if isinstance(cmp_labels_file, str)
-                               else (cmp_labels_file.name if cmp_labels_file else None))
+            ref_labels_path = (
+                ref_labels_file
+                if isinstance(ref_labels_file, str)
+                else (ref_labels_file.name if ref_labels_file else None)
+            )
+            cmp_labels_path = (
+                cmp_labels_file
+                if isinstance(cmp_labels_file, str)
+                else (cmp_labels_file.name if cmp_labels_file else None)
+            )
             if ref_labels_path and cmp_labels_path:
                 try:
                     from .labels import load_labeled_json, aggregate_labels
@@ -1746,35 +1932,38 @@ def build_ui() -> gr.Blocks:
                         build_phase_count_comparison_chart,
                         build_phase_duration_comparison_chart,
                     )
+
                     ref_agg = aggregate_labels(load_labeled_json(ref_labels_path))
                     cmp_agg = aggregate_labels(load_labeled_json(cmp_labels_path))
                     ref_label_name = os.path.basename(ref_path) if ref_path else "reference"
                     cmp_label_name = (
                         os.path.basename(overview_raw.get("_source_path", ""))
-                        if isinstance(overview_raw, dict) else "compared"
+                        if isinstance(overview_raw, dict)
+                        else "compared"
                     ) or "compared"
                     phase_count_fig = build_phase_count_comparison_chart(
-                        ref_agg["phase_counts"], cmp_agg["phase_counts"],
-                        ref_label=ref_label_name, cmp_label=cmp_label_name,
+                        ref_agg["phase_counts"],
+                        cmp_agg["phase_counts"],
+                        ref_label=ref_label_name,
+                        cmp_label=cmp_label_name,
                         dark=bool(dark),
                     )
                     phase_duration_fig = build_phase_duration_comparison_chart(
-                        ref_agg["phase_durations"], cmp_agg["phase_durations"],
-                        ref_label=ref_label_name, cmp_label=cmp_label_name,
+                        ref_agg["phase_durations"],
+                        cmp_agg["phase_durations"],
+                        ref_label=ref_label_name,
+                        cmp_label=cmp_label_name,
                         dark=bool(dark),
                     )
                 except Exception as exc:
                     import logging
-                    logging.getLogger(__name__).debug(
-                        "Phase comparison chart build failed: %s", exc)
+
+                    logging.getLogger(__name__).debug("Phase comparison chart build failed: %s", exc)
 
             # Branch on the pipeline's explicit ok flag (backward-compatible:
             # a result without the flag reads as success, today's behavior).
             if result.get("ok", True):
-                status = (
-                    "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
-                    "Comparison complete.</div>"
-                )
+                status = "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>Comparison complete.</div>"
             else:
                 status = (
                     "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>"
@@ -1785,11 +1974,16 @@ def build_ui() -> gr.Blocks:
 
         cmp_run_btn.click(
             fn=on_run_comparison,
-            inputs=[cmp_file_upload, cmp_anchor_upload, cmp_format_selector,
-                    cmp_ref_labels_upload, label_file_upload,
-                    state_raw, state_dark],
-            outputs=[cmp_report_html, cmp_phase_count_chart,
-                     cmp_phase_duration_chart, cmp_status_html],
+            inputs=[
+                cmp_file_upload,
+                cmp_anchor_upload,
+                cmp_format_selector,
+                cmp_ref_labels_upload,
+                label_file_upload,
+                state_raw,
+                state_dark,
+            ],
+            outputs=[cmp_report_html, cmp_phase_count_chart, cmp_phase_duration_chart, cmp_status_html],
         )
 
         # -- Attribution callback (DECAF) --
@@ -1803,11 +1997,12 @@ def build_ui() -> gr.Blocks:
             from . import attribution as _attr
 
             if not overview_raw:
-                return (build_attribution_html(
-                            {"available": False,
-                             "reason": "Load a trajectory in the Overview tab first."}),
-                        "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>"
-                        "No trajectory loaded.</div>")
+                return (
+                    build_attribution_html(
+                        {"available": False, "reason": "Load a trajectory in the Overview tab first."}
+                    ),
+                    "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>No trajectory loaded.</div>",
+                )
 
             src = overview_raw.get("_source_path", "") if isinstance(overview_raw, dict) else ""
             src_sha = overview_raw.get("_source_sha256") if isinstance(overview_raw, dict) else None
@@ -1823,19 +2018,25 @@ def build_ui() -> gr.Blocks:
                     # diagnose() validates and asks for the override.
                     agent = os.path.basename(os.path.dirname(src))
 
-            result = _attr.diagnose(agent=agent or None, instance_id=inst or None,
-                                    source_path=src or None, fmt=fmt,
-                                    expected_sha=src_sha,
-                                    argus_root=root or None)
+            result = _attr.diagnose(
+                agent=agent or None,
+                instance_id=inst or None,
+                source_path=src or None,
+                fmt=fmt,
+                expected_sha=src_sha,
+                argus_root=root or None,
+            )
             html_out = build_attribution_html(asdict(result))
             import html as _html
+
             ident = _html.escape(f"{result.agent}/{result.instance_id}")
             status = (
                 "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
                 f"Diagnosis complete &mdash; {ident}.</div>"
-                if result.available else
-                "<div style='color:var(--ov-muted);padding:0.5em;font-size:13px;'>"
-                "No gold-grounded attribution &mdash; see the note below.</div>")
+                if result.available
+                else "<div style='color:var(--ov-muted);padding:0.5em;font-size:13px;'>"
+                "No gold-grounded attribution &mdash; see the note below.</div>"
+            )
             return html_out, status
 
         # Manual button: honors the override fields for the current file.
@@ -1843,8 +2044,7 @@ def build_ui() -> gr.Blocks:
         # a manual diagnosis and an autoload can never interleave/overwrite.
         attr_run_btn.click(
             fn=on_diagnose,
-            inputs=[state_raw, format_selector, attr_agent_override,
-                    attr_inst_override, attr_root_override],
+            inputs=[state_raw, format_selector, attr_agent_override, attr_inst_override, attr_root_override],
             outputs=[attr_result_html, attr_status_html],
             concurrency_id="attribution",
         )
@@ -1853,32 +2053,34 @@ def build_ui() -> gr.Blocks:
         # handler in parallel with do_load), so the previous run's diagnosis is
         # never shown against a newly loaded trajectory even transiently.
         def _clear_attribution():
-            return ("<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
-                    "Diagnosing the loaded trajectory&hellip;</div>",
-                    "")
+            return (
+                "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                "Diagnosing the loaded trajectory&hellip;</div>",
+                "",
+            )
+
         # Same concurrency queue as the diagnose callbacks: total ordering means
         # an in-flight (old) diagnosis always completes BEFORE this clear runs,
         # so a stale result can never overwrite the new-load placeholder.
-        load_btn.click(fn=_clear_attribution,
-                       outputs=[attr_result_html, attr_status_html],
-                       concurrency_id="attribution")
-        file_upload.change(fn=_clear_attribution,
-                           outputs=[attr_result_html, attr_status_html],
-                           concurrency_id="attribution")
+        load_btn.click(
+            fn=_clear_attribution, outputs=[attr_result_html, attr_status_html], concurrency_id="attribution"
+        )
+        file_upload.change(
+            fn=_clear_attribution, outputs=[attr_result_html, attr_status_html], concurrency_id="attribution"
+        )
 
         # Auto-populate on load, and IGNORE + clear the agent/instance override
         # fields so a previous case's identity can never attribute a newly loaded
         # one. The corpus root is sticky (it selects an environment, not a case).
         def on_diagnose_autoload(overview_raw, fmt, root_override):
             html_out, status = on_diagnose(overview_raw, fmt, "", "", root_override)
-            return html_out, status, "", ""   # last two clear the override fields
+            return html_out, status, "", ""  # last two clear the override fields
 
         for _ev in (_load_ev, _upload_ev):
             _ev.then(
                 fn=on_diagnose_autoload,
                 inputs=[state_raw, format_selector, attr_root_override],
-                outputs=[attr_result_html, attr_status_html,
-                         attr_agent_override, attr_inst_override],
+                outputs=[attr_result_html, attr_status_html, attr_agent_override, attr_inst_override],
                 concurrency_id="attribution",
             )
 
@@ -1915,7 +2117,9 @@ def build_ui() -> gr.Blocks:
 
         # -- Label file upload callback --
         _empty_label_fig = go.Figure()
-        _empty_label_fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        _empty_label_fig.update_layout(
+            template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+        )
 
         def do_load_labels(upload_obj, dark=False):
             """Load labeled JSON and update all label UI components.
@@ -1943,9 +2147,14 @@ def build_ui() -> gr.Blocks:
                     "",  # label_badge_html
                     "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
                     "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>",
-                    gr.update(visible=False), empty, empty,
-                    gr.update(visible=False), empty, empty,
-                    gr.update(visible=False), empty,
+                    gr.update(visible=False),
+                    empty,
+                    empty,
+                    gr.update(visible=False),
+                    empty,
+                    empty,
+                    gr.update(visible=False),
+                    empty,
                 )
 
             try:
@@ -1953,29 +2162,41 @@ def build_ui() -> gr.Blocks:
             except Exception as exc:
                 return (
                     "",  # label_badge_html
-                    f"<div style='padding:1em;color:#dc2626;text-align:center;'>"
-                    f"Error: {html.escape(str(exc))}</div>",
-                    gr.update(visible=False), empty, empty,
-                    gr.update(visible=False), empty, empty,
-                    gr.update(visible=False), empty,
+                    f"<div style='padding:1em;color:#dc2626;text-align:center;'>Error: {html.escape(str(exc))}</div>",
+                    gr.update(visible=False),
+                    empty,
+                    empty,
+                    gr.update(visible=False),
+                    empty,
+                    empty,
+                    gr.update(visible=False),
+                    empty,
                 )
 
             return (
                 payload["badge_html"],  # label_badge_html
                 payload["status_html"],
-                gr.update(visible=True), payload["phase_count_fig"], payload["action_count_fig"],
-                gr.update(visible=True), payload["phase_duration_fig"], payload["action_duration_fig"],
-                gr.update(visible=True), payload["timeline_fig"],
+                gr.update(visible=True),
+                payload["phase_count_fig"],
+                payload["action_count_fig"],
+                gr.update(visible=True),
+                payload["phase_duration_fig"],
+                payload["action_duration_fig"],
+                gr.update(visible=True),
+                payload["timeline_fig"],
             )
 
         label_outputs = [
             label_badge_html,
             label_status_html,
-            label_charts_row1, label_phase_count_chart,
+            label_charts_row1,
+            label_phase_count_chart,
             label_action_count_chart,
-            label_charts_row2, label_phase_dur_chart,
+            label_charts_row2,
+            label_phase_dur_chart,
             label_action_dur_chart,
-            label_timeline_row, label_timeline_chart,
+            label_timeline_row,
+            label_timeline_chart,
         ]
         label_inputs = [label_file_upload, state_dark]
         label_load_btn.click(
@@ -1996,13 +2217,20 @@ def build_ui() -> gr.Blocks:
         def _reset_labels():
             empty = _empty_label_fig
             return (
-                "",                                       # label_badge_html
-                ("<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
-                 "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"),  # label_status_html
-                gr.update(visible=False), empty, empty,   # row1 + two charts
-                gr.update(visible=False), empty, empty,   # row2 + two charts
-                gr.update(visible=False), empty,          # timeline row + chart
-                gr.update(value=None),                    # clear the file picker
+                "",  # label_badge_html
+                (
+                    "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                    "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
+                ),  # label_status_html
+                gr.update(visible=False),
+                empty,
+                empty,  # row1 + two charts
+                gr.update(visible=False),
+                empty,
+                empty,  # row2 + two charts
+                gr.update(visible=False),
+                empty,  # timeline row + chart
+                gr.update(value=None),  # clear the file picker
             )
 
         _reset_outputs = label_outputs + [label_file_upload]
