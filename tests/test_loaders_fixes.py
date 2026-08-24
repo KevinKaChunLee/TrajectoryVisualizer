@@ -288,7 +288,7 @@ class FormatLabelsTests(unittest.TestCase):
         self.assertEqual(
             FORMAT_LABELS,
             {"ccsession": "Claude Code", "codearts": "CodeArts",
-             "opencode": "OpenCode", "codex": "Codex CLI"},
+             "opencode": "OpenCode", "codex": "Codex CLI", "pi": "Pi"},
         )
 
 
