@@ -856,6 +856,7 @@ def build_ui() -> gr.Blocks:
                     ("CodeArts", "codearts"),
                     ("OpenCode", "opencode"),
                     ("Codex CLI", "codex"),
+                    ("Pi", "pi"),
                 ],
                 value="ccsession",
                 interactive=True,
@@ -1072,6 +1073,7 @@ def build_ui() -> gr.Blocks:
                                 ("CodeArts", "codearts"),
                                 ("OpenCode", "opencode"),
                                 ("Codex CLI", "codex"),
+                                ("Pi", "pi"),
                             ],
                             value="",
                             interactive=True,
@@ -1112,6 +1114,7 @@ def build_ui() -> gr.Blocks:
                                 ("CodeArts", "codearts"),
                                 ("OpenCode", "opencode"),
                                 ("Codex CLI", "codex"),
+                                ("Pi", "pi"),
                             ],
                             value="ccsession",
                             interactive=True,
@@ -1597,9 +1600,9 @@ def build_ui() -> gr.Blocks:
 
             # Validate format matches user selection
             detected = detect_format(raw)
-            # Codex is produced only from an unambiguous .jsonl upload, so accept
-            # it regardless of the dropdown selection.
-            if detected != selected_format and detected not in ("unknown", "codex"):
+            # Codex and Pi are produced only from an unambiguous .jsonl upload,
+            # so accept them regardless of the dropdown selection.
+            if detected != selected_format and detected not in ("unknown", "codex", "pi"):
                 err_msg = (
                     f"Format mismatch: selected "
                     f"<b>{html.escape(FORMAT_LABELS.get(selected_format, selected_format))}</b>"

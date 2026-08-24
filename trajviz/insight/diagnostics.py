@@ -27,12 +27,12 @@ _TOOL_FILE_FIELDS: dict[str, tuple[tuple[str, ...], str]] = {
     # Multiple keys per tool let us handle scaffolds that use different field
     # spellings — e.g. Claude Code emits ``file_path`` (snake) while OpenCode
     # emits ``filePath`` (camel). The lookup picks whichever the call carries.
-    "Read":         (("file_path", "filePath"), "read"),
-    "read":         (("file_path", "filePath"), "read"),
-    "Write":        (("file_path", "filePath"), "write"),
-    "write":        (("file_path", "filePath"), "write"),
-    "Edit":         (("file_path", "filePath"), "write"),
-    "edit":         (("file_path", "filePath"), "write"),
+    "Read":         (("file_path", "filePath", "path"), "read"),
+    "read":         (("file_path", "filePath", "path"), "read"),
+    "Write":        (("file_path", "filePath", "path"), "write"),
+    "write":        (("file_path", "filePath", "path"), "write"),
+    "Edit":         (("file_path", "filePath", "path"), "write"),
+    "edit":         (("file_path", "filePath", "path"), "write"),
     "NotebookEdit": (("notebook_path", "notebookPath"), "write"),
 }
 

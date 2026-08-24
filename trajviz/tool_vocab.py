@@ -10,7 +10,7 @@ Every consumer now imports from here; add new scaffold tool names HERE only.
 
 # Tools whose successful invocation writes file content. Mixed casings are the
 # literal spellings emitted by the supported scaffolds (Claude Code, OpenCode,
-# CodeArts, Codex CLI adapters).
+# CodeArts, Codex CLI, Pi adapters).
 WRITE_TOOL_NAMES: frozenset[str] = frozenset({
     "Edit", "edit", "Write", "write",
     "NotebookEdit", "patch",

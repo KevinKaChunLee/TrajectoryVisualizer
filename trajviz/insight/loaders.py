@@ -1,4 +1,4 @@
-"""Trajectory format detection and conversion (Claude Code, OpenCode, CodeArts, generic)."""
+"""Trajectory format detection and conversion (Claude Code, OpenCode, CodeArts, Codex, Pi)."""
 
 import json
 import os
@@ -25,11 +25,12 @@ FORMAT_LABELS = {
     "codearts": "CodeArts",
     "opencode": "OpenCode",
     "codex": "Codex CLI",
+    "pi": "Pi",
 }
 
 
 def detect_format(raw: dict) -> str:
-    """Detect trajectory format: 'ccsession', 'opencode', 'codearts', or 'unknown'."""
+    """Detect trajectory format: 'ccsession', 'opencode', 'codearts', 'codex', 'pi', or 'unknown'."""
     # Defense in depth: parsed JSON may not be an object (e.g. a bare list of
     # messages/events); nothing non-dict is a recognizable trajectory.
     if not isinstance(raw, dict):
@@ -41,6 +42,8 @@ def detect_format(raw: dict) -> str:
         return "ccsession"
     if raw.get("_codex_format") is True:
         return "codex"
+    if raw.get("_pi_format") is True:
+        return "pi"
     if raw.get("format") == "ccsession-trajectory":
         return "ccsession"
     # CodeArts exports use an OpenCode-compatible ``info + messages``
@@ -1378,6 +1381,313 @@ def _convert_codex_to_internal(events: list[dict]) -> dict:
     }
 
 
+# Pi coding-agent tools use lowercase names and a `path` argument. Map them to
+# the Claude Code / OpenCode vocabulary so file-interaction charts and write
+# detection work without a second set of aliases.
+_PI_TOOL_NAMES = {
+    "bash": "Bash",
+    "read": "Read",
+    "write": "Write",
+    "edit": "Edit",
+    "grep": "Grep",
+    "find": "Glob",
+    "ls": "Glob",
+}
+
+
+def _looks_like_pi_jsonl(events: list) -> bool:
+    """True when JSONL starts with a Pi `session` header (distinct from Codex `session_meta`)."""
+    if not events or not isinstance(events[0], dict):
+        return False
+    first = events[0]
+    if first.get("type") != "session":
+        return False
+    ident = first.get("id")
+    return isinstance(ident, str) and bool(ident)
+
+
+def _pi_event_ts_ms(event: dict) -> int | None:
+    """Prefer the event ISO timestamp; fall back to nested message epoch-ms."""
+    ts = _iso_to_epoch_ms(event.get("timestamp") if isinstance(event.get("timestamp"), str) else None)
+    if ts is not None:
+        return ts
+    msg = event.get("message")
+    if isinstance(msg, dict):
+        nested = msg.get("timestamp")
+        if isinstance(nested, (int, float)) and not isinstance(nested, bool):
+            value = int(nested)
+            # Pi stores nested timestamps as epoch milliseconds.
+            return value if value > 10**12 else value * 1000
+        if isinstance(nested, str):
+            return _iso_to_epoch_ms(nested)
+    return None
+
+
+def _pi_extract_usage(usage: Any) -> dict | None:
+    """Map Pi usage {input, output, cacheRead, cacheWrite, reasoning, totalTokens}."""
+    if not isinstance(usage, dict):
+        return None
+    inp = usage.get("input", 0) or 0
+    out = usage.get("output", 0) or 0
+    reasoning = usage.get("reasoning", 0) or 0
+    cache_read = usage.get("cacheRead", 0) or 0
+    cache_write = usage.get("cacheWrite", 0) or 0
+    total = usage.get("totalTokens")
+    if not isinstance(total, (int, float)):
+        total = inp + out + reasoning + cache_read + cache_write
+    if not any((total, inp, out, reasoning, cache_read, cache_write)):
+        return None
+    return {
+        "total": int(total),
+        "input": int(inp) if isinstance(inp, (int, float)) else 0,
+        "output": int(out) if isinstance(out, (int, float)) else 0,
+        "reasoning": int(reasoning) if isinstance(reasoning, (int, float)) else 0,
+        "cache": {
+            "read": int(cache_read) if isinstance(cache_read, (int, float)) else 0,
+            "write": int(cache_write) if isinstance(cache_write, (int, float)) else 0,
+        },
+    }
+
+
+def _pi_content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content) if content else ""
+    chunks: list[str] = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "text":
+            chunks.append(str(item.get("text") or ""))
+        elif isinstance(item, str):
+            chunks.append(item)
+    return "\n".join(chunks)
+
+
+def _pi_normalize_tool(name: str, arguments: Any) -> tuple[str, dict]:
+    raw_name = name or "?"
+    canonical = _PI_TOOL_NAMES.get(str(raw_name).lower(), raw_name)
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {"raw": arguments}
+    args = dict(arguments) if isinstance(arguments, dict) else (
+        {} if arguments is None else {"raw": arguments}
+    )
+    if canonical in ("Read", "Write", "Edit") and "file_path" not in args and "path" in args:
+        args["file_path"] = args["path"]
+    if canonical == "Bash" and "command" not in args and "cmd" in args:
+        args["command"] = args["cmd"]
+    return canonical, args
+
+
+def _convert_pi_to_internal(events: list[dict]) -> dict:
+    """Convert Pi coding-agent JSONL events into the trajviz internal format.
+
+    Pi emits newline-delimited JSON with event types:
+    - session: session ID, cwd, version
+    - model_change / thinking_level_change: metadata (not steps)
+    - message: nested {role: user|assistant|toolResult, content, usage, ...}
+
+    Assistant ``toolCall`` parts are paired with later ``toolResult`` messages
+    by ``toolCallId``.  The result matches the OpenCode internal message shape
+    used by parse_steps().
+    """
+    session: dict = {}
+    messages: list[dict] = []
+    pending_tools: dict[str, dict] = {}
+    current_model = ""
+    current_provider = ""
+
+    def _append(role: str, ts: int | None, parts: list, tokens: dict | None = None,
+                extra: dict | None = None) -> None:
+        info: dict[str, Any] = {
+            "role": role,
+            "time": {"created": ts or 0},
+        }
+        if tokens:
+            info["tokens"] = tokens
+        if extra:
+            info.update(extra)
+        messages.append({"info": info, "parts": parts})
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("type")
+        ts = _pi_event_ts_ms(event)
+
+        if etype == "session":
+            session = event
+            continue
+        if etype == "model_change":
+            if event.get("provider"):
+                current_provider = str(event.get("provider"))
+            if event.get("modelId"):
+                current_model = str(event.get("modelId"))
+            continue
+        if etype in ("thinking_level_change",):
+            continue
+        if etype != "message":
+            continue
+
+        msg = event.get("message")
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+
+        if role == "user":
+            parts = []
+            for item in msg.get("content") or []:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append({"type": "text", "text": item.get("text", "")})
+                elif isinstance(item, str):
+                    parts.append({"type": "text", "text": item})
+            if parts:
+                _append("user", ts, parts, extra={"id": event.get("id") or ""})
+
+        elif role == "assistant":
+            if msg.get("model"):
+                current_model = str(msg.get("model"))
+            if msg.get("provider"):
+                current_provider = str(msg.get("provider"))
+            parts = []
+            for item in msg.get("content") or []:
+                if not isinstance(item, dict):
+                    continue
+                ctype = item.get("type")
+                if ctype == "thinking":
+                    text = item.get("thinking") or item.get("text") or ""
+                    parts.append({"type": "reasoning", "text": text})
+                elif ctype == "text":
+                    parts.append({"type": "text", "text": item.get("text", "")})
+                elif ctype == "toolCall":
+                    tool_name, tool_input = _pi_normalize_tool(
+                        item.get("name", "?"), item.get("arguments"),
+                    )
+                    call_id = item.get("id") or ""
+                    part = {
+                        "type": "tool_call",
+                        "tool_name": tool_name,
+                        "tool_id": call_id,
+                        "status": "pending",
+                        "input": tool_input,
+                        "output": "",
+                    }
+                    parts.append(part)
+                    if call_id:
+                        pending_tools[call_id] = part
+            error_message = msg.get("errorMessage")
+            if error_message:
+                parts.append({"type": "text", "text": f"[error] {error_message}"})
+            tokens = _pi_extract_usage(msg.get("usage"))
+            extra = {
+                "id": event.get("id") or "",
+                "modelID": current_model,
+                "providerID": current_provider,
+            }
+            stop = msg.get("stopReason")
+            if stop:
+                extra["finish"] = stop
+            if parts or tokens or stop == "error":
+                if not parts and stop == "error":
+                    parts = [{"type": "text", "text": "[error]"}]
+                _append("assistant", ts, parts, tokens=tokens, extra=extra)
+
+        elif role == "toolResult":
+            call_id = msg.get("toolCallId") or ""
+            output = _pi_content_text(msg.get("content"))
+            is_error = bool(msg.get("isError"))
+            status = "error" if is_error else "success"
+            part = pending_tools.pop(call_id, None) if call_id else None
+            if part is not None:
+                part["output"] = output
+                part["status"] = status
+                if is_error:
+                    part["error"] = output
+            else:
+                tool_name, _ = _pi_normalize_tool(msg.get("toolName") or "?", {})
+                _append("assistant", ts, [{
+                    "type": "tool",
+                    "tool_name": tool_name,
+                    "tool_id": call_id,
+                    "status": status,
+                    "input": {},
+                    "output": output,
+                    **({"error": output} if is_error else {}),
+                }])
+
+    for part in pending_tools.values():
+        if part.get("status") == "pending":
+            part["status"] = "error"
+
+    for i in range(len(messages) - 1):
+        cur_t = messages[i]["info"]["time"].get("created")
+        nxt_t = messages[i + 1]["info"]["time"].get("created")
+        if isinstance(cur_t, (int, float)) and isinstance(nxt_t, (int, float)) and nxt_t >= cur_t:
+            messages[i]["info"]["time"]["completed"] = nxt_t
+
+    first_ts_iso = None
+    last_ts_iso = None
+    for event in events:
+        if isinstance(event, dict) and isinstance(event.get("timestamp"), str):
+            first_ts_iso = event["timestamp"]
+            break
+    for event in reversed(events):
+        if isinstance(event, dict) and isinstance(event.get("timestamp"), str):
+            last_ts_iso = event["timestamp"]
+            break
+    directory = session.get("cwd", "") or ""
+    start_ms = _iso_to_epoch_ms(first_ts_iso)
+    end_ms = _iso_to_epoch_ms(last_ts_iso)
+    total_duration = (
+        round((end_ms - start_ms) / 1000.0, 3)
+        if isinstance(start_ms, int) and isinstance(end_ms, int) else 0
+    )
+    total_tokens = sum(
+        (m["info"].get("tokens") or {}).get("total", 0) for m in messages
+    )
+    last_model = current_model
+    last_provider = current_provider
+
+    info = {
+        "id": session.get("id", ""),
+        "slug": "",
+        "projectID": "",
+        "directory": directory,
+        "title": "",
+        "version": str(session.get("version", "") or ""),
+        "time": {"created": start_ms or 0, "updated": end_ms or 0},
+    }
+
+    return {
+        "info": info,
+        "messages": messages,
+        "metadata": {
+            "session_id": session.get("id", ""),
+            "directory": directory,
+            "directory_name": directory.replace("\\", "/").rsplit("/", 1)[-1] if directory else "",
+            "agent": "pi",
+            "model": last_model,
+            "source": "pi",
+            "model_provider": last_provider,
+            "originator": "Pi",
+            "server_version": str(session.get("version", "") or ""),
+            "timestamp_utc": first_ts_iso or "",
+        },
+        "timing": {
+            "total_duration": total_duration,
+            "started_at": first_ts_iso or "",
+            "finished_at": last_ts_iso or "",
+        },
+        "output": {},
+        "input": {},
+        "token_usage": {"total_tokens": total_tokens},
+        "stats": {},
+        "_pi_format": True,
+    }
+
+
 def _extract_codex_exec_commands(source: str) -> list[str]:
     """Extract JSON-quoted ``cmd`` values from a modern custom ``exec`` input."""
     if not isinstance(source, str):
@@ -1507,7 +1817,7 @@ def _build_codex_tool_input(
 def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
     """Load trajectory file with error handling.
 
-    Auto-detects format (ccsession / opencode / codearts / codex) and
+    Auto-detects format (ccsession / opencode / codearts / codex / pi) and
     normalizes metadata.  Supports ``.json`` and ``.jsonl`` files.
 
     ``format_hint`` is used as a fallback when automatic detection returns
@@ -1517,7 +1827,7 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
     if file_path.endswith(".log"):
         return {"_error": "Unsupported file type: .log files are no longer supported."}
 
-    # Handle Codex JSONL format
+    # Handle JSONL formats (Codex CLI, Pi)
     if file_path.endswith(".jsonl"):
         # ONE read: the sha256 is computed from exactly the bytes that are
         # parsed/displayed (a second read could hash different bytes if the
@@ -1555,12 +1865,22 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
                 # object is the signal that the writer may still be appending.
                 if pending_line.endswith(("\n", "\r")):
                     return {"_error": f"Invalid JSONL at line {pending_number}: {exc.msg}"}
-        if events and isinstance(events[0], dict) and events[0].get("type") == "session_meta":
-            result = _convert_codex_to_internal(events)
+        if events and isinstance(events[0], dict):
+            first_type = events[0].get("type")
+            if first_type == "session_meta":
+                result = _convert_codex_to_internal(events)
+            elif _looks_like_pi_jsonl(events):
+                result = _convert_pi_to_internal(events)
+            else:
+                return {"_error": "Unsupported JSONL input; expected Codex JSONL "
+                                  "(leading session_meta event) or Pi JSONL "
+                                  "(leading session event)."}
             result["_source_path"] = file_path
             result["_source_sha256"] = source_sha
             return result
-        return {"_error": "Unsupported JSONL input; expected Codex JSONL format (leading session_meta event)."}
+        return {"_error": "Unsupported JSONL input; expected Codex JSONL "
+                          "(leading session_meta event) or Pi JSONL "
+                          "(leading session event)."}
 
     try:
         with open(file_path, "rb") as f:
