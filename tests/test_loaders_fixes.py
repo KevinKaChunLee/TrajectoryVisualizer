@@ -20,7 +20,9 @@ import tempfile
 import unittest
 
 from trajviz.insight.loaders import (
+    FORMAT_DROPDOWN_CHOICES,
     FORMAT_LABELS,
+    check_format_selection,
     _iso_to_epoch_ms,
     detect_format,
     load_trajectory,
@@ -290,6 +292,36 @@ class FormatLabelsTests(unittest.TestCase):
             {"ccsession": "Claude Code", "codearts": "CodeArts",
              "opencode": "OpenCode", "codex": "Codex CLI", "pi": "Pi"},
         )
+
+    def test_dropdown_defaults_to_auto_detect(self):
+        self.assertEqual(FORMAT_DROPDOWN_CHOICES[0], ("Auto-detect", ""))
+        self.assertEqual(
+            FORMAT_DROPDOWN_CHOICES[1:],
+            [(label, key) for key, label in FORMAT_LABELS.items()],
+        )
+
+
+class FormatSelectionTests(unittest.TestCase):
+    """Auto-detect accepts any recognized format; explicit picks still gate."""
+
+    def test_auto_detect_accepts_recognized_formats(self):
+        for fmt in FORMAT_LABELS:
+            self.assertIsNone(check_format_selection(fmt, ""))
+            self.assertIsNone(check_format_selection(fmt, None))
+
+    def test_auto_detect_rejects_unknown(self):
+        self.assertEqual(check_format_selection("unknown", ""), "unknown")
+        self.assertEqual(check_format_selection("unknown", None), "unknown")
+
+    def test_explicit_selection_rejects_other_json_format(self):
+        self.assertEqual(check_format_selection("opencode", "ccsession"), "mismatch")
+        self.assertEqual(check_format_selection("codearts", "opencode"), "mismatch")
+
+    def test_explicit_selection_allows_match_unknown_and_jsonl(self):
+        self.assertIsNone(check_format_selection("ccsession", "ccsession"))
+        self.assertIsNone(check_format_selection("unknown", "ccsession"))
+        self.assertIsNone(check_format_selection("pi", "ccsession"))
+        self.assertIsNone(check_format_selection("codex", "opencode"))
 
 
 if __name__ == "__main__":

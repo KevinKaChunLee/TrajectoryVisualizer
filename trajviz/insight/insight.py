@@ -74,7 +74,12 @@ from .patterns import (
     detect_tool_selection_antipatterns,
 )
 from .help import HELP_TEXT
-from .loaders import detect_format, FORMAT_LABELS
+from .loaders import (
+    detect_format,
+    check_format_selection,
+    FORMAT_LABELS,
+    FORMAT_DROPDOWN_CHOICES,
+)
 from .parser import load_labeled_json, aggregate_labels
 from .formatting import format_context_pressure_html
 from .rendering import (
@@ -851,14 +856,8 @@ def build_ui() -> gr.Blocks:
         with gr.Column(elem_classes=["upload-row"]) as upload_accordion, gr.Row(equal_height=True):
             format_selector = gr.Dropdown(
                 label="Format",
-                choices=[
-                    ("Claude Code", "ccsession"),
-                    ("CodeArts", "codearts"),
-                    ("OpenCode", "opencode"),
-                    ("Codex CLI", "codex"),
-                    ("Pi", "pi"),
-                ],
-                value="ccsession",
+                choices=FORMAT_DROPDOWN_CHOICES,
+                value="",
                 interactive=True,
                 scale=1,
                 min_width=140,
@@ -1067,14 +1066,7 @@ def build_ui() -> gr.Blocks:
                     with gr.Row(equal_height=True):
                         rg_format_selector = gr.Dropdown(
                             label="Format hint",
-                            choices=[
-                                ("Auto-detect", ""),
-                                ("Claude Code", "ccsession"),
-                                ("CodeArts", "codearts"),
-                                ("OpenCode", "opencode"),
-                                ("Codex CLI", "codex"),
-                                ("Pi", "pi"),
-                            ],
+                            choices=FORMAT_DROPDOWN_CHOICES,
                             value="",
                             interactive=True,
                             scale=1,
@@ -1109,14 +1101,8 @@ def build_ui() -> gr.Blocks:
                     with gr.Row(equal_height=True):
                         cmp_format_selector = gr.Dropdown(
                             label="Format",
-                            choices=[
-                                ("Claude Code", "ccsession"),
-                                ("CodeArts", "codearts"),
-                                ("OpenCode", "opencode"),
-                                ("Codex CLI", "codex"),
-                                ("Pi", "pi"),
-                            ],
-                            value="ccsession",
+                            choices=FORMAT_DROPDOWN_CHOICES,
+                            value="",
                             interactive=True,
                             scale=1,
                             min_width=140,
@@ -1583,7 +1569,7 @@ def build_ui() -> gr.Blocks:
                 {},  # state_raw
             )
 
-        def _do_load_inner(upload_obj, dark=False, selected_format="ccsession"):
+        def _do_load_inner(upload_obj, dark=False, selected_format=""):
             """Load trajectory from uploaded file."""
 
             file_path = None
@@ -1593,16 +1579,24 @@ def build_ui() -> gr.Blocks:
             if not file_path or not os.path.isfile(file_path):
                 return _empty_result(detail="*No file selected or file not found.*")
 
-            raw = load_trajectory(file_path)
+            format_hint = selected_format or None
+            raw = load_trajectory(file_path, format_hint=format_hint)
             if "_error" in raw:
                 err_banner = f"<p style='color:#dc2626;'>Error: {html.escape(raw['_error'])}</p>"
                 return _empty_result(banner=err_banner, detail="*Error loading file.*")
 
-            # Validate format matches user selection
             detected = detect_format(raw)
-            # Codex and Pi are produced only from an unambiguous .jsonl upload,
-            # so accept them regardless of the dropdown selection.
-            if detected != selected_format and detected not in ("unknown", "codex", "pi"):
+            gate = check_format_selection(detected, selected_format)
+            if gate == "unknown":
+                err_msg = (
+                    "Could not detect trajectory format. "
+                    "Select a format from the dropdown and try again."
+                )
+                return _empty_result(
+                    banner=f"<p style='color:#dc2626;'>{html.escape(err_msg)}</p>",
+                    detail="*Unrecognized trajectory file.*",
+                )
+            if gate == "mismatch":
                 err_msg = (
                     f"Format mismatch: selected "
                     f"<b>{html.escape(FORMAT_LABELS.get(selected_format, selected_format))}</b>"
@@ -1720,7 +1714,7 @@ def build_ui() -> gr.Blocks:
                 raw,  # state_raw
             )
 
-        def do_load(upload_obj, dark=False, selected_format="ccsession"):
+        def do_load(upload_obj, dark=False, selected_format=""):
             """Load wrapper: surface any unexpected failure as a visible banner
             instead of a raw traceback that leaves the UI stale."""
             try:
@@ -1902,7 +1896,7 @@ def build_ui() -> gr.Blocks:
 
             from .loaders import load_trajectory as _load_traj
 
-            ref_raw = _load_traj(ref_path, format_hint=ref_format)
+            ref_raw = _load_traj(ref_path, format_hint=ref_format or None)
 
             result = run_comparison(
                 ref_raw=ref_raw,
@@ -2021,11 +2015,15 @@ def build_ui() -> gr.Blocks:
                     # diagnose() validates and asks for the override.
                     agent = os.path.basename(os.path.dirname(src))
 
+            if not (fmt or "").strip() and isinstance(overview_raw, dict):
+                detected = detect_format(overview_raw)
+                fmt = None if detected == "unknown" else detected
+
             result = _attr.diagnose(
                 agent=agent or None,
                 instance_id=inst or None,
                 source_path=src or None,
-                fmt=fmt,
+                fmt=fmt or None,
                 expected_sha=src_sha,
                 argus_root=root or None,
             )

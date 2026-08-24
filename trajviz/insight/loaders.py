@@ -28,6 +28,13 @@ FORMAT_LABELS = {
     "pi": "Pi",
 }
 
+# Dropdown choices for the Insight UI. Auto-detect is first so it is the
+# default; an explicit format is still available as an override / mismatch gate.
+FORMAT_DROPDOWN_CHOICES: list[tuple[str, str]] = [
+    ("Auto-detect", ""),
+    *((label, key) for key, label in FORMAT_LABELS.items()),
+]
+
 
 def detect_format(raw: dict) -> str:
     """Detect trajectory format: 'ccsession', 'opencode', 'codearts', 'codex', 'pi', or 'unknown'."""
@@ -72,6 +79,25 @@ def detect_format(raw: dict) -> str:
     if isinstance(raw.get("info"), dict) and isinstance(raw.get("messages"), list):
         return "opencode"
     return "unknown"
+
+
+def check_format_selection(detected: str, selected: str | None) -> str | None:
+    """Return an error reason if the dropdown selection cannot load this file.
+
+    ``None`` means proceed. Empty ``selected`` is auto-detect: any recognized
+    format is accepted, and ``unknown`` is rejected so we do not render an
+    empty dashboard. An explicit selection still rejects a different detected
+    JSON format; Codex/Pi ``.jsonl`` and ``unknown`` stay exempt so a leftover
+    Claude Code selection does not block those uploads (same as before).
+    """
+    selected = selected or ""
+    if not selected:
+        if detected in ("", "unknown"):
+            return "unknown"
+        return None
+    if detected == selected or detected in ("unknown", "codex", "pi"):
+        return None
+    return "mismatch"
 
 
 def _iso_to_epoch_ms(iso_str: str | None) -> int | None:
