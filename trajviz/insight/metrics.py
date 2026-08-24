@@ -691,15 +691,19 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
 
 
 def extract_agent_info(steps: list[dict]) -> tuple[str, str, str]:
-    """Return (model_id, provider_id, agent_id) from the first assistant step."""
+    """Return (model_id, provider_id, agent_id) for the session header.
+
+    Model and provider come from the last assistant step that recorded them,
+    so a mid-session switch (Pi provider retries, etc.) is what the header
+    shows. Agent id is the first non-empty agent field.
+    """
     model_id = provider_id = agent_id = ""
     for s in steps:
-        if s["role"] == "assistant" and s.get("model_id"):
+        if s.get("role") == "assistant" and s.get("model_id"):
             model_id = s["model_id"]
-            provider_id = s.get("provider_id", "")
-            if s.get("agent"):
+            provider_id = s.get("provider_id", "") or provider_id
+            if not agent_id and s.get("agent"):
                 agent_id = s["agent"]
-            break
     if not agent_id:
         for s in steps:
             if s.get("agent"):

@@ -1423,43 +1423,67 @@ def _pi_event_ts_ms(event: dict) -> int | None:
     return None
 
 
+def _pi_int(value: Any) -> int:
+    """Coerce a Pi usage field to int; bools and non-numerics become 0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value)
+
+
 def _pi_extract_usage(usage: Any) -> dict | None:
-    """Map Pi usage {input, output, cacheRead, cacheWrite, reasoning, totalTokens}."""
+    """Map Pi usage {input, output, cacheRead, cacheWrite, reasoning, totalTokens}.
+
+    Pi's ``totalTokens`` is often input+output only (reasoning/cache omitted).
+    Prefer the component sum so stacked token charts and the stored total agree.
+    """
     if not isinstance(usage, dict):
         return None
-    inp = usage.get("input", 0) or 0
-    out = usage.get("output", 0) or 0
-    reasoning = usage.get("reasoning", 0) or 0
-    cache_read = usage.get("cacheRead", 0) or 0
-    cache_write = usage.get("cacheWrite", 0) or 0
-    total = usage.get("totalTokens")
-    if not isinstance(total, (int, float)):
-        total = inp + out + reasoning + cache_read + cache_write
+    inp = _pi_int(usage.get("input", 0))
+    out = _pi_int(usage.get("output", 0))
+    reasoning = _pi_int(usage.get("reasoning", 0))
+    cache_read = _pi_int(usage.get("cacheRead", 0))
+    cache_write = _pi_int(usage.get("cacheWrite", 0))
+    component_total = inp + out + reasoning + cache_read + cache_write
+    vendor_total = _pi_int(usage.get("totalTokens"))
+    total = max(component_total, vendor_total)
     if not any((total, inp, out, reasoning, cache_read, cache_write)):
         return None
     return {
-        "total": int(total),
-        "input": int(inp) if isinstance(inp, (int, float)) else 0,
-        "output": int(out) if isinstance(out, (int, float)) else 0,
-        "reasoning": int(reasoning) if isinstance(reasoning, (int, float)) else 0,
+        "total": total,
+        "input": inp,
+        "output": out,
+        "reasoning": reasoning,
         "cache": {
-            "read": int(cache_read) if isinstance(cache_read, (int, float)) else 0,
-            "write": int(cache_write) if isinstance(cache_write, (int, float)) else 0,
+            "read": cache_read,
+            "write": cache_write,
         },
     }
 
 
-def _pi_content_text(content: Any) -> str:
+def _pi_iter_content(content: Any):
+    """Yield content dicts without treating a string as a character sequence."""
     if isinstance(content, str):
-        return content
+        if content:
+            yield {"type": "text", "text": content}
+        return
+    if isinstance(content, dict):
+        yield content
+        return
     if not isinstance(content, list):
-        return str(content) if content else ""
-    chunks: list[str] = []
+        return
     for item in content:
-        if isinstance(item, dict) and item.get("type") == "text":
+        if isinstance(item, str):
+            if item:
+                yield {"type": "text", "text": item}
+        elif isinstance(item, dict):
+            yield item
+
+
+def _pi_content_text(content: Any) -> str:
+    chunks: list[str] = []
+    for item in _pi_iter_content(content):
+        if item.get("type") == "text":
             chunks.append(str(item.get("text") or ""))
-        elif isinstance(item, str):
-            chunks.append(item)
     return "\n".join(chunks)
 
 
@@ -1538,11 +1562,9 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
 
         if role == "user":
             parts = []
-            for item in msg.get("content") or []:
-                if isinstance(item, dict) and item.get("type") == "text":
+            for item in _pi_iter_content(msg.get("content")):
+                if item.get("type") == "text":
                     parts.append({"type": "text", "text": item.get("text", "")})
-                elif isinstance(item, str):
-                    parts.append({"type": "text", "text": item})
             if parts:
                 _append("user", ts, parts, extra={"id": event.get("id") or ""})
 
@@ -1552,9 +1574,7 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
             if msg.get("provider"):
                 current_provider = str(msg.get("provider"))
             parts = []
-            for item in msg.get("content") or []:
-                if not isinstance(item, dict):
-                    continue
+            for item in _pi_iter_content(msg.get("content")):
                 ctype = item.get("type")
                 if ctype == "thinking":
                     text = item.get("thinking") or item.get("text") or ""

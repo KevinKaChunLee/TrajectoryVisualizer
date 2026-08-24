@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from trajviz.insight.loaders import detect_format, load_trajectory
+from trajviz.insight.metrics import extract_agent_info
 from trajviz.insight.parser import parse_steps
 
 
@@ -175,14 +176,52 @@ class PiLoaderTests(unittest.TestCase):
 
     def test_token_usage_ingested(self):
         steps = parse_steps(self._load())
+        # Vendor totalTokens is 1815 (input+output); reasoning 49 is extra.
         assistant = [
             s for s in steps
-            if s["role"] == "assistant" and s["tokens"]["total"] == 1815
+            if s["role"] == "assistant" and s["tokens"]["input"] == 1728
         ]
         self.assertEqual(len(assistant), 1)
-        self.assertEqual(assistant[0]["tokens"]["input"], 1728)
         self.assertEqual(assistant[0]["tokens"]["output"], 87)
         self.assertEqual(assistant[0]["tokens"]["reasoning"], 49)
+        self.assertEqual(assistant[0]["tokens"]["total"], 1728 + 87 + 49)
+
+    def test_token_total_includes_cache(self):
+        events = [
+            _session(),
+            _msg("assistant", "2026-08-24T01:33:02.137Z",
+                 [{"type": "text", "text": "ok"}],
+                 stopReason="stop",
+                 usage={"input": 100, "output": 20, "cacheRead": 50,
+                        "cacheWrite": 10, "reasoning": 5, "totalTokens": 120}),
+        ]
+        steps = parse_steps(self._load(events, name="cache.jsonl"))
+        asst = next(s for s in steps if s["role"] == "assistant")
+        self.assertEqual(asst["tokens"]["cache_read"], 50)
+        self.assertEqual(asst["tokens"]["cache_write"], 10)
+        self.assertEqual(asst["tokens"]["total"], 100 + 20 + 5 + 50 + 10)
+
+    def test_string_content_is_one_text_part(self):
+        events = [
+            _session(),
+            _msg("user", "2026-08-24T01:30:33.026Z", "explore the repo"),
+            _msg("assistant", "2026-08-24T01:33:36.288Z",
+                 "Here is an overview of the repo.",
+                 stopReason="stop"),
+        ]
+        steps = parse_steps(self._load(events, name="string-content.jsonl"))
+        user = next(s for s in steps if s["role"] == "user")
+        asst = next(s for s in steps if s["role"] == "assistant")
+        self.assertEqual(user["text_preview"], "explore the repo")
+        self.assertEqual(len(user["parts"]), 1)
+        self.assertEqual(asst["text_preview"], "Here is an overview of the repo.")
+        self.assertEqual(len(asst["parts"]), 1)
+
+    def test_session_header_uses_last_model(self):
+        steps = parse_steps(self._load())
+        model_id, provider_id, _ = extract_agent_info(steps)
+        self.assertEqual(model_id, "nvidia/nemotron-3.5-lightning:free")
+        self.assertEqual(provider_id, "cline")
 
     def test_timestamps_are_epoch_ms(self):
         steps = parse_steps(self._load())
