@@ -93,6 +93,7 @@ from .rendering import (
     _diag_jump_onclick,
 )
 from .styles import APP_CSS  # noqa: F401  (re-exported: __main__ passes it to app.launch(css=...))
+from .report import ReportError, write_report_file
 
 _DETAIL_PLACEHOLDER = (
     "<div id='wf-detail-content'>"
@@ -108,6 +109,26 @@ _FILTER_CHIPS_DEFAULT = [*_ROLE_FILTERS, _ALL_FEATURE_FILTER]
 
 # Maximum steps to process — keeps rendering, metrics, and charts bounded.
 _MAX_STEPS = 2000
+
+
+def _prepare_html_export(raw, steps, dark=False):
+    """Build the HTML snapshot after a trajectory loads.
+
+    Gradio's DownloadButton only saves in the same click that already has a
+    file URL. Generating on click (then JS-clicking a hidden button) is
+    blocked as a non-gesture download, and ``value=callable`` toasts on page
+    load. So the report is prepared here and the button just downloads.
+    """
+    payload = raw if isinstance(raw, dict) else {}
+    if not payload or payload.get("_error"):
+        return gr.update(value=None, interactive=False)
+    try:
+        path = write_report_file(
+            payload, steps=steps or None, dark=bool(dark),
+        )
+    except ReportError:
+        return gr.update(value=None, interactive=False)
+    return gr.update(value=path, interactive=True)
 
 
 def _prerender_step_details(steps: list[dict]) -> str:
@@ -868,7 +889,15 @@ def build_ui() -> gr.Blocks:
                     file_types=[".json", ".jsonl"],
                     height=110,
                 )
-                load_btn = gr.Button("Load Trajectory", variant="primary", size="sm", min_width=120)
+                with gr.Row():
+                    load_btn = gr.Button("Load Trajectory", variant="primary", size="sm", min_width=120)
+                    export_btn = gr.DownloadButton(
+                        label="Export HTML",
+                        variant="secondary",
+                        size="sm",
+                        min_width=120,
+                        interactive=False,
+                    )
             with gr.Column(scale=2, min_width=200):
                 label_file_upload = gr.File(
                     label="Labels (optional)",
@@ -1797,6 +1826,14 @@ def build_ui() -> gr.Blocks:
             inputs=[file_upload, state_dark, format_selector],
             outputs=all_outputs,
         )
+        for _ev in (_load_ev, _upload_ev):
+            _ev.success(
+                fn=_prepare_html_export,
+                inputs=[state_raw, state_steps, state_dark],
+                outputs=export_btn,
+                show_progress="minimal",
+                show_progress_on=export_btn,
+            )
 
         def on_pressure_agent_change(agent_key, steps, raw, dark):
             """Rebuild the pressure chart for the selected agent/subagent."""
