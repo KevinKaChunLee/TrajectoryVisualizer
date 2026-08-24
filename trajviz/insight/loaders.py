@@ -28,16 +28,43 @@ FORMAT_LABELS = {
     "pi": "Pi",
 }
 
+# Dropdown choices for the Insight UI. Auto-detect is first so it is the
+# default; an explicit format is still available as an override / mismatch gate.
+FORMAT_DROPDOWN_CHOICES: list[tuple[str, str]] = [
+    ("Auto-detect", ""),
+    *((label, key) for key, label in FORMAT_LABELS.items()),
+]
 
-def detect_format(raw: dict) -> str:
-    """Detect trajectory format: 'ccsession', 'opencode', 'codearts', 'codex', 'pi', or 'unknown'."""
-    # Defense in depth: parsed JSON may not be an object (e.g. a bare list of
-    # messages/events); nothing non-dict is a recognizable trajectory.
-    if not isinstance(raw, dict):
-        return "unknown"
-    # Post-conversion marker: the Claude Code converter builds a fresh dict and
-    # sets this flag. Check it before the raw-format markers below so already-
-    # converted trajectories still report as ccsession.
+# Object-shaped JSON (one file = one dict) vs event-stream JSON/JSONL.
+_OBJECT_FORMATS = frozenset({"ccsession", "codearts", "opencode"})
+_EVENT_FORMATS = frozenset({"codex", "pi"})
+_FORMAT_STAMPS = {
+    "ccsession": "_cc_format",
+    "codearts": "_codearts_format",
+    "codex": "_codex_format",
+    "pi": "_pi_format",
+}
+
+
+def _looks_like_pi_jsonl(events: list) -> bool:
+    """True when an event stream starts with a Pi ``session`` header.
+
+    Distinct from Codex ``session_meta``. Requires a non-empty string ``id``
+    so a generic ``{"type": "session"}`` log line is not treated as Pi.
+    """
+    if not events or not isinstance(events[0], dict):
+        return False
+    first = events[0]
+    if first.get("type") != "session":
+        return False
+    ident = first.get("id")
+    return isinstance(ident, str) and bool(ident)
+
+
+def _detect_object_format(raw: dict) -> str:
+    """Detect format of a parsed JSON object (raw export or already-converted)."""
+    # Post-conversion markers: converters build/stamp a dict so a second pass
+    # (UI gate, attribution, run-group) still reports the originating product.
     if raw.get("_cc_format") is True:
         return "ccsession"
     if raw.get("_codex_format") is True:
@@ -72,6 +99,65 @@ def detect_format(raw: dict) -> str:
     if isinstance(raw.get("info"), dict) and isinstance(raw.get("messages"), list):
         return "opencode"
     return "unknown"
+
+
+def _detect_event_stream_format(events: list) -> str:
+    """Detect Codex / Pi from a parsed event array (JSONL or a JSON list)."""
+    if not events or not isinstance(events[0], dict):
+        return "unknown"
+    if events[0].get("type") == "session_meta":
+        return "codex"
+    if _looks_like_pi_jsonl(events):
+        return "pi"
+    return "unknown"
+
+
+def detect_format(raw: Any) -> str:
+    """Detect trajectory format from parsed content.
+
+    Accepts a JSON object or an event array. Returns ``ccsession``,
+    ``opencode``, ``codearts``, ``codex``, ``pi``, or ``unknown``.
+    """
+    if isinstance(raw, list):
+        return _detect_event_stream_format(raw)
+    if isinstance(raw, dict):
+        return _detect_object_format(raw)
+    return "unknown"
+
+
+def _resolve_format(detected: str, hint: str | None) -> tuple[str, str | None]:
+    """Apply ``format_hint`` to a detected format.
+
+    Returns ``(fmt, reason)`` where ``reason`` is ``None`` (proceed),
+    ``"unknown"`` (auto-detect found nothing), or ``"mismatch"``.
+
+    Empty hint is auto-detect. A recognized hint on ``unknown`` *forces*
+    that converter. A recognized hint on a different detected format is
+    a mismatch (including Codex/Pi).
+    """
+    selected = hint if hint in FORMAT_LABELS else ""
+    if not selected:
+        if detected in ("", "unknown"):
+            return "unknown", "unknown"
+        return detected, None
+    if detected in ("", "unknown"):
+        return selected, None
+    if detected != selected:
+        return detected, "mismatch"
+    return detected, None
+
+
+def check_format_selection(detected: str, selected: str | None) -> str | None:
+    """Return an error reason if the dropdown selection cannot load this file.
+
+    ``None`` means proceed. Empty ``selected`` is auto-detect: any recognized
+    format is accepted, and ``unknown`` is rejected so we do not render an
+    empty dashboard. An explicit selection forces conversion when detection
+    is ``unknown``, and rejects a different recognized format (including
+    Codex/Pi).
+    """
+    _, reason = _resolve_format(detected, selected or None)
+    return reason
 
 
 def _iso_to_epoch_ms(iso_str: str | None) -> int | None:
@@ -1395,17 +1481,6 @@ _PI_TOOL_NAMES = {
 }
 
 
-def _looks_like_pi_jsonl(events: list) -> bool:
-    """True when JSONL starts with a Pi `session` header (distinct from Codex `session_meta`)."""
-    if not events or not isinstance(events[0], dict):
-        return False
-    first = events[0]
-    if first.get("type") != "session":
-        return False
-    ident = first.get("id")
-    return isinstance(ident, str) and bool(ident)
-
-
 def _pi_event_ts_ms(event: dict) -> int | None:
     """Prefer the event ISO timestamp; fall back to nested message epoch-ms."""
     ts = _iso_to_epoch_ms(event.get("timestamp") if isinstance(event.get("timestamp"), str) else None)
@@ -1834,109 +1909,232 @@ def _build_codex_tool_input(
         return result
 
 
-def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
-    """Load trajectory file with error handling.
+_UNSUPPORTED_EVENT_STREAM = (
+    "Unsupported event-array input; expected Codex JSONL "
+    "(leading session_meta event) or Pi JSONL "
+    "(leading session event)."
+)
 
-    Auto-detects format (ccsession / opencode / codearts / codex / pi) and
-    normalizes metadata.  Supports ``.json`` and ``.jsonl`` files.
 
-    ``format_hint`` is used as a fallback when automatic detection returns
-    ``"unknown"`` — useful for JSON files that lack format-identifying fields
-    (e.g., Claude Code exports without the ``format`` marker).
+def _path_ext(file_path: str) -> str:
+    return os.path.splitext(file_path)[1].lower()
+
+
+def _parse_jsonl_events(text: str) -> tuple[list | None, str | None]:
+    """Parse newline-delimited JSON, tolerating a truncated final line.
+
+    Interior decode errors are fatal. A missing newline on the last
+    non-empty line is treated as an in-progress append and dropped.
     """
-    if file_path.endswith(".log"):
-        return {"_error": "Unsupported file type: .log files are no longer supported."}
-
-    # Handle JSONL formats (Codex CLI, Pi)
-    if file_path.endswith(".jsonl"):
-        # ONE read: the sha256 is computed from exactly the bytes that are
-        # parsed/displayed (a second read could hash different bytes if the
-        # file is replaced mid-load — the TOCTOU the identity gate exists for).
-        try:
-            with open(file_path, "rb") as f:
-                data = f.read()
-            text = data.decode("utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            return {"_error": str(exc)}
-        source_sha = _sha256_bytes(data)
-        events = []
-        pending: tuple[int, str] | None = None
-        for line_number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
-            if not raw_line.strip():
-                continue
-            # Delay one non-empty line so only the true final line can
-            # receive the append-in-progress tolerance below.
-            if pending is None:
-                pending = (line_number, raw_line)
-                continue
-            pending_number, pending_line = pending
-            try:
-                events.append(json.loads(pending_line))
-            except json.JSONDecodeError as exc:
-                return {"_error": f"Invalid JSONL at line {pending_number}: {exc.msg}"}
+    events: list = []
+    pending: tuple[int, str] | None = None
+    for line_number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
+        if not raw_line.strip():
+            continue
+        # Delay one non-empty line so only the true final line can
+        # receive the append-in-progress tolerance below.
+        if pending is None:
             pending = (line_number, raw_line)
+            continue
+        pending_number, pending_line = pending
+        try:
+            events.append(json.loads(pending_line))
+        except json.JSONDecodeError as exc:
+            return None, f"Invalid JSONL at line {pending_number}: {exc.msg}"
+        pending = (line_number, raw_line)
 
-        if pending is not None:
-            pending_number, pending_line = pending
-            try:
-                events.append(json.loads(pending_line))
-            except json.JSONDecodeError as exc:
-                # Rollouts are append-only. A missing newline on the final
-                # object is the signal that the writer may still be appending.
-                if pending_line.endswith(("\n", "\r")):
-                    return {"_error": f"Invalid JSONL at line {pending_number}: {exc.msg}"}
-        if events and isinstance(events[0], dict):
-            first_type = events[0].get("type")
-            if first_type == "session_meta":
-                result = _convert_codex_to_internal(events)
-            elif _looks_like_pi_jsonl(events):
-                result = _convert_pi_to_internal(events)
-            else:
-                return {"_error": "Unsupported JSONL input; expected Codex JSONL "
-                                  "(leading session_meta event) or Pi JSONL "
-                                  "(leading session event)."}
-            result["_source_path"] = file_path
-            result["_source_sha256"] = source_sha
-            return result
-        return {"_error": "Unsupported JSONL input; expected Codex JSONL "
-                          "(leading session_meta event) or Pi JSONL "
-                          "(leading session event)."}
+    if pending is not None:
+        pending_number, pending_line = pending
+        try:
+            events.append(json.loads(pending_line))
+        except json.JSONDecodeError as exc:
+            # Rollouts are append-only. A missing newline on the final
+            # object is the signal that the writer may still be appending.
+            if pending_line.endswith(("\n", "\r")):
+                return None, f"Invalid JSONL at line {pending_number}: {exc.msg}"
+    return events, None
 
+
+def _parse_trajectory_text(text: str, file_path: str) -> tuple[Any, str | None]:
+    """Sniff content: JSON object, JSON array, or JSONL event stream.
+
+    A complete JSON document (object or array) wins even when the path
+    ends in ``.jsonl``, so a Claude/OpenCode dump saved with the wrong
+    extension still loads. Multiple JSON values (``Extra data``) or a
+    ``.jsonl`` path that is not one JSON document fall through to the
+    JSONL parser (including last-line truncation tolerance).
+    """
+    ext = _path_ext(file_path)
     try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-        raw = json.loads(data)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-        return {"_error": str(exc)}
-    source_sha = _sha256_bytes(data)
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        if exc.msg == "Extra data" or ext == ".jsonl":
+            events, err = _parse_jsonl_events(text)
+            if err:
+                return None, err
+            return events, None
+        return None, str(exc)
 
-    # Every parse outcome must honor the {"_error": ...} contract — a
-    # non-object top level (bare messages/events array, string, number)
-    # cannot be a trajectory and would crash format detection/conversion.
-    if not isinstance(raw, dict):
-        return {"_error": f"Unsupported JSON input: top-level value is "
-                          f"{type(raw).__name__}; expected a JSON object "
-                          f"(for bare event arrays, save as .jsonl)."}
+    if isinstance(raw, (dict, list)):
+        return raw, None
+    return None, (
+        f"Unsupported JSON input: top-level value is {type(raw).__name__}; "
+        "expected a JSON object or event array."
+    )
 
-    fmt = detect_format(raw)
-    if fmt == "unknown" and format_hint in ("ccsession", "codearts", "opencode"):
-        fmt = format_hint
+
+def _is_event_record(raw: dict) -> bool:
+    """True when a JSON object is a Codex/Pi event, not a trajectory dump."""
+    t = raw.get("type")
+    if t == "session_meta":
+        return True
+    return t == "session" and isinstance(raw.get("id"), str) and bool(raw["id"])
+
+
+def _unwrap_singleton_object_payload(payload: Any) -> Any:
+    """If JSONL parsed as a single object-format dict, treat it as that object.
+
+    Happens when a Claude/OpenCode/CodeArts dump is saved as ``.jsonl`` and
+    a trailing truncated line forced the JSONL parser (``json.loads`` of
+    the whole file then fails).
+    """
+    if isinstance(payload, list) and len(payload) == 1 and isinstance(payload[0], dict):
+        if _detect_object_format(payload[0]) in _OBJECT_FORMATS:
+            return payload[0]
+    return payload
+
+
+def _looks_like_object_dump(raw: dict) -> bool:
+    """True when an unknown dict still looks like a JSON trajectory object.
+
+    Unmarked Claude dumps (no ``format`` field) must stay objects so
+    ``format_hint`` can force ``ccsession``, even if the file was saved as
+    ``.jsonl``.
+    """
+    if isinstance(raw.get("trajectory"), list):
+        return True
+    if isinstance(raw.get("messages"), list):
+        return True
+    if isinstance(raw.get("info"), dict):
+        return True
+    session = raw.get("session")
+    return isinstance(session, dict) and raw.get("type") is None
+
+
+def _normalize_payload(payload: Any, file_path: str) -> Any:
+    """Canonicalize parsed content to either a trajectory object or an event list.
+
+    A one-line ``.jsonl`` file is valid JSON, so ``json.loads`` returns a
+    dict. If that dict is not an object-format dump, wrap it as a
+    single-event stream (Codex/Pi, or unknown JSONL). A ``session_meta`` /
+    Pi ``session`` object is wrapped even without the ``.jsonl`` suffix.
+    """
+    payload = _unwrap_singleton_object_payload(payload)
+    if isinstance(payload, dict):
+        if _detect_object_format(payload) != "unknown":
+            return payload
+        if _looks_like_object_dump(payload):
+            return payload
+        if _path_ext(file_path) == ".jsonl" or _is_event_record(payload):
+            return [payload]
+    return payload
+
+
+def _already_converted(raw: dict, fmt: str) -> bool:
+    stamp = _FORMAT_STAMPS.get(fmt)
+    return bool(stamp and raw.get(stamp) is True)
+
+
+def _format_mismatch_error(selected: str, detected: str) -> dict:
+    return {
+        "_error": (
+            f"Format mismatch: selected {FORMAT_LABELS.get(selected, selected)} "
+            f"but file detected as {FORMAT_LABELS.get(detected, detected)}."
+        ),
+        "_error_code": "mismatch",
+        "_selected": selected,
+        "_detected": detected,
+    }
+
+
+def _kind_mismatch_error(fmt: str) -> dict:
+    label = FORMAT_LABELS.get(fmt, fmt)
+    if fmt in _EVENT_FORMATS:
+        leading = "session_meta" if fmt == "codex" else "session"
+        return {"_error": f"{label} expects a JSONL event array "
+                          f"(leading {leading} event)."}
+    return {"_error": f"{label} expects a JSON object, not an event array."}
+
+
+def _apply_format(payload: Any, fmt: str) -> dict:
+    """Convert parsed content to the internal step-model dict."""
+    if fmt == "unknown":
+        if isinstance(payload, dict):
+            return payload
+        return {"_error": _UNSUPPORTED_EVENT_STREAM}
+
+    if isinstance(payload, dict) and _already_converted(payload, fmt):
+        return payload
+
+    if fmt in _EVENT_FORMATS:
+        if not isinstance(payload, list):
+            return _kind_mismatch_error(fmt)
+        if fmt == "codex":
+            return _convert_codex_to_internal(payload)
+        return _convert_pi_to_internal(payload)
+
+    if not isinstance(payload, dict):
+        return _kind_mismatch_error(fmt)
     if fmt == "ccsession":
-        result = _convert_claude_code_to_internal(raw)
-    elif fmt == "codearts":
+        return _convert_claude_code_to_internal(payload)
+    if fmt == "codearts":
         # Legacy-JSON exports are detected as CodeArts (so the UI labels them
         # correctly) but have no parser yet: their 'sender'/'content' messages
         # are not OpenCode-shaped and would silently produce empty steps.
-        if safe_get(raw, "export_metadata", "source_format") == "codearts_legacy_json":
+        if safe_get(payload, "export_metadata", "source_format") == "codearts_legacy_json":
             return {"_error": "CodeArts legacy-JSON export detected "
                               "(source_format=codearts_legacy_json): this legacy "
                               "message schema is not yet supported. Re-export the "
                               "session from the CodeArts SQLite database instead."}
-        result = _convert_codearts_metadata(raw)
-    elif fmt == "opencode":
-        result = _convert_opencode_metadata(raw)
-    else:
-        result = raw
+        return _convert_codearts_metadata(payload)
+    if fmt == "opencode":
+        return _convert_opencode_metadata(payload)
+    return payload if isinstance(payload, dict) else {"_error": _UNSUPPORTED_EVENT_STREAM}
+
+
+def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
+    """Load a trajectory file via the content dispatcher.
+
+    Reads the file once (sha256 of those exact bytes), sniffs JSON object vs
+    event array vs JSONL, detects format, then converts. ``format_hint``
+    forces a converter when detection is ``unknown`` (unmarked Claude dumps)
+    and *requires* that format when detection already succeeded.
+    """
+    if _path_ext(file_path) == ".log":
+        return {"_error": "Unsupported file type: .log files are no longer supported."}
+
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        text = data.decode("utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"_error": str(exc)}
+    source_sha = _sha256_bytes(data)
+
+    payload, parse_error = _parse_trajectory_text(text, file_path)
+    if parse_error:
+        return {"_error": parse_error}
+
+    payload = _normalize_payload(payload, file_path)
+    detected = detect_format(payload)
+    hint = format_hint if format_hint in FORMAT_LABELS else None
+    fmt, reason = _resolve_format(detected, hint)
+    if reason == "mismatch":
+        return _format_mismatch_error(hint or "", detected)
+
+    result = _apply_format(payload, fmt)
+    if "_error" in result:
+        return result
     result["_source_path"] = file_path
     # The displayed content's immutable identity — the sha256 of the EXACT
     # bytes parsed above (one read, one buffer): attribution requires the

@@ -110,17 +110,18 @@ python -m trajviz.insight --port 8080
 
 ## Supported trajectory formats
 
-trajviz normalizes the following formats. Select the matching format in the
-**Format** dropdown before loading — auto-detection is used to reject a
-mismatched selection (Codex and Pi `.jsonl` sessions are recognized regardless of the
-dropdown):
+trajviz normalizes the following formats. **Auto-detect** is the default —
+upload a `.json` / `.jsonl` file and load it. Pick a specific format only to
+override detection or to load a Claude Code export that lacks the usual
+`format` marker. An explicit pick still rejects a mismatched JSON file
+(Codex and Pi `.jsonl` sessions are recognized regardless of the dropdown):
 
 | Format | Detection | Notes |
 |---|---|---|
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
-| Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the shared step model (recognized from the `.jsonl` upload with any dropdown selection); tool intent (Read / Grep / Glob / Write / Bash) inferred from classic `exec_command` calls and modern `exec` / `apply_patch` records |
+| Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the shared step model (Auto-detect recognizes `.jsonl` uploads); tool intent (Read / Grep / Glob / Write / Bash) inferred from classic `exec_command` calls and modern `exec` / `apply_patch` records |
 | Pi | `.jsonl` session starting with a `session` event | Normalized from `~/.pi/agent/sessions/` exports; `bash` / `read` / `write` / `edit` / `grep` mapped into the shared step model |
 
 ---
@@ -270,9 +271,9 @@ files) — no exporter needed.
 1. Run a Codex session as normal.
 2. Locate the rollout file for the session — the most recent
    `rollout-*.jsonl` under `~/.codex/sessions/`.
-3. Upload the `.jsonl` file and select **Codex** as the format. The loader
-   detects the leading `session_meta` event and threads the rollout into the
-   shared step model. Per-step tool intent (Read / Grep / Glob / Write / Bash)
+3. Upload the `.jsonl` file. Auto-detect (the default) recognizes the
+   leading `session_meta` event and threads the rollout into the shared
+   step model. Per-step tool intent (Read / Grep / Glob / Write / Bash)
    is inferred from classic `exec_command` calls and modern `exec` /
    `apply_patch` records.
 
@@ -284,10 +285,10 @@ Pi records every session automatically as JSONL under
 1. Run a Pi session as normal.
 2. Locate the session file — the most recent `*.jsonl` under
    `~/.pi/agent/sessions/` (directories are named from the working folder).
-3. Upload the `.jsonl` file. The loader detects the leading `session` event
-   and threads messages, thinking, tool calls (`bash` / `read` / `write` / …),
-   and token usage into the shared step model. The file is recognized from a
-   `.jsonl` upload with any dropdown selection.
+3. Upload the `.jsonl` file. Auto-detect (the default) recognizes the
+   leading `session` event and threads messages, thinking, tool calls
+   (`bash` / `read` / `write` / …), and token usage into the shared step
+   model.
 
 ---
 
