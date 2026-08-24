@@ -74,7 +74,7 @@ class B1TopLevelNonObjectTests(unittest.TestCase):
         result = load_trajectory(p)  # must not raise AttributeError
         self.assertIsInstance(result, dict)
         self.assertIn("_error", result)
-        self.assertIn("list", result["_error"])
+        self.assertIn("event-array", result["_error"])
 
     def test_top_level_scalar_returns_error_dict(self):
         for name, text, typename in (
@@ -316,12 +316,152 @@ class FormatSelectionTests(unittest.TestCase):
     def test_explicit_selection_rejects_other_json_format(self):
         self.assertEqual(check_format_selection("opencode", "ccsession"), "mismatch")
         self.assertEqual(check_format_selection("codearts", "opencode"), "mismatch")
+        self.assertEqual(check_format_selection("pi", "ccsession"), "mismatch")
+        self.assertEqual(check_format_selection("codex", "opencode"), "mismatch")
 
-    def test_explicit_selection_allows_match_unknown_and_jsonl(self):
+    def test_explicit_selection_allows_match_and_unknown_force(self):
         self.assertIsNone(check_format_selection("ccsession", "ccsession"))
+        self.assertIsNone(check_format_selection("codex", "codex"))
         self.assertIsNone(check_format_selection("unknown", "ccsession"))
-        self.assertIsNone(check_format_selection("pi", "ccsession"))
-        self.assertIsNone(check_format_selection("codex", "opencode"))
+        self.assertIsNone(check_format_selection("unknown", "pi"))
+
+
+class UnifiedDispatcherTests(unittest.TestCase):
+    """Content sniff + format_hint force/require, independent of file extension."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def test_detect_format_on_event_array(self):
+        self.assertEqual(
+            detect_format([{"type": "session_meta", "payload": {}}]), "codex")
+        self.assertEqual(
+            detect_format([{"type": "session", "id": "s1"}]), "pi")
+        self.assertEqual(detect_format([{"type": "message", "id": "m"}]), "unknown")
+
+    def test_codex_json_array_loads_without_jsonl_extension(self):
+        events = _codex_session([
+            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
+                         {"type": "task_complete"}),
+        ])
+        p = _write(self.tmp, "rollout.json", events)
+        raw = load_trajectory(p)
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "codex")
+
+    def test_single_codex_event_object_loads_as_json(self):
+        event = _codex_event("session_meta", "2026-01-05T12:00:00.000Z",
+                             {"id": "s1", "cwd": "/p", "model": "gpt-5"})
+        p = _write(self.tmp, "meta.json", event)
+        raw = load_trajectory(p)
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "codex")
+
+    def test_codex_ndjson_wrong_json_extension_still_loads(self):
+        events = _codex_session([
+            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
+                         {"type": "task_complete"}),
+        ])
+        p = _write(self.tmp, "rollout.json", events, jsonl=True)
+        raw = load_trajectory(p)
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "codex")
+
+    def test_ccsession_object_loads_from_jsonl_path(self):
+        obj = {"format": "ccsession-trajectory", "trajectory": []}
+        p = _write(self.tmp, "session.jsonl", obj)
+        raw = load_trajectory(p)
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "ccsession")
+
+    def test_jsonl_extension_is_case_insensitive(self):
+        events = _codex_session([
+            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
+                         {"type": "task_complete"}),
+        ])
+        p = _write(self.tmp, "rollout.JSONL", events, jsonl=True)
+        raw = load_trajectory(p)
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "codex")
+
+    def test_format_hint_mismatches_detected_jsonl(self):
+        events = _codex_session([
+            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
+                         {"type": "task_complete"}),
+        ])
+        p = _write(self.tmp, "rollout.jsonl", events, jsonl=True)
+        raw = load_trajectory(p, format_hint="ccsession")
+        self.assertEqual(raw.get("_error_code"), "mismatch")
+        self.assertEqual(raw.get("_detected"), "codex")
+        self.assertEqual(raw.get("_selected"), "ccsession")
+        self.assertIn("Claude Code", raw["_error"])
+        self.assertIn("Codex CLI", raw["_error"])
+
+    def test_format_hint_mismatches_detected_json_object(self):
+        p = _write(self.tmp, "oc.json", {"info": {"id": "s"}, "messages": []})
+        raw = load_trajectory(p, format_hint="ccsession")
+        self.assertEqual(raw.get("_error_code"), "mismatch")
+        self.assertEqual(raw.get("_detected"), "opencode")
+
+    def test_format_hint_forces_unknown_object_as_ccsession(self):
+        p = _write(self.tmp, "bare.json", {"trajectory": []})
+        raw = load_trajectory(p, format_hint="ccsession")
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "ccsession")
+
+    def test_format_hint_forces_unmarked_ccsession_saved_as_jsonl(self):
+        p = _write(self.tmp, "bare.jsonl", {"trajectory": []})
+        raw = load_trajectory(p, format_hint="ccsession")
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "ccsession")
+
+    def test_format_hint_codex_on_unknown_object_is_kind_error(self):
+        p = _write(self.tmp, "bare.json", {"foo": 1})
+        raw = load_trajectory(p, format_hint="codex")
+        self.assertIn("_error", raw)
+        self.assertIn("event array", raw["_error"])
+
+    def test_already_converted_codex_json_object_reloads(self):
+        events = _codex_session([
+            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
+                         {"type": "task_complete"}),
+        ])
+        first = load_trajectory(_write(self.tmp, "a.jsonl", events, jsonl=True))
+        dumped = {k: v for k, v in first.items() if not k.startswith("_source")}
+        second = load_trajectory(_write(self.tmp, "converted.json", dumped))
+        self.assertNotIn("_error", second)
+        self.assertEqual(detect_format(second), "codex")
+        self.assertTrue(second.get("_codex_format"))
+
+    def test_truncated_trailer_unwraps_object_saved_as_jsonl(self):
+        obj = {"format": "ccsession-trajectory", "trajectory": []}
+        p = os.path.join(self.tmp, "cc.jsonl")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(json.dumps(obj) + "\n")
+            f.write('{"partial":')
+        raw = load_trajectory(p)
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "ccsession")
+
+    def test_pi_json_array_loads_without_jsonl_extension(self):
+        events = [
+            {"type": "session", "id": "sess-1", "cwd": "/p",
+             "timestamp": "2026-08-24T01:29:43.221Z"},
+            {"type": "message", "id": "m1", "timestamp": "2026-08-24T01:30:33.026Z",
+             "message": {"role": "user", "content": "hello", "timestamp": 1}},
+        ]
+        p = _write(self.tmp, "session.json", events)
+        raw = load_trajectory(p)
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "pi")
+
+    def test_format_hint_forces_unknown_events_as_pi(self):
+        events = [{"type": "message", "id": "m1",
+                   "message": {"role": "user", "content": "hello"}}]
+        p = _write(self.tmp, "other.jsonl", events, jsonl=True)
+        raw = load_trajectory(p, format_hint="pi")
+        self.assertNotIn("_error", raw)
+        self.assertEqual(detect_format(raw), "pi")
 
 
 if __name__ == "__main__":

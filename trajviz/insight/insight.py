@@ -1581,6 +1581,19 @@ def build_ui() -> gr.Blocks:
 
             format_hint = selected_format or None
             raw = load_trajectory(file_path, format_hint=format_hint)
+            if raw.get("_error_code") == "mismatch":
+                selected_key = raw.get("_selected") or selected_format
+                detected_key = raw.get("_detected") or ""
+                err_msg = (
+                    f"Format mismatch: selected "
+                    f"<b>{html.escape(FORMAT_LABELS.get(selected_key, selected_key))}</b>"
+                    f" but file detected as "
+                    f"<b>{html.escape(FORMAT_LABELS.get(detected_key, detected_key))}</b>."
+                )
+                return _empty_result(
+                    banner=f"<p style='color:#dc2626;'>{err_msg}</p>",
+                    detail="*Please select the correct format and try again.*",
+                )
             if "_error" in raw:
                 err_banner = f"<p style='color:#dc2626;'>Error: {html.escape(raw['_error'])}</p>"
                 return _empty_result(banner=err_banner, detail="*Error loading file.*")
@@ -1988,7 +2001,7 @@ def build_ui() -> gr.Blocks:
         # tuple. Diagnoses the DISPLAYED trajectory (via source_path + fmt), and
         # derives (agent, instance_id) from the source path for corpus files; the
         # override fields cover uploaded temp paths.
-        def on_diagnose(overview_raw, fmt, agent_override, inst_override, root_override):
+        def on_diagnose(overview_raw, agent_override, inst_override, root_override):
             from dataclasses import asdict
             from .rendering import build_attribution_html
             from . import attribution as _attr
@@ -2015,7 +2028,8 @@ def build_ui() -> gr.Blocks:
                     # diagnose() validates and asks for the override.
                     agent = os.path.basename(os.path.dirname(src))
 
-            if not (fmt or "").strip() and isinstance(overview_raw, dict):
+            fmt = None
+            if isinstance(overview_raw, dict):
                 detected = detect_format(overview_raw)
                 fmt = None if detected == "unknown" else detected
 
@@ -2045,7 +2059,7 @@ def build_ui() -> gr.Blocks:
         # a manual diagnosis and an autoload can never interleave/overwrite.
         attr_run_btn.click(
             fn=on_diagnose,
-            inputs=[state_raw, format_selector, attr_agent_override, attr_inst_override, attr_root_override],
+            inputs=[state_raw, attr_agent_override, attr_inst_override, attr_root_override],
             outputs=[attr_result_html, attr_status_html],
             concurrency_id="attribution",
         )
@@ -2073,14 +2087,14 @@ def build_ui() -> gr.Blocks:
         # Auto-populate on load, and IGNORE + clear the agent/instance override
         # fields so a previous case's identity can never attribute a newly loaded
         # one. The corpus root is sticky (it selects an environment, not a case).
-        def on_diagnose_autoload(overview_raw, fmt, root_override):
-            html_out, status = on_diagnose(overview_raw, fmt, "", "", root_override)
+        def on_diagnose_autoload(overview_raw, root_override):
+            html_out, status = on_diagnose(overview_raw, "", "", root_override)
             return html_out, status, "", ""  # last two clear the override fields
 
         for _ev in (_load_ev, _upload_ev):
             _ev.then(
                 fn=on_diagnose_autoload,
-                inputs=[state_raw, format_selector, attr_root_override],
+                inputs=[state_raw, attr_root_override],
                 outputs=[attr_result_html, attr_status_html, attr_agent_override, attr_inst_override],
                 concurrency_id="attribution",
             )
