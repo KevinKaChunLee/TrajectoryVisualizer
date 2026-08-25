@@ -881,7 +881,7 @@ def build_ui() -> gr.Blocks:
             with gr.Row():
                 analysis_input = gr.Textbox(
                     label="Question",
-                    placeholder="e.g. Which step blew the time budget?",
+                    placeholder="e.g. What is the biggest performance bottleneck?",
                     scale=4,
                     container=False,
                     submit_btn=True,
