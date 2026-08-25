@@ -65,6 +65,29 @@ trajviz
 
 Default: `http://localhost:7860`. Upload a trajectory JSON via the file picker at the top of the UI.
 
+The **AI Trajectory Analysis** sidebar starts closed; open it from the
+labeled control on the right edge. It runs an automatic analysis
+when a trajectory loads, then answers follow-up questions. It uses the same
+dashboard statistics (health verdicts, bottlenecks, failures, fruitless
+streaks) and replies in Simplified Chinese. It does not re-upload the raw
+file. Configure the model in `.env`:
+
+```bash
+cp .env.example .env
+# set ANALYZE_BASE_URL / ANALYZE_API_KEY / ANALYZE_MODEL
+# (LABEL_* from the step labeler is used if ANALYZE_* is omitted)
+```
+
+| Variable | Meaning |
+|---|---|
+| `ANALYZE_BASE_URL` | API base URL (OpenAI-compatible, or Anthropic messages) |
+| `ANALYZE_API_KEY`  | API key |
+| `ANALYZE_MODEL`    | Model name, e.g. `gpt-4o-mini`, `glm-4.6` |
+
+Optional: `ANALYZE_PROVIDER` (`openai` \| `anthropic`, default `openai`),
+`ANALYZE_TEMPERATURE` (default `0.2`), `ANALYZE_MAX_TOKENS` (default `2048`),
+`ANALYZE_TIMEOUT` (default `120`). `.env` is gitignored.
+
 Custom port or host (prefix any of these with `uv run` when using uv):
 
 ```bash

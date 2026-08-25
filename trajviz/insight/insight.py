@@ -80,6 +80,8 @@ from .loaders import (
     FORMAT_LABELS,
     FORMAT_DROPDOWN_CHOICES,
 )
+from .assistant import analyze_loaded_trajectory, answer_question
+from .llm_config import config_status_html, load_env_files
 from .parser import load_labeled_json, aggregate_labels
 from .formatting import format_context_pressure_html
 from .rendering import (
@@ -841,11 +843,54 @@ def _render_failure_patterns_html(patterns: list[dict]) -> str:
 def build_ui() -> gr.Blocks:
     """Build the full Gradio Blocks UI."""
 
+    load_env_files()
+
     with gr.Blocks(title="TrajViz", elem_classes=["trajectory-viz"]) as app:
         # Per-session state via gr.State
         state_steps = gr.State([])
         state_dark = gr.State(False)
         state_raw = gr.State({})
+        state_analysis_brief = gr.State("")
+
+        with gr.Sidebar(
+            label="AI Trajectory Analysis",
+            position="right",
+            width=400,
+            open=False,
+            elem_id="analysis-sidebar",
+            elem_classes=["analysis-sidebar"],
+        ):
+            gr.HTML(
+                "<div class='analysis-panel-title'>🤖 AI Trajectory Analysis</div>"
+                "<div class='analysis-panel-sub'>Ask about bottlenecks, failures, "
+                "and where this run went wrong. Answers use the loaded dashboard stats "
+                "and are written in Simplified Chinese.</div>"
+            )
+            analysis_status = gr.HTML(config_status_html(loaded_steps=0))
+            analysis_chatbot = gr.Chatbot(
+                value=[],
+                label="Analysis",
+                show_label=False,
+                height=380,
+                resizable=True,
+                layout="panel",
+                placeholder=(
+                    "Load a trajectory to start analysis, then ask follow-up questions."
+                ),
+                buttons=["copy"],
+                feedback_options=None,
+                elem_classes=["analysis-chatbot"],
+            )
+            with gr.Row():
+                analysis_input = gr.Textbox(
+                    label="Question",
+                    placeholder="e.g. Which step blew the time budget?",
+                    scale=4,
+                    container=False,
+                    submit_btn=True,
+                    elem_id="analysis-input",
+                )
+            analysis_clear = gr.Button("Clear chat", size="sm", variant="secondary")
 
         gr.HTML(
             "<div style='display:flex;align-items:baseline;gap:12px;margin-bottom:4px;'>"
@@ -1804,6 +1849,32 @@ def build_ui() -> gr.Blocks:
             outputs=all_outputs,
         )
 
+        def on_trajectory_for_analysis(steps, raw):
+            """Pack dashboard stats, then run the first analysis pass."""
+            if not steps:
+                return "", [], config_status_html(loaded_steps=0)
+            brief, history = analyze_loaded_trajectory(
+                steps, raw if isinstance(raw, dict) else {},
+            )
+            return brief, history, config_status_html(loaded_steps=len(steps))
+
+        for _ev in (_load_ev, _upload_ev):
+            _ev.then(
+                fn=on_trajectory_for_analysis,
+                inputs=[state_steps, state_raw],
+                outputs=[state_analysis_brief, analysis_chatbot, analysis_status],
+            )
+
+        def on_analysis_ask(question, history, brief):
+            return answer_question(question, history, brief), ""
+
+        analysis_input.submit(
+            fn=on_analysis_ask,
+            inputs=[analysis_input, analysis_chatbot, state_analysis_brief],
+            outputs=[analysis_chatbot, analysis_input],
+        )
+        analysis_clear.click(fn=lambda: [], outputs=[analysis_chatbot])
+
         def on_pressure_agent_change(agent_key, steps, raw, dark):
             """Rebuild the pressure chart for the selected agent/subagent."""
             if not steps:
@@ -2263,7 +2334,14 @@ def build_ui() -> gr.Blocks:
             fn=lambda dark: dark,
             inputs=[state_dark],
             outputs=[state_dark],
-            js="() => [window.matchMedia('(prefers-color-scheme: dark)').matches]",
+            js="""() => {
+                const btn = document.querySelector('#analysis-sidebar .toggle-button');
+                if (btn) {
+                    btn.setAttribute('aria-label', 'AI Trajectory Analysis');
+                    btn.setAttribute('title', 'AI Trajectory Analysis');
+                }
+                return [window.matchMedia('(prefers-color-scheme: dark)').matches];
+            }""",
         )
 
     return app
