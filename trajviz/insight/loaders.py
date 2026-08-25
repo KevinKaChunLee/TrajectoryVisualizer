@@ -1,6 +1,7 @@
 """Trajectory format detection and conversion (Claude Code, OpenCode, CodeArts, Codex, Pi, DSH)."""
 
 import json
+import math
 import os
 import re
 import zipfile
@@ -1858,9 +1859,36 @@ def _dsh_event_ts_ms(event: dict) -> int | None:
 def _dsh_event_seq(event: dict) -> int | None:
     for key in ("seq", "seq0"):
         value = event.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
             return value
+        if isinstance(value, float) and math.isfinite(value) and value == int(value):
+            return int(value)
     return None
+
+
+def _dsh_coerce_seed_length(value: Any) -> int:
+    """Positive int from JSON ``seedLength`` (int, whole float, or numeric string)."""
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return value if value > 0 else 0
+    if isinstance(value, float):
+        if math.isfinite(value) and value == int(value):
+            return _dsh_coerce_seed_length(int(value))
+        return 0
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return 0
+        try:
+            if any(marker in text.lower() for marker in (".", "e")):
+                return _dsh_coerce_seed_length(float(text))
+            return _dsh_coerce_seed_length(int(text))
+        except ValueError:
+            return 0
+    return 0
 
 
 def _dsh_drop_seed_prefix(events: list[dict], seed_length: Any) -> list[dict]:
@@ -1870,13 +1898,14 @@ def _dsh_drop_seed_prefix(events: list[dict], seed_length: Any) -> list[dict]:
     ``seq`` values; ``seedLength`` is the first seq that belongs to the child.
     Compact fixtures without seq numbers treat ``seedLength`` as a slice index.
     """
-    if not isinstance(seed_length, int) or isinstance(seed_length, bool) or seed_length <= 0:
+    seed_length = _dsh_coerce_seed_length(seed_length)
+    if seed_length <= 0:
         return events
     seqs = [_dsh_event_seq(event) for event in events]
     if any(seq is not None for seq in seqs):
         return [
             event for event, seq in zip(events, seqs, strict=False)
-            if seq is None or seq >= seed_length
+            if seq is not None and seq >= seed_length
         ]
     return events[seed_length:]
 
@@ -1942,6 +1971,73 @@ def _dsh_normalize_tool(name: str, arguments: Any) -> tuple[str, dict]:
     if canonical == "Bash" and "command" not in args and "cmd" in args:
         args["command"] = args["cmd"]
     return canonical, args
+
+
+def _dsh_tool_part(name: Any, arguments: Any, call_id: str) -> dict:
+    tool_name, tool_input = _dsh_normalize_tool(
+        name if isinstance(name, str) and name else "?", arguments,
+    )
+    return {
+        "type": "tool_call",
+        "tool_name": tool_name,
+        "tool_id": call_id,
+        "status": "pending",
+        "input": tool_input,
+        "output": "",
+        "state": {
+            "status": "pending",
+            "input": tool_input,
+            "output": "",
+            "metadata": {},
+        },
+        "metadata": {},
+    }
+
+
+def _dsh_stamp_tool_start(part: dict, ts: int | None) -> None:
+    if not ts:
+        return
+    state = part.setdefault("state", {})
+    if not isinstance(state, dict):
+        return
+    time_info = state.setdefault("time", {})
+    if isinstance(time_info, dict) and "start" not in time_info:
+        time_info["start"] = ts
+
+
+def _dsh_apply_tool_result(
+    part: dict,
+    output: str,
+    is_error: bool,
+    ts: int | None,
+    *,
+    session_id: str,
+) -> None:
+    status = "error" if is_error else "success"
+    part["output"] = output
+    part["status"] = status
+    if is_error:
+        part["error"] = output
+    state = part.setdefault("state", {})
+    if isinstance(state, dict):
+        state["status"] = status
+        state["output"] = output
+        if ts:
+            time_info = state.setdefault("time", {})
+            if isinstance(time_info, dict):
+                time_info["end"] = ts
+    child_id = _dsh_child_session_id_from_output(output)
+    if not child_id:
+        return
+    for meta in (
+        part.setdefault("metadata", {}),
+        part.get("state", {}).setdefault("metadata", {})
+        if isinstance(part.get("state"), dict) else {},
+    ):
+        if isinstance(meta, dict):
+            meta["sessionId"] = child_id
+            if session_id:
+                meta["parentSessionId"] = session_id
 
 
 def _dsh_extract_usage(usage: Any) -> dict | None:
@@ -2044,6 +2140,7 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
 
     messages: list[dict] = []
     pending_tools: dict[str, dict] = {}
+    early_calls: dict[str, dict] = {}
     current_model = ""
     current_provider = ""
     title = ""
@@ -2093,48 +2190,41 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
             continue
         if etype == "tool/call":
             call_id = str(data.get("callId") or "")
-            part = pending_tools.get(call_id) if call_id else None
-            if part is not None and ts:
-                state = part.setdefault("state", {})
-                if isinstance(state, dict):
-                    time_info = state.setdefault("time", {})
-                    if isinstance(time_info, dict) and "start" not in time_info:
-                        time_info["start"] = ts
+            if not call_id:
+                continue
+            part = pending_tools.get(call_id)
+            if part is not None:
+                _dsh_stamp_tool_start(part, ts)
+            else:
+                early_calls[call_id] = {
+                    "name": data.get("name") or "?",
+                    "arguments": data.get("arguments"),
+                    "start": ts,
+                }
             continue
         if etype == "tool/result":
             call_id, output, is_error = _dsh_tool_result_payload(data)
-            status = "error" if is_error else "success"
             part = pending_tools.pop(call_id, None) if call_id else None
+            if part is None and call_id:
+                early = early_calls.pop(call_id, None)
+                if early:
+                    part = _dsh_tool_part(early.get("name"), early.get("arguments"), call_id)
+                    _dsh_stamp_tool_start(part, early.get("start"))
+                    _dsh_apply_tool_result(
+                        part, output, is_error, ts, session_id=session_id,
+                    )
+                    _append("assistant", ts, [part])
+                    continue
             if part is not None:
-                part["output"] = output
-                part["status"] = status
-                if is_error:
-                    part["error"] = output
-                state = part.setdefault("state", {})
-                if isinstance(state, dict):
-                    state["status"] = status
-                    state["output"] = output
-                    if ts:
-                        time_info = state.setdefault("time", {})
-                        if isinstance(time_info, dict):
-                            time_info["end"] = ts
-                child_id = _dsh_child_session_id_from_output(output)
-                if child_id:
-                    for meta in (
-                        part.setdefault("metadata", {}),
-                        part.get("state", {}).setdefault("metadata", {})
-                        if isinstance(part.get("state"), dict) else {},
-                    ):
-                        if isinstance(meta, dict):
-                            meta["sessionId"] = child_id
-                            if session_id:
-                                meta["parentSessionId"] = session_id
+                _dsh_apply_tool_result(
+                    part, output, is_error, ts, session_id=session_id,
+                )
             else:
                 _append("assistant", ts, [{
                     "type": "tool",
                     "tool_name": "?",
                     "tool_id": call_id,
-                    "status": status,
+                    "status": "error" if is_error else "success",
                     "input": {},
                     "output": output,
                     **({"error": output} if is_error else {}),
@@ -2170,25 +2260,11 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
             elif ctype == "text":
                 parts.append({"type": "text", "text": item.get("text") or ""})
             elif ctype in ("tool-call", "tool_call", "toolCall"):
-                tool_name, tool_input = _dsh_normalize_tool(
-                    item.get("name", "?"), item.get("arguments"),
-                )
                 call_id = str(item.get("id") or "")
-                part = {
-                    "type": "tool_call",
-                    "tool_name": tool_name,
-                    "tool_id": call_id,
-                    "status": "pending",
-                    "input": tool_input,
-                    "output": "",
-                    "state": {
-                        "status": "pending",
-                        "input": tool_input,
-                        "output": "",
-                        "metadata": {},
-                    },
-                    "metadata": {},
-                }
+                part = _dsh_tool_part(item.get("name", "?"), item.get("arguments"), call_id)
+                early = early_calls.pop(call_id, None) if call_id else None
+                if early:
+                    _dsh_stamp_tool_start(part, early.get("start"))
                 parts.append(part)
                 if call_id:
                     pending_tools[call_id] = part
@@ -2289,11 +2365,27 @@ def _dsh_export_dir_names(session_id: str) -> list[str]:
     return ordered
 
 
+def _dsh_jsonl_session_id(path: str) -> str:
+    """Session id from the first JSONL line, or empty if it is not a DSH header."""
+    try:
+        with open(path, encoding="utf-8-sig") as handle:
+            line = handle.readline()
+        payload = json.loads(line)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return ""
+    if isinstance(payload, dict) and payload.get("type") == "session":
+        ident = payload.get("id")
+        if isinstance(ident, str) and ident:
+            return ident
+    return ""
+
+
 def _dsh_export_root_child_paths(session_id: str) -> list[str]:
     """Child logs under ``TRAJVIZ_DSH_EXPORT_ROOT`` only (same-machine / tests).
 
     A hosted dashboard never sees the uploader's home directory; do not crawl
-    cwd or ``~/Downloads``.
+    cwd or ``~/Downloads``. A bare ``root/subagents/`` tree is used only when
+    ``root/session.jsonl`` belongs to *this* session id.
     """
     extra = os.environ.get("TRAJVIZ_DSH_EXPORT_ROOT")
     if not extra:
@@ -2301,9 +2393,11 @@ def _dsh_export_root_child_paths(session_id: str) -> list[str]:
     root = os.path.abspath(os.path.expanduser(extra))
     if not os.path.isdir(root):
         return []
-    found = _dsh_child_paths_in_subagents_dir(os.path.join(root, "subagents"))
-    if found:
-        return found
+    header_id = _dsh_jsonl_session_id(os.path.join(root, "session.jsonl"))
+    if header_id and header_id == session_id:
+        found = _dsh_child_paths_in_subagents_dir(os.path.join(root, "subagents"))
+        if found:
+            return found
     for name in _dsh_export_dir_names(session_id):
         found = _dsh_child_paths_in_subagents_dir(os.path.join(root, name, "subagents"))
         if found:
@@ -2311,17 +2405,24 @@ def _dsh_export_root_child_paths(session_id: str) -> list[str]:
     return []
 
 
-def _dsh_discover_child_log_paths(session_id: str, source_path: str | None) -> list[str]:
+def _dsh_discover_child_log_paths(
+    session_id: str,
+    source_path: str | None,
+    *,
+    allow_export_root: bool = True,
+) -> list[str]:
     """Find ``subagents/<id>/session.jsonl`` next to the loaded file.
 
     Hosted uploads are a single temp file (or a zip). Children come from a
     sibling ``subagents/`` tree, from zip members, or from an explicit
-    ``TRAJVIZ_DSH_EXPORT_ROOT`` on this host.
+    ``TRAJVIZ_DSH_EXPORT_ROOT`` on this host (parent logs only).
     """
     paths = _dsh_sibling_child_paths(source_path)
     if paths:
         return paths
-    return _dsh_export_root_child_paths(session_id)
+    if allow_export_root:
+        return _dsh_export_root_child_paths(session_id)
+    return []
 
 
 def _dsh_read_event_list(path: str) -> list[dict]:
@@ -2381,6 +2482,51 @@ def _dsh_ms_to_iso(ms: int | None) -> str:
         return ""
 
 
+def _dsh_session_header(events: list[dict]) -> dict:
+    for event in events:
+        if isinstance(event, dict) and event.get("type") == "session":
+            return event
+    return {}
+
+
+def _dsh_keep_descendant_children(
+    parent_id: str, child_event_lists: list[list[dict]],
+) -> list[list[dict]]:
+    """Drop logs whose ``parentSession`` is not this session or a discovered sibling."""
+    if not parent_id:
+        return [events for events in child_event_lists if events]
+    parsed: list[tuple[str, str, list[dict]]] = []
+    for events in child_event_lists:
+        if not events:
+            continue
+        header = _dsh_session_header(events)
+        child_id = header.get("id") if isinstance(header.get("id"), str) else ""
+        parent_session = (
+            header.get("parentSession")
+            if isinstance(header.get("parentSession"), str) else ""
+        )
+        parsed.append((child_id, parent_session, events))
+    child_ids = {child_id for child_id, _, _ in parsed if child_id}
+    allowed_parents = {parent_id} | child_ids
+    kept: list[list[dict]] = []
+    for _child_id, parent_session, events in parsed:
+        if parent_session and parent_session not in allowed_parents:
+            continue
+        kept.append(events)
+    return kept
+
+
+def _dsh_message_sort_key(msg: dict) -> tuple[float, int]:
+    info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
+    time_info = info.get("time") if isinstance(info.get("time"), dict) else {}
+    created = time_info.get("created") or 0
+    try:
+        created_n = float(created)
+    except (TypeError, ValueError):
+        created_n = 0.0
+    return (created_n, 1 if info.get("isSubAgent") else 0)
+
+
 def _convert_dsh_to_internal(
     events: list[dict],
     *,
@@ -2398,20 +2544,20 @@ def _convert_dsh_to_internal(
     and are merged when present.
     """
     session, messages, model, provider, title = _dsh_session_to_messages(events)
+    session_id = session.get("id", "") if isinstance(session.get("id"), str) else ""
     if child_event_lists is None:
         origin = session.get("origin")
         parent_session = session.get("parentSession")
         is_child_log = origin == "subagent" or (
             isinstance(parent_session, str) and bool(parent_session)
         )
-        if is_child_log:
-            child_event_lists = []
-        else:
-            session_id = session.get("id", "") if isinstance(session.get("id"), str) else ""
-            child_event_lists = [
-                _dsh_read_event_list(path)
-                for path in _dsh_discover_child_log_paths(session_id, source_path)
-            ]
+        child_event_lists = [
+            _dsh_read_event_list(path)
+            for path in _dsh_discover_child_log_paths(
+                session_id, source_path, allow_export_root=not is_child_log,
+            )
+        ]
+    child_event_lists = _dsh_keep_descendant_children(session_id, child_event_lists)
     sub_agent_ids: set[str] = set()
     for child_events in child_event_lists:
         if not child_events:
@@ -2421,6 +2567,8 @@ def _convert_dsh_to_internal(
         )
         child_id = child_session.get("id")
         if isinstance(child_id, str) and child_id:
+            if child_id in sub_agent_ids:
+                continue
             sub_agent_ids.add(child_id)
         if child_model and not model:
             model = child_model
@@ -2433,10 +2581,7 @@ def _convert_dsh_to_internal(
                     info["sessionTitle"] = child_title
         messages.extend(child_messages)
 
-    messages.sort(key=lambda msg: (
-        msg.get("info", {}).get("time", {}).get("created") or 0,
-        1 if msg.get("info", {}).get("isSubAgent") else 0,
-    ))
+    messages.sort(key=_dsh_message_sort_key)
     _fill_message_completion_times(messages)
 
     directory = session.get("cwd", "") or ""
@@ -2455,17 +2600,20 @@ def _convert_dsh_to_internal(
                 end_ms = ts
                 break
     if messages:
-        last_created = messages[-1]["info"]["time"].get("created") or 0
-        last_completed = messages[-1]["info"]["time"].get("completed") or 0
-        end_ms = max(end_ms, int(last_created), int(last_completed or 0))
+        last_info = messages[-1].get("info") if isinstance(messages[-1].get("info"), dict) else {}
+        last_time = last_info.get("time") if isinstance(last_info.get("time"), dict) else {}
+        last_created = last_time.get("created") or 0
+        last_completed = last_time.get("completed") or 0
+        end_ms = max(end_ms, int(last_created or 0), int(last_completed or 0))
     total_duration = (
         round((end_ms - start_ms) / 1000.0, 3)
         if start_ms and end_ms and end_ms >= start_ms else 0
     )
     total_tokens = sum(
-        (m["info"].get("tokens") or {}).get("total", 0) for m in messages
+        (m["info"].get("tokens") or {}).get("total", 0)
+        for m in messages
+        if isinstance(m.get("info"), dict)
     )
-    session_id = session.get("id", "") if isinstance(session.get("id"), str) else ""
     started_at = _dsh_ms_to_iso(start_ms or None)
     finished_at = _dsh_ms_to_iso(end_ms or None)
     version = session.get("version")
@@ -2847,12 +2995,26 @@ def _resolve_trajectory_path(file_path: str) -> tuple[str, str | None]:
     return file_path, None
 
 
-def _zip_subagent_suffix(name: str) -> str | None:
-    """Path after a ``subagents`` directory component, or None if not a child log."""
+_DSH_ZIP_MAX_MEMBER_BYTES = 32 * 1024 * 1024
+_DSH_ZIP_MAX_TOTAL_BYTES = 128 * 1024 * 1024
+_DSH_ZIP_MAX_CHILD_MEMBERS = 64
+
+
+def _zip_normalize_member(name: str) -> str:
     name = name.replace("\\", "/")
     while name.startswith("./"):
         name = name[2:]
-    parts = name.split("/")
+    return name
+
+
+def _zip_is_session_jsonl(name: str) -> bool:
+    name = _zip_normalize_member(name).rstrip("/")
+    return name == "session.jsonl" or name.endswith("/session.jsonl")
+
+
+def _zip_subagent_suffix(name: str) -> str | None:
+    """Path after a ``subagents`` directory component, or None if not a child log."""
+    parts = [part for part in _zip_normalize_member(name).split("/") if part]
     try:
         idx = parts.index("subagents")
     except ValueError:
@@ -2861,35 +3023,72 @@ def _zip_subagent_suffix(name: str) -> str | None:
     return "/".join(rest) if rest else None
 
 
+def _zip_nested_child_id(rest: str) -> str:
+    """Child id from the path after the first ``subagents/`` component.
+
+    Accepts ``<id>/session.jsonl`` and nested
+    ``<id>/subagents/<id>/session.jsonl``. Rejects extra path segments
+    (``<id>/extra/session.jsonl``) and ``..``.
+    """
+    parts = [part for part in rest.split("/") if part]
+    if len(parts) < 2 or parts[-1] != "session.jsonl":
+        return ""
+    body = parts[:-1]
+    if len(body) % 2 != 1:
+        return ""
+    for i, part in enumerate(body):
+        if i % 2 == 1:
+            if part != "subagents":
+                return ""
+        elif part in (".", "..", "subagents"):
+            return ""
+    return body[-1]
+
+
 def _zip_dsh_members(names: list[str]) -> tuple[str | None, list[tuple[str, str]]]:
     """Pick the parent ``session.jsonl`` and ``subagents/<id>/session.jsonl`` members.
 
-    Parent is the shortest path ending in ``session.jsonl`` that is not under
-    a ``subagents`` directory. Children are ``subagents/<id>/session.jsonl``
-    (DSH GUI zip root), ``.../subagents/<id>/session.jsonl`` (folder zip),
-    or nested ``.../subagents/<id>/subagents/<id>/session.jsonl``.
+    Parent is the shortest path whose basename is exactly ``session.jsonl`` and
+    that is not under a ``subagents`` directory. Children are
+    ``subagents/<id>/session.jsonl`` (DSH GUI zip root),
+    ``.../subagents/<id>/session.jsonl`` (folder zip), or nested
+    ``.../subagents/<id>/subagents/<id>/session.jsonl``. Duplicate child ids
+    keep the shorter path.
     """
     jsonl_members = [
-        name.replace("\\", "/") for name in names
-        if name.replace("\\", "/").rstrip("/").endswith("session.jsonl")
-        and not name.endswith("/")
+        _zip_normalize_member(name) for name in names
+        if _zip_is_session_jsonl(name) and not name.endswith("/")
     ]
     parents = [name for name in jsonl_members if _zip_subagent_suffix(name) is None]
     parents.sort(key=lambda name: (name.count("/"), len(name)))
     parent = parents[0] if parents else None
-    children: list[tuple[str, str]] = []
+    by_id: dict[str, str] = {}
     for name in jsonl_members:
         rest = _zip_subagent_suffix(name)
         if not rest:
             continue
-        rest_parts = rest.split("/")
-        if len(rest_parts) < 2 or rest_parts[-1] != "session.jsonl":
+        child_id = _zip_nested_child_id(rest)
+        if not child_id:
             continue
-        child_id = rest_parts[-2]
-        if child_id and child_id != "subagents":
-            children.append((child_id, name))
-    children.sort(key=lambda item: item[0])
+        prev = by_id.get(child_id)
+        if prev is None or (name.count("/"), len(name)) < (prev.count("/"), len(name)):
+            by_id[child_id] = name
+    children = sorted(by_id.items(), key=lambda item: item[0])
     return parent, children
+
+
+def _zip_member_over_budget(archive: zipfile.ZipFile, member: str, used: list[int]) -> bool:
+    try:
+        info = archive.getinfo(member)
+    except KeyError:
+        return True
+    size = info.file_size
+    if size < 0 or size > _DSH_ZIP_MAX_MEMBER_BYTES:
+        return True
+    if used[0] + size > _DSH_ZIP_MAX_TOTAL_BYTES:
+        return True
+    used[0] += size
+    return False
 
 
 def _parse_zip_member_events(archive: zipfile.ZipFile, member: str) -> list[dict]:
@@ -2920,6 +3119,9 @@ def _load_zip_trajectory(file_path: str, format_hint: str | None, source_sha: st
         parent_member, child_members = _zip_dsh_members(archive.namelist())
         if not parent_member:
             return {"_error": "Zip archive has no session.jsonl."}
+        budget = [0]
+        if _zip_member_over_budget(archive, parent_member, budget):
+            return {"_error": f"Zip member too large: {parent_member}"}
         events = _parse_zip_member_events(archive, parent_member)
         if not events:
             return {"_error": f"Could not parse {parent_member} from zip."}
@@ -2931,10 +3133,15 @@ def _load_zip_trajectory(file_path: str, format_hint: str | None, source_sha: st
         if fmt != "dsh":
             result = _apply_format(events, fmt, source_path=file_path)
         else:
-            child_lists = [
-                _parse_zip_member_events(archive, member)
-                for _child_id, member in child_members
-            ]
+            child_lists: list[list[dict]] | None
+            if child_members:
+                child_lists = []
+                for _child_id, member in child_members[:_DSH_ZIP_MAX_CHILD_MEMBERS]:
+                    if _zip_member_over_budget(archive, member, budget):
+                        continue
+                    child_lists.append(_parse_zip_member_events(archive, member))
+            else:
+                child_lists = None
             result = _convert_dsh_to_internal(
                 events, source_path=file_path, child_event_lists=child_lists,
             )

@@ -136,6 +136,43 @@ def tagged_subagent_display_label(
     return None
 
 
+def agent_display_label(agent_id: str, steps: list[dict], *, max_len: int = 20) -> str:
+    """Card / token-chart / Overview label for an ``effective_agent`` id.
+
+    Empty id is ``main``. Tagged DSH-style runs reuse
+    ``tagged_subagent_display_label`` so cards match the swimlane. Other
+    formats keep the truncated id.
+    """
+    if not agent_id:
+        return "main"
+    tagged = tagged_subagent_display_label(agent_id, steps, max_len=max_len)
+    if tagged:
+        return tagged
+    return agent_id[:8] + "\u2026" if len(agent_id) > 8 else agent_id
+
+
+def disambiguate_agent_labels(
+    agent_ids: list[str],
+    steps: list[dict],
+    *,
+    max_len: int = 20,
+) -> dict[str, str]:
+    """Unique display labels; suffix a short session id when names collide."""
+    from collections import Counter
+
+    raw = {aid: agent_display_label(aid, steps, max_len=max_len) for aid in agent_ids}
+    counts = Counter(raw.values())
+    out: dict[str, str] = {}
+    for aid, label in raw.items():
+        if counts[label] > 1 and aid:
+            sid = aid.split("::", 1)[0] if "::" in aid else aid
+            suffix = sid[-6:] if len(sid) > 6 else sid
+            out[aid] = f"{label} ({suffix})"
+        else:
+            out[aid] = label
+    return out
+
+
 def _percentile(values: list[float], q: float) -> float:
     """Compute percentile using nearest-rank (q in [0, 1])."""
     if not values:
@@ -530,9 +567,11 @@ def _compute_efficiency_stats(steps, message_rows, raw):
     file_status_raw = raw.get("file_status")
     asst_durs = [s["duration"] for s in steps if s.get("role") == "assistant" and s.get("duration") is not None]
     user_n, asst_n = roles.get("user", 0), roles.get("assistant", 0)
+    agent_labels = disambiguate_agent_labels(list(agent_breakdown), steps)
     return {
         "messages_breakdown": roles,
         "agent_breakdown": agent_breakdown,
+        "agent_labels": agent_labels,
         "model_breakdown": model_breakdown,
         "finish_breakdown": finish_breakdown,
         "reasoning_parts": reasoning_parts,
@@ -874,12 +913,11 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
             if tid:
                 tool_call_step_map[tid] = s.get("index", 0)
 
+    labels = disambiguate_agent_labels(agent_order, steps)
     result = []
     for agent_id in agent_order:
         d = stats[agent_id]
-        label = "main" if not agent_id else (
-            agent_id[:8] + "\u2026" if len(agent_id) > 8 else agent_id
-        )
+        label = labels.get(agent_id, "main" if not agent_id else agent_id)
         total_tok = d["total_tokens"]
         cache_read = d["cache_read_tokens"]
         cache_pct = round(cache_read / total_tok * 100, 1) if total_tok > 0 else 0.0

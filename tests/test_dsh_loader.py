@@ -11,8 +11,14 @@ from unittest.mock import patch
 from trajviz.converge.canonical import canonicalize_steps
 from trajviz.insight.charts import bind_timeline_agents, build_file_interaction_chart
 from trajviz.insight.diagnostics import extract_file_interactions
-from trajviz.insight.loaders import _zip_dsh_members, detect_format, load_trajectory
-from trajviz.insight.metrics import compute_agent_summary, extract_agent_info
+from trajviz.insight.formatting import format_performance_md
+from trajviz.insight.loaders import (
+    _dsh_drop_seed_prefix,
+    _zip_dsh_members,
+    detect_format,
+    load_trajectory,
+)
+from trajviz.insight.metrics import compute_agent_summary, compute_metrics, extract_agent_info
 from trajviz.insight.parser import parse_steps
 
 
@@ -555,6 +561,32 @@ class DshLoaderTests(unittest.TestCase):
         self.assertEqual(parent, "mysubagents/session.jsonl")
         self.assertEqual(children, [])
 
+    def test_zip_members_requires_exact_session_jsonl_basename(self):
+        parent, children = _zip_dsh_members([
+            "foo_session.jsonl",
+            "export/session.jsonl",
+            "export/subagents/c1/session.jsonl",
+        ])
+        self.assertEqual(parent, "export/session.jsonl")
+        self.assertEqual(children, [("c1", "export/subagents/c1/session.jsonl")])
+
+    def test_zip_members_ignores_extra_path_segment(self):
+        parent, children = _zip_dsh_members([
+            "session.jsonl",
+            "subagents/c1/extra/session.jsonl",
+        ])
+        self.assertEqual(parent, "session.jsonl")
+        self.assertEqual(children, [])
+
+    def test_zip_members_dedupes_duplicate_child_ids(self):
+        parent, children = _zip_dsh_members([
+            "session.jsonl",
+            "subagents/c1/session.jsonl",
+            "other/subagents/c1/session.jsonl",
+        ])
+        self.assertEqual(parent, "session.jsonl")
+        self.assertEqual(children, [("c1", "subagents/c1/session.jsonl")])
+
     def test_zip_gui_root_layout_merges_subagents(self):
         """DSH GUI zip: session.jsonl + subagents/<id>/ at archive root."""
         session_dir = os.path.join(self.tmp, "gui-export")
@@ -577,6 +609,7 @@ class DshLoaderTests(unittest.TestCase):
         summaries = compute_agent_summary(steps, raw)
         labels = {row["label"] for row in summaries}
         self.assertIn("main", labels)
+        self.assertIn("sub child-1", labels)
         self.assertTrue(any(row["agent_id"] == "child-1" for row in summaries))
 
     def test_zip_bytes_without_zip_extension(self):
@@ -665,6 +698,124 @@ class DshLoaderTests(unittest.TestCase):
         self.assertFalse(any("should not merge" in (s.get("text_preview") or "")
                              for s in steps))
 
+    def test_export_root_bare_subagents_requires_matching_session(self):
+        export_root = os.path.join(self.tmp, "shared-root")
+        _write(export_root, "session.jsonl", [
+            _session(id="session-other"),
+        ])
+        _write(export_root, os.path.join("subagents", "child-1", "session.jsonl"),
+               self._child_events())
+        isolated = os.path.join(self.tmp, "gradio-cache", "session.jsonl")
+        os.makedirs(os.path.dirname(isolated), exist_ok=True)
+        with open(isolated, "w", encoding="utf-8") as handle:
+            for event in self.events:
+                handle.write(json.dumps(event) + "\n")
+        with patch.dict(os.environ, {"TRAJVIZ_DSH_EXPORT_ROOT": export_root}):
+            raw = load_trajectory(isolated)
+        self.assertEqual(raw["metadata"]["sub_agent_count"], 0)
+
+    def test_export_root_export_dir_itself_matches_session(self):
+        export_dir = os.path.join(self.tmp, "export-dir")
+        _write(export_dir, "session.jsonl", self.events)
+        _write(export_dir, os.path.join("subagents", "child-1", "session.jsonl"),
+               self._child_events())
+        isolated = os.path.join(self.tmp, "gradio-cache", "session.jsonl")
+        os.makedirs(os.path.dirname(isolated), exist_ok=True)
+        with open(isolated, "w", encoding="utf-8") as handle:
+            for event in self.events:
+                handle.write(json.dumps(event) + "\n")
+        with patch.dict(os.environ, {"TRAJVIZ_DSH_EXPORT_ROOT": export_dir}):
+            raw = load_trajectory(isolated)
+        self.assertEqual(raw["metadata"]["sub_agent_count"], 1)
+
+    def test_child_log_merges_local_grandchildren_not_export_root(self):
+        child_dir = os.path.join(self.tmp, "orphan-child")
+        child_path = _write(child_dir, "session.jsonl", self._child_events())
+        _write(child_dir, os.path.join("subagents", "grand-1", "session.jsonl"), [
+            _session(id="grand-1", origin="subagent", parentSession="child-1",
+                     seedLength=1, createdAt=1_787_623_648_500),
+            _assistant(2, 1_787_623_648_600, [
+                {"type": "text", "text": "grandchild done"},
+            ], msg_id="ga"),
+        ])
+        export_root = os.path.join(self.tmp, "decoy-root")
+        _write(export_root, os.path.join("dsh-session-child-1", "subagents",
+                                         "other", "session.jsonl"), [
+            _session(id="other", origin="subagent", parentSession="child-1",
+                     seedLength=1, createdAt=1_787_623_648_050),
+            _assistant(2, 1_787_623_648_400, [
+                {"type": "text", "text": "should not merge"},
+            ], msg_id="decoy"),
+        ])
+        with patch.dict(os.environ, {"TRAJVIZ_DSH_EXPORT_ROOT": export_root}):
+            raw = load_trajectory(child_path)
+        steps = parse_steps(raw)
+        self.assertTrue(any(s.get("session_id") == "grand-1" for s in steps))
+        self.assertFalse(any("should not merge" in (s.get("text_preview") or "")
+                             for s in steps))
+
+    def test_parent_only_zip_merges_sibling_subagents(self):
+        session_dir = os.path.join(self.tmp, "beside-zip")
+        _write(session_dir, "session.jsonl", self.events)
+        _write(session_dir, os.path.join("subagents", "child-1", "session.jsonl"),
+               self._child_events())
+        zip_path = os.path.join(session_dir, "parent-only.zip")
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.write(os.path.join(session_dir, "session.jsonl"), "session.jsonl")
+        raw = load_trajectory(zip_path)
+        self.assertEqual(raw["metadata"]["sub_agent_count"], 1)
+
+    def test_unrelated_parent_session_under_subagents_is_skipped(self):
+        session_dir = os.path.join(self.tmp, "mixed-tree")
+        _write(session_dir, "session.jsonl", self.events)
+        _write(session_dir, os.path.join("subagents", "child-1", "session.jsonl"),
+               self._child_events())
+        _write(session_dir, os.path.join("subagents", "stray", "session.jsonl"), [
+            _session(id="stray", origin="subagent", parentSession="someone-else",
+                     seedLength=1, createdAt=1_787_623_648_050),
+            _assistant(2, 1_787_623_648_400, [
+                {"type": "text", "text": "stray child"},
+            ], msg_id="sx"),
+        ])
+        raw = load_trajectory(os.path.join(session_dir, "session.jsonl"))
+        steps = parse_steps(raw)
+        self.assertEqual(raw["metadata"]["sub_agent_count"], 1)
+        self.assertFalse(any("stray child" in (s.get("text_preview") or "")
+                             for s in steps))
+
+    def test_seed_length_numeric_string_drops_prefix(self):
+        kept = _dsh_drop_seed_prefix(
+            [{"seq": 3, "type": "user/message"}, {"seq": 6, "type": "user/message"}],
+            "5",
+        )
+        self.assertEqual([event["seq"] for event in kept], [6])
+
+    def test_seed_length_drops_seq_less_rows_when_any_seq_present(self):
+        kept = _dsh_drop_seed_prefix(
+            [
+                {"type": "user/message", "data": {"id": "seed"}},
+                {"seq": 6, "type": "user/message", "data": {"id": "child"}},
+            ],
+            5,
+        )
+        self.assertEqual([event.get("data", {}).get("id") for event in kept], ["child"])
+
+    def test_tool_call_before_assistant_keeps_name_and_start(self):
+        events = [
+            _session(),
+            _tool_call(1, 1_787_623_647_350, "call-early", "bash", {"command": "pwd"}),
+            _assistant(2, 1_787_623_647_400, [
+                {"type": "tool-call", "id": "call-early", "name": "bash",
+                 "arguments": json.dumps({"command": "pwd"})},
+            ]),
+            _tool_result(3, 1_787_623_647_500, "call-early", "/home/user/proj"),
+        ]
+        steps = parse_steps(self._load(events, name="early-call.jsonl"))
+        tool = next(tc for s in steps for tc in s["tool_calls"])
+        self.assertEqual(tool["tool_name"], "Bash")
+        self.assertEqual(tool["time_start"], 1_787_623_647_350)
+        self.assertIn("/home/user/proj", tool["output"])
+
     def test_already_converted_object_reloads(self):
         first = self._load()
         dumped = {k: v for k, v in first.items() if not k.startswith("_source")}
@@ -699,6 +850,70 @@ class DshLoaderTests(unittest.TestCase):
         user_previews = [s.get("text_preview") or "" for s in steps if s["role"] == "user"]
         self.assertTrue(all("Background subagent" not in p for p in user_previews))
         self.assertGreaterEqual(len(user_previews), 1)
+
+
+def _asst(index, *, agent="", session_id="", is_sub_agent=None, title=""):
+    step = {
+        "index": index,
+        "role": "assistant",
+        "agent": agent,
+        "session_id": session_id,
+        "session_title": title,
+        "tokens": {"total": 10, "input": 8, "output": 2, "reasoning": 0, "cache_read": 0},
+        "tool_calls": [],
+        "tool_call_count": 0,
+        "error_count": 0,
+        "duration": 1.0,
+        "parts": [],
+        "finish": "",
+        "model_id": "",
+    }
+    if is_sub_agent is not None:
+        step["is_sub_agent"] = is_sub_agent
+    return step
+
+
+class AgentDisplayLabelTests(unittest.TestCase):
+    def test_summary_uses_session_title_not_truncated_id(self):
+        child_id = "90768b91-4a4e-44fb-a995-eff77f7cbfb5"
+        steps = [
+            _asst(0, agent="standard", session_id="session-parent", is_sub_agent=False),
+            _asst(1, agent="standard", session_id=child_id, is_sub_agent=True,
+                  title="Explore auth"),
+        ]
+        by_id = {row["agent_id"]: row["label"] for row in compute_agent_summary(steps, {})}
+        self.assertEqual(by_id[""], "main")
+        self.assertEqual(by_id[child_id], "Explore auth")
+        self.assertFalse(any("90768b91" in label for label in by_id.values()))
+
+    def test_summary_falls_back_to_sub_prefix_without_title(self):
+        steps = [
+            _asst(0, agent="standard", session_id="session-parent", is_sub_agent=False),
+            _asst(1, agent="standard", session_id="child-aaa-bbb", is_sub_agent=True),
+        ]
+        by_id = {row["agent_id"]: row["label"] for row in compute_agent_summary(steps, {})}
+        self.assertEqual(by_id["child-aaa-bbb"], "sub child-aaa-bb")
+
+    def test_untagged_claude_ids_still_truncate(self):
+        steps = [
+            _asst(0, agent=""),
+            _asst(1, agent="worker-abc12345"),
+        ]
+        by_id = {row["agent_id"]: row["label"] for row in compute_agent_summary(steps, {})}
+        self.assertEqual(by_id[""], "main")
+        self.assertEqual(by_id["worker-abc12345"], "worker-a…")
+
+    def test_overview_chips_use_display_labels(self):
+        child_id = "90768b91-4a4e-44fb-a995-eff77f7cbfb5"
+        steps = [
+            _asst(0, agent="standard", session_id="session-parent", is_sub_agent=False),
+            _asst(1, agent="standard", session_id=child_id, is_sub_agent=True,
+                  title="Explore auth"),
+        ]
+        html = format_performance_md(compute_metrics(steps, {}), "1s")
+        self.assertIn("Explore auth", html)
+        self.assertNotIn("sub-agent 90768b91", html)
+        self.assertNotIn("90768b91…", html)
 
 
 if __name__ == "__main__":
