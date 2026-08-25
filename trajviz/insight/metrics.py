@@ -36,6 +36,106 @@ def effective_agent(s: dict) -> str:
     return ""
 
 
+def _clip_agent_label(name: str, max_len: int) -> str:
+    if max_len <= 1 or len(name) <= max_len:
+        return name
+    return name[: max_len - 1] + "…"
+
+
+def _preset_used_by_tagged_subagents(mode: str, steps: list[dict]) -> bool:
+    if not mode:
+        return False
+    for s in steps:
+        if not isinstance(s, dict) or not s.get("is_sub_agent"):
+            continue
+        if str(s.get("agent") or "").strip() == mode:
+            return True
+    return False
+
+
+def _name_used_by_parent_agent(name: str, steps: list[dict]) -> bool:
+    if not name:
+        return False
+    for s in steps:
+        if not isinstance(s, dict) or s.get("is_sub_agent"):
+            continue
+        if str(s.get("agent") or "").strip() == name:
+            return True
+    return False
+
+
+def tagged_subagent_display_label(
+    agent_id: str,
+    steps: list[dict],
+    *,
+    max_len: int = 20,
+) -> str | None:
+    """Label a lane as ``main`` / ``sub {id}`` when the run tags sub-agents.
+
+    DSH (and similar) share a generic preset name across parent and children.
+    Returns ``None`` when the run has no ``is_sub_agent`` steps, or when this
+    lane is mixed, so callers can keep format-specific names (OpenCode modes).
+    """
+    if not agent_id:
+        return None
+    tagged = any(isinstance(s, dict) and s.get("is_sub_agent") for s in steps)
+    if not tagged:
+        return None
+    sid = agent_id
+    mode = ""
+    if "::" in agent_id:
+        sid, mode = agent_id.split("::", 1)
+        mode = mode.strip()
+
+    lane_sub = False
+    lane_parent = False
+    title = ""
+    child_names: set[str] = set()
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        step_sid = str(s.get("session_id") or "")
+        if step_sid != sid and effective_agent(s) not in {agent_id, sid}:
+            continue
+        step_mode = str(s.get("agent") or "").strip()
+        if mode and step_mode and step_mode != mode:
+            if not (
+                step_mode == "compaction"
+                or s.get("role") == "compaction"
+                or s.get("is_compaction_checkpoint")
+            ):
+                continue
+        if s.get("is_sub_agent"):
+            lane_sub = True
+            if step_mode and step_mode != "compaction":
+                child_names.add(step_mode)
+        elif s.get("role") in ("assistant", "user", "compaction"):
+            lane_parent = True
+        if not title:
+            candidate = str(s.get("session_title") or "").strip()
+            if candidate:
+                title = candidate
+
+    if lane_sub and not lane_parent:
+        if title:
+            return _clip_agent_label(title, max_len)
+        distinctive = [
+            name for name in child_names
+            if not _name_used_by_parent_agent(name, steps)
+        ]
+        if len(distinctive) == 1:
+            return _clip_agent_label(distinctive[0], max_len)
+        short = sid[:12] if len(sid) > 12 else sid
+        if short:
+            return f"sub {short}"
+        return _clip_agent_label(mode or agent_id, max_len)
+    if lane_parent and not lane_sub:
+        if mode and not _preset_used_by_tagged_subagents(mode, steps):
+            return _clip_agent_label(mode, max_len)
+        return "main"
+    return None
+
+
 def _percentile(values: list[float], q: float) -> float:
     """Compute percentile using nearest-rank (q in [0, 1])."""
     if not values:

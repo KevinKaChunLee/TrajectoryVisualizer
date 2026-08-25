@@ -14,7 +14,7 @@ except ImportError:
 import plotly.graph_objects as go
 
 from .parser import infer_non_cache_input
-from .metrics import effective_agent
+from .metrics import effective_agent, tagged_subagent_display_label
 from .palette import (
     TOKEN_COLORS,
     SESSION_COLORS,
@@ -122,65 +122,17 @@ def _trunc_timeline_label(name: str) -> str:
     return name if len(name) <= 20 else name[:19] + "…"
 
 
-def _mode_used_by_tagged_subagents(mode: str, steps: list[dict]) -> bool:
-    if not mode:
-        return False
-    for s in steps:
-        if not isinstance(s, dict) or not s.get("is_sub_agent"):
-            continue
-        if str(s.get("agent") or "").strip() == mode:
-            return True
-    return False
-
-
 def _timeline_display_label(agent_id: str, steps: list[dict]) -> str:
     """Legend / color bucket for a timeline agent id."""
     if not agent_id:
         return "main"
-    tagged_subs = any(isinstance(s, dict) and s.get("is_sub_agent") for s in steps)
+    tagged = tagged_subagent_display_label(agent_id, steps)
+    if tagged:
+        return tagged
     sid = _timeline_id_session(agent_id)
     mode = ""
     if "::" in agent_id:
         mode = agent_id.split("::", 1)[1].strip()
-
-    lane_sub = False
-    lane_parent = False
-    title = ""
-    for s in steps:
-        if not isinstance(s, dict):
-            continue
-        step_sid = str(s.get("session_id") or "")
-        if step_sid != sid and effective_agent(s) not in {agent_id, sid}:
-            continue
-        step_mode = str(s.get("agent") or "").strip()
-        if mode and step_mode and step_mode != mode:
-            if not (
-                step_mode == "compaction"
-                or s.get("role") == "compaction"
-                or s.get("is_compaction_checkpoint")
-            ):
-                continue
-        if s.get("is_sub_agent"):
-            lane_sub = True
-        elif s.get("role") in ("assistant", "user", "compaction"):
-            lane_parent = True
-        if not title:
-            candidate = str(s.get("session_title") or "").strip()
-            if candidate:
-                title = candidate
-
-    # DSH (and similar) tags child sessions with is_sub_agent while sharing a
-    # generic preset name ("standard"). Prefer main / sub {id} over that preset.
-    if tagged_subs:
-        if lane_sub and not lane_parent:
-            if title:
-                return _trunc_timeline_label(title)
-            short = sid[:12] if len(sid) > 12 else sid
-            return f"sub {short}" if short else _trunc_timeline_label(mode or agent_id)
-        if lane_parent and not lane_sub:
-            if mode and not _mode_used_by_tagged_subagents(mode, steps):
-                return _trunc_timeline_label(mode)
-            return "main"
 
     # Composite multi-session id: prefer the embedded agent mode name
     if mode:

@@ -8,7 +8,7 @@ from trajviz.tool_vocab import (WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
 import os
 import re
 
-from .metrics import effective_agent
+from .metrics import effective_agent, tagged_subagent_display_label
 from .parser import infer_non_cache_input
 
 # Tool-call statuses that open/continue a failure chain. Shared by
@@ -736,6 +736,9 @@ def _is_occupancy_step(step: dict) -> bool:
 def _agent_pressure_label(agent_id: str, steps: list[dict]) -> str:
     if not agent_id:
         return "main"
+    tagged = tagged_subagent_display_label(agent_id, steps)
+    if tagged:
+        return tagged
     for step in steps:
         if _pressure_agent(step) != agent_id:
             continue

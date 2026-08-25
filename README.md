@@ -301,13 +301,17 @@ folder (or zip) named `dsh-session-<session-id>/` containing the parent
 2. Export / download the session log from the DSH GUI (zip), or copy the
    session directory.
 3. Upload the **zip** (GUI exports put `session.jsonl` and `subagents/` at
-   the zip root), the session directory, or `session.jsonl`. Auto-detect
-   recognizes the leading `session` header (`createdAt`, slash-typed events)
-   and does **not** treat it as a Pi log. Child sessions are merged when
-   `subagents/` sits next to `session.jsonl`, inside the zip, or in a
-   `dsh-session-<session-id>` folder next to the file / in `~/Downloads`
-   (the dashboard copies an uploaded `session.jsonl` without that sibling
-   tree). Inherited parent turns at the front of each child log are skipped.
+   the zip root). That is the path that works on a hosted dashboard — the
+   server never sees the uploader's `~/Downloads`. Auto-detect recognizes the
+   leading `session` header (`createdAt`, slash-typed events) and does **not**
+   treat it as a Pi log. Child sessions are merged from zip members, or from a
+   sibling `subagents/` tree when you load a session directory (or
+   `session.jsonl` next to that tree) on the same machine. Uploading a
+   lone `session.jsonl` on a hosted dashboard cannot pick up children —
+   the server has no access to the uploader's filesystem. Operators can
+   set `TRAJVIZ_DSH_EXPORT_ROOT` to a directory on the host that contains
+   the export (or `dsh-session-<id>/`). Inherited parent turns at the
+   front of each child log are skipped.
 
 ---
 

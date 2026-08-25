@@ -616,6 +616,34 @@ class DshLoaderTests(unittest.TestCase):
         steps = parse_steps(raw)
         self.assertTrue(any(s.get("session_id") == "child-1" for s in steps))
 
+    def test_isolated_jsonl_does_not_scan_unrelated_roots(self):
+        decoy_root = os.path.join(self.tmp, "unrelated")
+        session_dir = os.path.join(decoy_root, "dsh-session-session-parent")
+        _write(session_dir, "session.jsonl", self.events)
+        _write(session_dir, os.path.join("subagents", "child-1", "session.jsonl"),
+               self._child_events())
+        isolated = os.path.join(self.tmp, "gradio-cache", "session.jsonl")
+        os.makedirs(os.path.dirname(isolated), exist_ok=True)
+        with open(isolated, "w", encoding="utf-8") as handle:
+            for event in self.events:
+                handle.write(json.dumps(event) + "\n")
+        raw = load_trajectory(isolated)
+        self.assertEqual(raw["metadata"]["sub_agent_count"], 0)
+
+    def test_isolated_jsonl_does_not_crawl_named_folder_beside_upload(self):
+        """Gradio copies one file into a temp dir; a sibling export folder is coincidental."""
+        cache = os.path.join(self.tmp, "gradio-cache")
+        session_dir = os.path.join(cache, "dsh-session-session-parent")
+        _write(session_dir, "session.jsonl", self.events)
+        _write(session_dir, os.path.join("subagents", "child-1", "session.jsonl"),
+               self._child_events())
+        isolated = os.path.join(cache, "session.jsonl")
+        with open(isolated, "w", encoding="utf-8") as handle:
+            for event in self.events:
+                handle.write(json.dumps(event) + "\n")
+        raw = load_trajectory(isolated)
+        self.assertEqual(raw["metadata"]["sub_agent_count"], 0)
+
     def test_child_origin_does_not_search_export_dir(self):
         export_root = os.path.join(self.tmp, "decoy-root")
         decoy = os.path.join(export_root, "dsh-session-child-1")

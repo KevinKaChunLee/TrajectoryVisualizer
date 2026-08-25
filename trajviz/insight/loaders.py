@@ -2289,47 +2289,39 @@ def _dsh_export_dir_names(session_id: str) -> list[str]:
     return ordered
 
 
-def _dsh_search_roots(source_path: str | None) -> list[str]:
-    """Directories that may contain a `dsh-session-*` export folder."""
-    roots: list[str] = []
+def _dsh_export_root_child_paths(session_id: str) -> list[str]:
+    """Child logs under ``TRAJVIZ_DSH_EXPORT_ROOT`` only (same-machine / tests).
+
+    A hosted dashboard never sees the uploader's home directory; do not crawl
+    cwd or ``~/Downloads``.
+    """
     extra = os.environ.get("TRAJVIZ_DSH_EXPORT_ROOT")
-    if extra:
-        roots.append(os.path.abspath(os.path.expanduser(extra)))
-    if source_path:
-        src = os.path.abspath(source_path)
-        parent = src if os.path.isdir(src) else os.path.dirname(src)
-        roots.append(parent)
-        grand = os.path.dirname(parent)
-        if grand and grand not in roots:
-            roots.append(grand)
-    cwd = os.path.abspath(os.getcwd())
-    if cwd not in roots:
-        roots.append(cwd)
-    downloads = os.path.join(os.path.expanduser("~"), "Downloads")
-    if os.path.isdir(downloads) and downloads not in roots:
-        roots.append(downloads)
-    return roots
+    if not extra:
+        return []
+    root = os.path.abspath(os.path.expanduser(extra))
+    if not os.path.isdir(root):
+        return []
+    found = _dsh_child_paths_in_subagents_dir(os.path.join(root, "subagents"))
+    if found:
+        return found
+    for name in _dsh_export_dir_names(session_id):
+        found = _dsh_child_paths_in_subagents_dir(os.path.join(root, name, "subagents"))
+        if found:
+            return found
+    return []
 
 
 def _dsh_discover_child_log_paths(session_id: str, source_path: str | None) -> list[str]:
-    """Find `subagents/<id>/session.jsonl` next to the file or in a DSH export dir.
+    """Find ``subagents/<id>/session.jsonl`` next to the loaded file.
 
-    Gradio copies an uploaded ``session.jsonl`` into a temp folder without the
-    sibling ``subagents/`` tree. The GUI export dir is named
-    ``dsh-session-<session-id>`` (often under ``~/Downloads``).
+    Hosted uploads are a single temp file (or a zip). Children come from a
+    sibling ``subagents/`` tree, from zip members, or from an explicit
+    ``TRAJVIZ_DSH_EXPORT_ROOT`` on this host.
     """
     paths = _dsh_sibling_child_paths(source_path)
     if paths:
         return paths
-    for root in _dsh_search_roots(source_path):
-        if not os.path.isdir(root):
-            continue
-        for name in _dsh_export_dir_names(session_id):
-            export_dir = os.path.join(root, name)
-            found = _dsh_child_paths_in_subagents_dir(os.path.join(export_dir, "subagents"))
-            if found:
-                return found
-    return []
+    return _dsh_export_root_child_paths(session_id)
 
 
 def _dsh_read_event_list(path: str) -> list[dict]:
