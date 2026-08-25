@@ -917,7 +917,7 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
     result = []
     for agent_id in agent_order:
         d = stats[agent_id]
-        label = labels.get(agent_id, "main" if not agent_id else agent_id)
+        label = labels.get(agent_id, agent_id if agent_id else "main")
         total_tok = d["total_tokens"]
         cache_read = d["cache_read_tokens"]
         cache_pct = round(cache_read / total_tok * 100, 1) if total_tok > 0 else 0.0
