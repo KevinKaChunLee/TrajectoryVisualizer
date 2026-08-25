@@ -13,6 +13,7 @@ from .diagnostics import (
     compute_bottleneck_explanations,
     compute_failure_chain_metrics,
     detect_failure_chains,
+    extract_file_interactions,
 )
 from .formatting import wall_clock_fmt
 from .llm_config import AnalysisLLMConfig, resolve_analysis_config, setup_help_text
@@ -29,6 +30,7 @@ from .patterns import (
     detect_failure_patterns,
     detect_fruitless_streaks,
     detect_tool_selection_antipatterns,
+    detect_tool_sequences,
 )
 
 _BRIEF_CHAR_LIMIT = 28_000
@@ -37,28 +39,53 @@ _ARG_CLIP = 100
 _HISTORY_TURNS = 12  # user+assistant messages kept
 
 AUTO_ANALYSIS_QUESTION = (
-    "请根据仪表盘统计，分析这次轨迹：问题出在哪里、性能瓶颈在哪些步骤、"
-    "以及哪里存在无效劳动。请引用步骤编号。"
+    "请根据仪表盘统计分析这次轨迹：标出主要性能瓶颈（步骤编号、阶段、耗时与原因）、"
+    "错误模式、根因，以及可落地的优化建议。"
 )
 
 SYSTEM_PROMPT = """You are TrajViz's trajectory analyst. You see a structured brief of
-dashboard statistics for one coding-agent run (tokens, timing, tool outcomes,
-health verdicts, bottlenecks, failure chains, fruitless search streaks, and a
-compact step index). The user cannot see the brief — they see the dashboard.
+dashboard statistics for one coding-agent run. The user cannot see the brief —
+they see the dashboard.
 
 Your job:
 - Locate where the run went wrong and which steps to inspect (use step indices).
-- Explain performance bottlenecks (duration, tokens, cache, throughput).
+- Explain performance bottlenecks using duration, tokens, cache, and tool timing.
 - Point at wasted work (retries, empty searches, tool-selection antipatterns).
-- Be concrete and concise. Prefer a short diagnosis, then a numbered list of
-  findings with step numbers, then optional next checks.
+- Identify pipeline stages actually present in this run (planning, code generation,
+  transformation, optimization, compile/build, testing, repair, verification, etc.).
 - If the brief lacks evidence for a claim, say so. Do not invent tool outputs.
 - Do not ask the user to paste the trajectory; you already have the stats.
 
+When the user asks for an overall analysis (including the first pass after load),
+structure the reply in Markdown as:
+
+## 主要性能瓶颈
+1. 步骤 X — [阶段] ([严重程度])
+   耗时: …
+   问题: …
+   结果: …
+   分析: …（为何慢或失败；引用 tool_time_share、tool_wait_pct、p95_tool_duration、
+   max_tool_duration、tokens_per_second、tokens_per_tool 等 brief 中的指标）
+2. …
+
+## 错误模式
+按类型归纳主要错误，并标出出现的步骤。
+
+## 根因
+基于指标与步骤证据解释根因，不要只复述症状。
+
+## 优化建议
+1. [方向]: [具体建议]
+2. …
+
+Each bottleneck must cite an exact step number, its duration, and why the approach
+is inefficient. Follow-up questions should be answered directly and conversationally
+in the same language — do not repeat the full report unless asked.
+
 Language:
 - Write the entire reply in Simplified Chinese (简体中文).
-- Keep step numbers, tool names, file paths, model names, and metric keys
-  in their original form so they still match the dashboard.
+- English only for: code, tool names, file paths, JSON keys, metric keys,
+  model names, and step numbers, so they still match the dashboard.
 """
 
 ChatFn = Callable[[AnalysisLLMConfig, str, list[dict[str, str]]], str]
@@ -121,13 +148,26 @@ def _session_header(raw: dict, steps: list[dict], metrics: dict, wall_fmt: str) 
     return lines
 
 
-def _metrics_lines(metrics: dict) -> list[str]:
+def _pct_from_fraction(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        return f"{round(float(value) * 100, 1)}%"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _metrics_lines(metrics: dict, steps: list[dict]) -> list[str]:
     tok = metrics.get("tokens") if isinstance(metrics.get("tokens"), dict) else {}
+    time_share = metrics.get("tool_time_fraction")
+    fail_rate = metrics.get("tool_system_failure_rate")
     lines = [
         f"avg_duration_s: {metrics.get('avg_duration', 0)}",
         f"median_duration_s: {metrics.get('median_duration', 0)}",
         f"p95_duration_s: {metrics.get('p95_duration', 0)}",
         f"max_duration_s: {metrics.get('max_duration', 0)}",
+        f"assistant_steps: {metrics.get('assistant_steps', 0)}",
+        f"user_steps: {metrics.get('user_steps', 0)}",
         f"tokens_total: {tok.get('total', 0)}",
         f"tokens_input: {tok.get('input', 0)}",
         f"tokens_output: {tok.get('output', 0)}",
@@ -137,14 +177,63 @@ def _metrics_lines(metrics: dict) -> list[str]:
         f"fresh_input_tokens: {metrics.get('non_cache_tokens', 0)} "
         f"({metrics.get('non_cache_ratio', 0)}%)",
         f"avg_tokens_per_step: {metrics.get('avg_tokens_per_step', 0)}",
+        f"tokens_per_second: {metrics.get('tokens_per_second', 0)}",
+        f"tokens_per_tool: {metrics.get('tokens_per_tool', 0)}",
         f"output_tokens_per_sec: {metrics.get('output_tokens_per_sec')}",
+        f"p95_tool_duration: {metrics.get('p95_tool_duration', 0)}s",
+        f"max_tool_duration: {metrics.get('max_tool_duration', 0)}s",
+        f"avg_tool_duration: {metrics.get('avg_tool_duration', 0)}s",
+        f"tool_wait_pct: {metrics.get('tool_wait_share', 0)}%",
+        f"tool_time_share: {_pct_from_fraction(time_share)}",
+        f"tool_system_failure_rate: {_pct_from_fraction(fail_rate)}",
         f"tool_breakdown: {metrics.get('tool_breakdown') or {}}",
     ]
+    if metrics.get("time_to_first_token") is not None:
+        lines.append(f"time_to_first_token: {metrics.get('time_to_first_token')}s")
+    totals = [
+        (step.get("tokens") or {}).get("total", 0)
+        for step in steps
+        if isinstance(step.get("tokens"), dict)
+    ]
+    if totals:
+        lines.append(
+            f"step_tokens_min/max/avg: {min(totals)} / {max(totals)} / "
+            f"{round(sum(totals) / len(totals))}"
+        )
     if metrics.get("output_throughput_incomplete"):
         lines.append(
             "output_throughput_coverage: "
             f"{metrics.get('output_throughput_timed_steps')}/"
             f"{metrics.get('output_throughput_total_steps')} timed assistant steps"
+        )
+    return lines
+
+
+def _file_lines(steps: list[dict]) -> list[str]:
+    interactions = extract_file_interactions(steps)
+    if not interactions:
+        return ["(none)"]
+    unique = {item.get("path") for item in interactions if item.get("path")}
+    reads = sum(1 for item in interactions if item.get("type") == "read")
+    writes = sum(1 for item in interactions if item.get("type") == "write")
+    searches = sum(1 for item in interactions if item.get("type") == "search")
+    return [
+        f"unique_files: {len(unique)}",
+        f"read_count: {reads}",
+        f"write_count: {writes}",
+        f"search_count: {searches}",
+    ]
+
+
+def _tool_sequence_lines(sequences: list[dict]) -> list[str]:
+    if not sequences:
+        return ["(none)"]
+    lines = []
+    for item in sequences[:5]:
+        seq = " → ".join(str(name) for name in (item.get("sequence") or []))
+        steps = item.get("step_indices") or []
+        lines.append(
+            f"- {seq} ×{item.get('frequency', 0)} at steps {steps[:8]}"
         )
     return lines
 
@@ -308,12 +397,15 @@ def build_analysis_brief(steps: list[dict], raw: dict | None = None) -> str:
     chain_metrics = compute_failure_chain_metrics(chains, assistant_n)
     streaks = detect_fruitless_streaks(steps)
     bash_flags = detect_tool_selection_antipatterns(steps)
+    tool_seqs = detect_tool_sequences(steps)
 
     sections = [
         ("SESSION", _session_header(raw, steps, metrics, wall_fmt)),
         ("HEALTH", _verdict_lines(verdicts)),
-        ("PERFORMANCE", _metrics_lines(metrics)),
+        ("PERFORMANCE", _metrics_lines(metrics, steps)),
         ("AGENTS", _agent_lines(agents)),
+        ("FILES", _file_lines(steps)),
+        ("TOOL_SEQUENCES", _tool_sequence_lines(tool_seqs)),
         ("BOTTLENECKS", _bottleneck_lines(bottlenecks)),
         ("FAILURES", _failure_lines(fail_pats, chains, chain_metrics)),
         ("WASTE", _waste_lines(streaks, bash_flags)),

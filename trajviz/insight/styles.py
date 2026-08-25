@@ -1155,14 +1155,7 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     color: var(--ov-text);
     letter-spacing: -0.01em;
     text-align: center;
-    margin: 0;
-}
-#analysis-sidebar .analysis-panel-sub {
-    font-size: 12px;
-    color: var(--ov-muted);
-    margin: 6px 0 10px;
-    line-height: 1.45;
-    text-align: center;
+    margin: 0 0 10px;
 }
 #analysis-sidebar .html-container:has(.analysis-panel-title) .prose {
     text-align: center;

@@ -862,9 +862,6 @@ def build_ui() -> gr.Blocks:
         ):
             gr.HTML(
                 "<div class='analysis-panel-title'>🤖 AI Trajectory Analysis</div>"
-                "<div class='analysis-panel-sub'>Ask about bottlenecks, failures, "
-                "and where this run went wrong. Answers use the loaded dashboard stats "
-                "and are written in Simplified Chinese.</div>"
             )
             analysis_status = gr.HTML(config_status_html(loaded_steps=0))
             analysis_chatbot = gr.Chatbot(

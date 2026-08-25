@@ -141,6 +141,9 @@ class AnalysisBriefTests(unittest.TestCase):
         self.assertIn("Fix the flaky login test", brief)
         self.assertIn("HEALTH", brief)
         self.assertIn("BOTTLENECKS", brief)
+        self.assertIn("p95_tool_duration", brief)
+        self.assertIn("tool_wait_pct", brief)
+        self.assertIn("FILES", brief)
         self.assertIn("step 1", brief)
         self.assertIn("missing_file", brief)
         self.assertIn("ERROR_STEPS", brief)
@@ -247,6 +250,9 @@ class AnalysisChatTests(unittest.TestCase):
 
     def test_system_prompt_requires_simplified_chinese(self):
         self.assertIn("简体中文", assistant.SYSTEM_PROMPT)
+        self.assertIn("主要性能瓶颈", assistant.SYSTEM_PROMPT)
+        self.assertIn("p95_tool_duration", assistant.SYSTEM_PROMPT)
+        self.assertIn("tool_wait_pct", assistant.SYSTEM_PROMPT)
 
     def test_auto_analysis_on_load_sends_chinese_question(self):
         captured = {}
@@ -266,6 +272,7 @@ class AnalysisChatTests(unittest.TestCase):
         self.assertIn("HEALTH", brief)
         self.assertEqual(captured["messages"][-1]["content"], assistant.AUTO_ANALYSIS_QUESTION)
         self.assertIn("简体中文", captured["system"])
+        self.assertIn("主要性能瓶颈", captured["system"])
         self.assertEqual(history[-1]["content"], "步骤 1 是瓶颈。")
         self.assertTrue(history[-1]["content"])
 
@@ -279,6 +286,8 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn("analyze_loaded_trajectory", source)
         self.assertNotIn("suggest_btns", source)
         self.assertNotIn("Where did it go wrong?", source)
+        self.assertNotIn("analysis-panel-sub", source)
+        self.assertNotIn("Simplified Chinese", source)
         from trajviz.insight.styles import APP_CSS
         self.assertIn("#analysis-sidebar .analysis-panel-title", APP_CSS)
         self.assertIn("text-align: center", APP_CSS)
