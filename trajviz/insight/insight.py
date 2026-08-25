@@ -604,7 +604,9 @@ def _build_diagnostics_outputs(
     # File interaction analysis
     interactions = extract_file_interactions(steps)
     target_files = identify_target_files(steps)
-    file_chart = build_file_interaction_chart(interactions, target_files, dark=dark) if interactions else _empty_fig
+    file_chart = build_file_interaction_chart(
+        interactions, target_files, dark=dark, steps=steps,
+    ) if interactions else _empty_fig
 
     # Failure chain analysis (metrics feed the summary line; UI strip removed)
     chains = detect_failure_chains(steps)
@@ -864,8 +866,8 @@ def build_ui() -> gr.Blocks:
             )
             with gr.Column(scale=2, min_width=200):
                 file_upload = gr.File(
-                    label="Trajectory (.json / .jsonl)",
-                    file_types=[".json", ".jsonl"],
+                    label="Trajectory (.json / .jsonl / .zip)",
+                    file_types=[".json", ".jsonl", ".zip"],
                     height=110,
                 )
                 load_btn = gr.Button("Load Trajectory", variant="primary", size="sm", min_width=120)
@@ -1073,8 +1075,8 @@ def build_ui() -> gr.Blocks:
                             min_width=140,
                         )
                         rg_file_upload = gr.File(
-                            label="Comparison runs (.json / .jsonl) — select one or more",
-                            file_types=[".json", ".jsonl"],
+                            label="Comparison runs (.json / .jsonl / .zip) — select one or more",
+                            file_types=[".json", ".jsonl", ".zip"],
                             file_count="multiple",
                             scale=3,
                         )
@@ -1108,8 +1110,8 @@ def build_ui() -> gr.Blocks:
                             min_width=140,
                         )
                         cmp_file_upload = gr.File(
-                            label="Reference Trajectory (.json / .jsonl)",
-                            file_types=[".json", ".jsonl"],
+                            label="Reference Trajectory (.json / .jsonl / .zip)",
+                            file_types=[".json", ".jsonl", ".zip"],
                             scale=2,
                         )
                         cmp_anchor_upload = gr.File(
@@ -1576,7 +1578,11 @@ def build_ui() -> gr.Blocks:
             if upload_obj is not None:
                 file_path = upload_obj if isinstance(upload_obj, str) else upload_obj.name
 
-            if not file_path or not os.path.isfile(file_path):
+            if not file_path or not (
+                os.path.isfile(file_path)
+                or (os.path.isdir(file_path)
+                    and os.path.isfile(os.path.join(file_path, "session.jsonl")))
+            ):
                 return _empty_result(detail="*No file selected or file not found.*")
 
             format_hint = selected_format or None

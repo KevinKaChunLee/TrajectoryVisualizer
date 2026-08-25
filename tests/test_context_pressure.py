@@ -111,6 +111,22 @@ class AgentGroupingTests(unittest.TestCase):
         self.assertEqual(values[0], PRESSURE_ALL_AGENTS)
         self.assertIn(PRESSURE_MAIN_AGENT, values)
         self.assertIn("ses_x", values)
+        labels = [label for label, _ in choices]
+        self.assertIn("main", labels)
+        self.assertTrue(any("explore" in lab or lab.startswith("sub ") for lab in labels))
+
+    def test_dsh_shared_preset_labels_main_and_sub(self):
+        steps = [
+            _step(0, agent="standard", session_id="session-parent",
+                  is_sub_agent=False, tokens=_tokens(total=10, inp=10)),
+            _step(1, agent="standard", session_id="child-aaa-bbb",
+                  is_sub_agent=True, tokens=_tokens(total=10, inp=10)),
+        ]
+        series = context_pressure_series(steps)
+        labels = [a["label"] for a in series["agents"]]
+        self.assertIn("main", labels)
+        self.assertTrue(any(lab.startswith("sub ") for lab in labels))
+        self.assertFalse(any("standard" in lab for lab in labels))
 
 
 class CompactionDetectionTests(unittest.TestCase):

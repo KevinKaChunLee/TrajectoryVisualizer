@@ -61,7 +61,9 @@ class CanonicalAction:
 _READ_TOOLS = {"Read", "read"}
 _SEARCH_TOOLS = {"Glob", "glob", "Grep", "grep", "find", "ToolSearch"}
 _BASH_TOOLS = {"Bash", "bash", "BashCommand"}
-_SPAWN_TOOLS = {"Agent", "agent"}
+# Native spawn names plus DSH leftovers if the loader did not map them to Agent.
+# Do not include Claude Code ``Task`` — that would recategorize non-DSH runs.
+_SPAWN_TOOLS = {"Agent", "agent", "subagent", "subagent_fork"}
 _PLANNING_TOOLS = {"todowrite", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList"}
 # Navigation/utility commands excluded from alignment (like REASON)
 _NAVIGATION_COMMANDS = {"cd", "pwd", "ls", "echo", "export", "set", "source"}

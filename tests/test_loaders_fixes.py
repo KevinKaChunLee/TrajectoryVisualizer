@@ -290,7 +290,8 @@ class FormatLabelsTests(unittest.TestCase):
         self.assertEqual(
             FORMAT_LABELS,
             {"ccsession": "Claude Code", "codearts": "CodeArts",
-             "opencode": "OpenCode", "codex": "Codex CLI", "pi": "Pi"},
+             "opencode": "OpenCode", "codex": "Codex CLI", "pi": "Pi",
+             "dsh": "DeepSeek Harness"},
         )
 
     def test_dropdown_defaults_to_auto_detect(self):
@@ -337,6 +338,11 @@ class UnifiedDispatcherTests(unittest.TestCase):
             detect_format([{"type": "session_meta", "payload": {}}]), "codex")
         self.assertEqual(
             detect_format([{"type": "session", "id": "s1"}]), "pi")
+        self.assertEqual(
+            detect_format([{
+                "type": "session", "id": "session-1",
+                "createdAt": 1_700_000_000_000, "delegationDepth": 0,
+            }]), "dsh")
         self.assertEqual(detect_format([{"type": "message", "id": "m"}]), "unknown")
 
     def test_codex_json_array_loads_without_jsonl_extension(self):

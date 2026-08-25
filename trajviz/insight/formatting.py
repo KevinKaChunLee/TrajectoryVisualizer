@@ -207,13 +207,14 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
     ]
     # Build agent chips with main agent included and sub-agents labeled
     agent_bd = metrics.get("agent_breakdown", {})
+    agent_labels = metrics.get("agent_labels") or {}
     sub_agent_steps = sum(agent_bd.values())
     main_agent_steps = metrics.get("assistant_steps", 0) - sub_agent_steps
     agent_chips = []
     if agent_bd:
         agent_chips.append(_metric_chip("main agent", f"{main_agent_steps} steps", wide=True))
         for k, v in sorted(agent_bd.items(), key=lambda x: -x[1]):
-            label = f"sub-agent {k[:12]}"
+            label = agent_labels.get(k) or f"sub-agent {k[:12]}"
             agent_chips.append(_metric_chip(label, f"{v} steps", wide=True))
     model_chips = [
         _metric_chip(k, str(v))

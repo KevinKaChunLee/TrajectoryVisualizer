@@ -14,7 +14,7 @@ except ImportError:
 import plotly.graph_objects as go
 
 from .parser import infer_non_cache_input
-from .metrics import effective_agent
+from .metrics import effective_agent, tagged_subagent_display_label
 from .palette import (
     TOKEN_COLORS,
     SESSION_COLORS,
@@ -118,32 +118,40 @@ def _timeline_id_session(agent_id: str) -> str:
     return agent_id
 
 
+def _trunc_timeline_label(name: str) -> str:
+    return name if len(name) <= 20 else name[:19] + "…"
+
+
 def _timeline_display_label(agent_id: str, steps: list[dict]) -> str:
     """Legend / color bucket for a timeline agent id."""
     if not agent_id:
         return "main"
-    # Composite multi-session id: prefer the embedded agent mode name
-    if "::" in agent_id:
-        name = agent_id.split("::", 1)[1].strip()
-        if name:
-            return name if len(name) <= 20 else name[:19] + "…"
-        agent_id = agent_id.split("::", 1)[0]
+    tagged = tagged_subagent_display_label(agent_id, steps)
+    if tagged:
+        return tagged
     sid = _timeline_id_session(agent_id)
+    mode = ""
+    if "::" in agent_id:
+        mode = agent_id.split("::", 1)[1].strip()
+
+    # Composite multi-session id: prefer the embedded agent mode name
+    if mode:
+        return _trunc_timeline_label(mode)
     for s in steps:
         if not isinstance(s, dict):
             continue
         if (s.get("session_id") or "") == sid and sid == agent_id:
             name = str(s.get("agent") or "").strip()
             if name:
-                return name if len(name) <= 20 else name[:19] + "…"
+                return _trunc_timeline_label(name)
             title = str(s.get("session_title") or "").strip()
             if title:
-                return title if len(title) <= 20 else title[:19] + "…"
+                return _trunc_timeline_label(title)
             break
         if effective_agent(s) == agent_id or str(s.get("agent") or "").strip() == agent_id:
             name = str(s.get("agent") or "").strip()
             if name and name == agent_id:
-                return name if len(name) <= 20 else name[:19] + "…"
+                return _trunc_timeline_label(name)
     short = agent_id[:12] if len(agent_id) > 12 else agent_id
     return f"sub {short}"
 
@@ -179,15 +187,19 @@ def bind_timeline_agents(
     ``session_id::mode`` keys stay consistent with the palette.
     """
     multi, use_names, primary = _timeline_context(steps)
-    color_map: dict[str, int] = {"": 0}
-    next_idx = 1
+    order: list[str] = []
     for s in steps:
         if not isinstance(s, dict):
             continue
         agent = _timeline_agent_id(s, multi_session=multi, use_agent_names=use_names, primary_agents=primary)
-        if agent and agent not in color_map:
-            color_map[agent] = next_idx
-            next_idx += 1
+        if agent not in order:
+            order.append(agent)
+    if "" in order and order[0] != "":
+        order.remove("")
+        order.insert(0, "")
+    if not order:
+        order = [""]
+    color_map = {aid: i for i, aid in enumerate(order)}
     labels = _disambiguate_timeline_labels(list(color_map.keys()), steps)
 
     def agent_id(step: dict) -> str:
@@ -204,7 +216,8 @@ def bind_timeline_agents(
 def build_agent_color_map(steps: list[dict]) -> dict[str, int]:
     """Return a mapping from timeline agent-id to palette index.
 
-    Empty string is always index 0 (main). Sub-agents are 1+ in first-seen order.
+    Empty string is index 0 (main) when a step maps to it. Other agents
+    follow in first-seen order.
     """
     color_map, _labels, _agent_id = bind_timeline_agents(steps)
     return color_map
@@ -1479,10 +1492,13 @@ def build_file_interaction_chart(
     interactions: list[dict],
     target_files: set[str] | None = None,
     dark: bool = False,
+    steps: list[dict] | None = None,
 ) -> go.Figure:
     """Build a Plotly scatter chart of file interactions across steps.
 
-    x=step index, y=file path (categorical), color=interaction type.
+    x=step index, y=file path (categorical). Color is interaction type for
+    single-agent runs, and timeline agent (same palette as the swimlane) when
+    more than one agent touched files. Marker shape is always read/write/search.
     Target files are highlighted with a distinct marker border.
     """
     import os
@@ -1495,35 +1511,58 @@ def build_file_interaction_chart(
 
     target_files = target_files or set()
 
-    # Normalize target files for matching
     def _norm(p: str) -> str:
         return os.path.normpath(p) if p else p
 
     norm_targets = {_norm(t) for t in target_files}
 
-    # Group by interaction type for legend
-    for itype, color in _FILE_INTERACTION_COLORS.items():
-        group = [i for i in interactions if i["type"] == itype]
-        if not group:
-            continue
+    color_map: dict[str, int] = {"": 0}
+    labels: dict[str, str] = {"": "main"}
+    agent_id_of = None
+    step_by_idx: dict = {}
+    if steps:
+        color_map, labels, agent_id_of = bind_timeline_agents(steps)
+        step_by_idx = {
+            s["index"]: s for s in steps if isinstance(s, dict) and "index" in s
+        }
 
+    def _interaction_agent(item: dict) -> str:
+        if agent_id_of is None:
+            return ""
+        step = step_by_idx.get(item["step"])
+        return agent_id_of(step) if step else ""
+
+    agents_present = []
+    seen_agents: set[str] = set()
+    for item in interactions:
+        aid = _interaction_agent(item)
+        if aid not in seen_agents:
+            seen_agents.add(aid)
+            agents_present.append(aid)
+    has_agents = len(seen_agents) > 1
+
+    def _add_group(group: list[dict], *, name: str, color: str, symbol=None) -> None:
         x = [i["step"] for i in group]
         y = [i["path"] for i in group]
         is_target = [_norm(i["path"]) in norm_targets for i in group]
-        hover = [f"Step {i['step']}: {i['tool']}({i['path']})" for i in group]
+        hover = [
+            f"{name}<br>Step {i['step']}: {i['tool']} ({i['type']})<br>{i['path']}"
+            for i in group
+        ]
         border_colors = ["#dc2626" if t else color for t in is_target]
         border_widths = [2 if t else 0 for t in is_target]
-
+        if symbol is None:
+            symbol = [_FILE_INTERACTION_SYMBOLS.get(i["type"], "circle") for i in group]
         fig.add_trace(
             go.Scatter(
                 x=x,
                 y=y,
                 mode="markers",
-                name=itype,
+                name=name,
                 marker=dict(
                     color=color,
                     size=9,
-                    symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
+                    symbol=symbol,
                     line=dict(color=border_colors, width=border_widths),
                 ),
                 hovertext=hover,
@@ -1531,24 +1570,46 @@ def build_file_interaction_chart(
             )
         )
 
-    # Dynamic height — scale with file count so all files are visible.
-    # Drag-to-pan on y-axis is still enabled for very large trajectories.
+    if has_agents:
+        for agent_id in sorted(color_map.keys(), key=lambda a: color_map[a]):
+            group = [i for i in interactions if _interaction_agent(i) == agent_id]
+            if not group:
+                continue
+            label = _legend_label(agent_id, labels)
+            color = SESSION_COLORS[color_map[agent_id] % len(SESSION_COLORS)]
+            _add_group(group, name=label, color=color)
+        for aid in agents_present:
+            if aid in color_map:
+                continue
+            group = [i for i in interactions if _interaction_agent(i) == aid]
+            if group:
+                _add_group(
+                    group,
+                    name=_legend_label(aid, labels),
+                    color=SESSION_COLORS[len(color_map) % len(SESSION_COLORS)],
+                )
+    else:
+        for itype, color in _FILE_INTERACTION_COLORS.items():
+            group = [i for i in interactions if i["type"] == itype]
+            if group:
+                _add_group(
+                    group,
+                    name=itype,
+                    color=color,
+                    symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
+                )
+
     unique_files = len({i["path"] for i in interactions})
     chart_height = max(350, 25 * unique_files + 80)
 
-    # Size the left margin to fit the longest path label in full (no truncation).
     max_path_len = max((len(i["path"]) for i in interactions), default=20)
     left_margin = max(150, max_path_len * 7)
-
-    # Force the figure wider than its container when labels + plot area would
-    # otherwise overflow, so the surrounding HTML wrapper can scroll left↔right.
-    # Minimum plot-area width of 600px keeps the step axis readable even when
-    # the label margin is huge (e.g., deep Windows paths like the screenshot).
     fig_width = left_margin + 600 + 20  # left margin + plot area + right margin
+    title = "File Interaction Timeline by Agent" if has_agents else "File Interaction Timeline"
 
     _apply_chart_layout(
         fig,
-        "File Interaction Timeline",
+        title,
         xaxis="Step",
         yaxis="File",
         height=chart_height,
@@ -1557,9 +1618,20 @@ def build_file_interaction_chart(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
     fig.update_layout(width=fig_width, autosize=False)
-    # Enable drag-to-pan/zoom on both axes so users can also navigate via mouse.
+    file_order: list[str] = []
+    seen_files: set[str] = set()
+    for item in interactions:
+        path = item["path"]
+        if path not in seen_files:
+            seen_files.add(path)
+            file_order.append(path)
+    # categoryarray is bottom→top; reverse so the first-touched files sit at the top.
+    fig.update_yaxes(
+        fixedrange=False,
+        categoryorder="array",
+        categoryarray=list(reversed(file_order)),
+    )
     fig.update_xaxes(fixedrange=False)
-    fig.update_yaxes(fixedrange=False)
     fig.update_layout(dragmode="pan")
     _apply_dark(fig, dark)
     return fig
