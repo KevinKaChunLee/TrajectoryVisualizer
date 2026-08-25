@@ -293,6 +293,7 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn("text-align: center", APP_CSS)
         self.assertIn("position=\"right\"", source)
         self.assertIn("open=False", source)
+        self.assertIn('width="max(480px, 25vw)"', source)
         self.assertIn('content: "AI Trajectory Analysis"', APP_CSS)
         self.assertIn("state_analysis_brief", source)
         self.assertIn("on_analysis_ask", source)

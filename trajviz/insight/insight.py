@@ -855,7 +855,7 @@ def build_ui() -> gr.Blocks:
         with gr.Sidebar(
             label="AI Trajectory Analysis",
             position="right",
-            width=400,
+            width="max(480px, 25vw)",
             open=False,
             elem_id="analysis-sidebar",
             elem_classes=["analysis-sidebar"],
