@@ -1147,6 +1147,66 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 
 /* ===== Converge comparison styles (merged) ===== */
 """ + _CONVERGE_CSS + """
+
+/* AI Trajectory Analysis sidebar */
+#analysis-sidebar .analysis-panel-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ov-text);
+    letter-spacing: -0.01em;
+    text-align: center;
+    margin: 0 0 10px;
+}
+#analysis-sidebar .html-container:has(.analysis-panel-title) .prose {
+    text-align: center;
+}
+#analysis-sidebar .analysis-status {
+    font-size: 12px;
+    color: var(--ov-muted);
+    line-height: 1.45;
+    margin-bottom: 10px;
+    text-align: left;
+}
+#analysis-sidebar .analysis-status-ok { color: var(--ov-success); font-weight: 600; }
+#analysis-sidebar .analysis-status-warn { color: var(--ov-warn); font-weight: 600; }
+#analysis-sidebar .analysis-status code {
+    background: var(--ov-code-bg);
+    border: 1px solid var(--ov-code-border);
+    border-radius: 4px;
+    padding: 0 4px;
+    font-size: 11px;
+}
+#analysis-sidebar .analysis-chatbot {
+    border: 1px solid var(--ov-border);
+    border-radius: 10px;
+}
+/* Closed right-edge tab: Gradio rotates this button 180deg, so undo that
+   before adding a readable label next to the chevron. */
+#analysis-sidebar.right:not(.open) .toggle-button {
+    transform: none;
+    width: auto;
+    height: auto;
+    padding: 7px 12px 7px 8px;
+    gap: 8px;
+    border-radius: 8px 0 0 8px;
+    border: 1px solid var(--ov-border, var(--border-color-primary));
+    border-right: none;
+    box-shadow: -2px 2px 8px var(--ov-card-shadow, rgba(15, 23, 42, 0.08));
+    background: var(--ov-card, var(--background-fill-secondary));
+}
+#analysis-sidebar.right:not(.open) .toggle-button .chevron {
+    transform: rotate(180deg);
+    padding: 0;
+}
+#analysis-sidebar.right:not(.open) .toggle-button::after {
+    content: "AI Trajectory Analysis";
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ov-text, var(--body-text-color));
+    white-space: nowrap;
+    line-height: 1.2;
+}
 """
 
 WORKFLOW_CSS = """
@@ -1181,6 +1241,7 @@ WORKFLOW_CSS = """
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     max-height: 1.4em; line-height: 1.4;
 }
+
 .wf-code-block {
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     margin: 6px 0; overflow-x: auto; position: relative;
