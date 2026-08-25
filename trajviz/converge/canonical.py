@@ -61,7 +61,7 @@ class CanonicalAction:
 _READ_TOOLS = {"Read", "read"}
 _SEARCH_TOOLS = {"Glob", "glob", "Grep", "grep", "find", "ToolSearch"}
 _BASH_TOOLS = {"Bash", "bash", "BashCommand"}
-_SPAWN_TOOLS = {"Agent", "agent", "Task", "task", "subagent_fork"}
+_SPAWN_TOOLS = {"Agent", "agent", "Task", "task", "subagent", "subagent_fork"}
 _PLANNING_TOOLS = {"todowrite", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList"}
 # Navigation/utility commands excluded from alignment (like REASON)
 _NAVIGATION_COMMANDS = {"cd", "pwd", "ls", "echo", "export", "set", "source"}

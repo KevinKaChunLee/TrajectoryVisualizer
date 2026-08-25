@@ -1835,6 +1835,7 @@ _DSH_TOOL_NAMES = {
     "glob": "Glob",
     "grep": "Grep",
     "todo_write": "TodoWrite",
+    "subagent": "Agent",
     "subagent_fork": "Agent",
 }
 
@@ -1969,10 +1970,24 @@ def _dsh_extract_usage(usage: Any) -> dict | None:
 def _dsh_child_session_id_from_output(output: str) -> str:
     if not isinstance(output, str) or not output:
         return ""
-    match = re.search(r"started subagent\s+(\S+)", output)
+    match = re.search(r"started subagent\s+(\S+)", output, flags=re.IGNORECASE)
     if not match:
         return ""
     return match.group(1).rstrip(".,;")
+
+
+def _dsh_is_human_user_source(source: Any) -> bool:
+    """True when a ``user/message`` is a human prompt, not a runtime notice.
+
+    DSH tags sandbox snapshots as ``plugin`` and background-child notices as
+    ``subagent-report`` / ``subagent-settled``. Compact fixtures omit ``kind``.
+    """
+    if not isinstance(source, dict):
+        return True
+    kind = source.get("kind")
+    if not isinstance(kind, str) or not kind:
+        return True
+    return kind == "user"
 
 
 def _dsh_tool_result_payload(data: dict) -> tuple[str, str, bool]:
@@ -2127,7 +2142,7 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
             continue
         if etype == "user/message":
             source = data.get("source") if isinstance(data.get("source"), dict) else {}
-            if source.get("kind") == "plugin":
+            if not _dsh_is_human_user_source(source):
                 continue
             parts = []
             for item in _dsh_iter_content(data.get("content")):
@@ -2196,18 +2211,44 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
     return session, messages, current_model, current_provider, title
 
 
-def _dsh_child_paths_in_subagents_dir(sub_root: str) -> list[str]:
-    if not os.path.isdir(sub_root):
+_DSH_CHILD_WALK_MAX_DEPTH = 8
+
+
+def _dsh_child_paths_in_subagents_dir(
+    sub_root: str, *, _depth: int = 0,
+) -> list[str]:
+    """Collect ``<id>/session.jsonl`` under a ``subagents/`` directory.
+
+    Walks nested ``<id>/subagents/`` trees (grandchildren) up to
+    ``_DSH_CHILD_WALK_MAX_DEPTH`` so a parent export that stores deeper
+    delegations still merges.
+    """
+    if _depth > _DSH_CHILD_WALK_MAX_DEPTH or not os.path.isdir(sub_root):
         return []
     paths: list[str] = []
     try:
         names = sorted(os.listdir(sub_root))
     except OSError:
         return []
+    seen: set[str] = set()
     for name in names:
-        child = os.path.join(sub_root, name, "session.jsonl")
-        if os.path.isfile(child):
-            paths.append(child)
+        if any(sep in name for sep in ("/", "\\")) or name in (".", ".."):
+            continue
+        child_dir = os.path.join(sub_root, name)
+        session = os.path.join(child_dir, "session.jsonl")
+        if os.path.isfile(session):
+            real = os.path.realpath(session)
+            if real not in seen:
+                seen.add(real)
+                paths.append(session)
+        nested = os.path.join(child_dir, "subagents")
+        for nested_path in _dsh_child_paths_in_subagents_dir(
+            nested, _depth=_depth + 1,
+        ):
+            real = os.path.realpath(nested_path)
+            if real not in seen:
+                seen.add(real)
+                paths.append(nested_path)
     return paths
 
 
@@ -2307,11 +2348,36 @@ def _dsh_read_event_list(path: str) -> list[dict]:
 
 
 def _fill_message_completion_times(messages: list[dict]) -> None:
-    for i in range(len(messages) - 1):
-        cur_t = messages[i]["info"]["time"].get("created")
-        nxt_t = messages[i + 1]["info"]["time"].get("created")
-        if isinstance(cur_t, (int, float)) and isinstance(nxt_t, (int, float)) and nxt_t >= cur_t:
-            messages[i]["info"]["time"]["completed"] = nxt_t
+    """Set ``time.completed`` from the next message in the *same* session.
+
+    Parent and child logs are merged then sorted by timestamp. Filling from
+    the globally next row attributes a parallel child's start to the parent
+    (and sibling children to each other).
+    """
+    by_session: dict[str, list[dict]] = {}
+    for msg in messages:
+        info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
+        sid = info.get("sessionID")
+        key = sid if isinstance(sid, str) else ""
+        by_session.setdefault(key, []).append(msg)
+    for group in by_session.values():
+        for i in range(len(group) - 1):
+            cur_info = group[i].get("info")
+            nxt_info = group[i + 1].get("info")
+            if not isinstance(cur_info, dict) or not isinstance(nxt_info, dict):
+                continue
+            cur_time = cur_info.get("time") if isinstance(cur_info.get("time"), dict) else None
+            nxt_time = nxt_info.get("time") if isinstance(nxt_info.get("time"), dict) else None
+            if not cur_time or not nxt_time:
+                continue
+            cur_t = cur_time.get("created")
+            nxt_t = nxt_time.get("created")
+            if (
+                isinstance(cur_t, (int, float)) and not isinstance(cur_t, bool)
+                and isinstance(nxt_t, (int, float)) and not isinstance(nxt_t, bool)
+                and nxt_t >= cur_t
+            ):
+                cur_time["completed"] = nxt_t
 
 
 def _dsh_ms_to_iso(ms: int | None) -> str:
@@ -2336,7 +2402,8 @@ def _convert_dsh_to_internal(
     ``tool/result``). Streaming chunk rows are ignored in favour of the
     completed ``assistant/message`` (which carries usage). Child sessions live
     under a sibling ``subagents/<id>/session.jsonl`` directory (or the same
-    layout inside an export zip) and are merged when present.
+    layout inside an export zip, including nested ``subagents/<id>/subagents/``)
+    and are merged when present.
     """
     session, messages, model, provider, title = _dsh_session_to_messages(events)
     if child_event_lists is None:
@@ -2357,7 +2424,7 @@ def _convert_dsh_to_internal(
     for child_events in child_event_lists:
         if not child_events:
             continue
-        child_session, child_messages, child_model, child_provider, _ = (
+        child_session, child_messages, child_model, child_provider, child_title = (
             _dsh_session_to_messages(child_events)
         )
         child_id = child_session.get("id")
@@ -2367,6 +2434,11 @@ def _convert_dsh_to_internal(
             model = child_model
         if child_provider and not provider:
             provider = child_provider
+        if child_title:
+            for msg in child_messages:
+                info = msg.get("info") if isinstance(msg.get("info"), dict) else None
+                if info is not None and not info.get("sessionTitle"):
+                    info["sessionTitle"] = child_title
         messages.extend(child_messages)
 
     messages.sort(key=lambda msg: (
@@ -2802,7 +2874,8 @@ def _zip_dsh_members(names: list[str]) -> tuple[str | None, list[tuple[str, str]
 
     Parent is the shortest path ending in ``session.jsonl`` that is not under
     a ``subagents`` directory. Children are ``subagents/<id>/session.jsonl``
-    (DSH GUI zip root) or ``.../subagents/<id>/session.jsonl`` (folder zip).
+    (DSH GUI zip root), ``.../subagents/<id>/session.jsonl`` (folder zip),
+    or nested ``.../subagents/<id>/subagents/<id>/session.jsonl``.
     """
     jsonl_members = [
         name.replace("\\", "/") for name in names
@@ -2815,10 +2888,13 @@ def _zip_dsh_members(names: list[str]) -> tuple[str | None, list[tuple[str, str]
     children: list[tuple[str, str]] = []
     for name in jsonl_members:
         rest = _zip_subagent_suffix(name)
-        if not rest or not rest.endswith("/session.jsonl"):
+        if not rest:
             continue
-        child_id = rest.split("/", 1)[0]
-        if child_id:
+        rest_parts = rest.split("/")
+        if len(rest_parts) < 2 or rest_parts[-1] != "session.jsonl":
+            continue
+        child_id = rest_parts[-2]
+        if child_id and child_id != "subagents":
             children.append((child_id, name))
     children.sort(key=lambda item: item[0])
     return parent, children

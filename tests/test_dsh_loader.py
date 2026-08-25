@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from trajviz.converge.canonical import canonicalize_steps
 from trajviz.insight.charts import bind_timeline_agents, build_file_interaction_chart
 from trajviz.insight.diagnostics import extract_file_interactions
 from trajviz.insight.loaders import _zip_dsh_members, detect_format, load_trajectory
@@ -207,6 +208,39 @@ class DshLoaderTests(unittest.TestCase):
         self.assertEqual(user_previews, ["summarize this repo"])
         self.assertTrue(all("runtime context" not in (p or "") for p in user_previews))
 
+    def test_subagent_notice_user_messages_skipped(self):
+        events = [
+            _session(),
+            _user(1, 1_787_623_647_300, "summarize this repo"),
+            _user(2, 1_787_623_648_200,
+                  "Background subagent child-1 reported: done",
+                  msg_id="rep-1", kind="subagent-report"),
+            _user(3, 1_787_623_648_500,
+                  "Background subagent child-1 finished and will do no further work.",
+                  msg_id="set-1", kind="subagent-settled"),
+            _assistant(4, 1_787_623_648_600, [
+                {"type": "text", "text": "Here is an overview."},
+            ]),
+        ]
+        steps = parse_steps(self._load(events, name="notices.jsonl"))
+        user_previews = [s["text_preview"] for s in steps if s["role"] == "user"]
+        self.assertEqual(user_previews, ["summarize this repo"])
+        blob = " ".join(s.get("text_preview") or "" for s in steps)
+        self.assertNotIn("Background subagent", blob)
+
+    def test_user_message_without_kind_is_kept(self):
+        events = [
+            _session(),
+            _evt("user/message", 1, 1_787_623_647_300, {
+                "content": [{"type": "text", "text": "hello without kind"}],
+                "role": "user",
+                "id": "u-nokind",
+            }),
+        ]
+        steps = parse_steps(self._load(events, name="nokind.jsonl"))
+        user_previews = [s["text_preview"] for s in steps if s["role"] == "user"]
+        self.assertEqual(user_previews, ["hello without kind"])
+
     def test_thinking_becomes_reasoning(self):
         steps = parse_steps(self._load())
         reasoned = [s for s in steps if s.get("has_reasoning")]
@@ -247,6 +281,29 @@ class DshLoaderTests(unittest.TestCase):
         self.assertEqual(fork["tool_name"], "Agent")
         self.assertEqual(fork["status"], "success")
         self.assertEqual(fork["metadata"].get("sessionId"), "child-1")
+
+    def test_isolated_subagent_maps_to_agent(self):
+        events = [
+            _session(),
+            _assistant(1, 1_787_623_647_400, [
+                {"type": "tool-call", "id": "call-iso", "name": "subagent",
+                 "arguments": json.dumps({
+                     "description": "Explore insight", "prompt": "read insight/",
+                 })},
+            ]),
+            _tool_call(2, 1_787_623_647_401, "call-iso", "subagent",
+                       {"description": "Explore insight", "prompt": "read insight/"}),
+            _tool_result(3, 1_787_623_647_500, "call-iso",
+                         "Started Subagent child-iso"),
+        ]
+        steps = parse_steps(self._load(events, name="iso-sub.jsonl"))
+        spawn = next(
+            tc for s in steps for tc in s["tool_calls"] if tc["tool_id"] == "call-iso"
+        )
+        self.assertEqual(spawn["tool_name"], "Agent")
+        self.assertEqual(spawn["metadata"].get("sessionId"), "child-iso")
+        actions = canonicalize_steps(steps)
+        self.assertTrue(any(a.action_type == "AGENT_SPAWN" for a in actions))
 
     def test_token_usage_ingested(self):
         steps = parse_steps(self._load())
@@ -329,6 +386,7 @@ class DshLoaderTests(unittest.TestCase):
             _assistant(4, 1_787_623_647_400, [
                 {"type": "text", "text": "I'll look around."},
             ], msg_id="seed-asst"),
+            _evt("session/title", 5, 1_787_623_648_100, {"title": "Insight explorer"}),
             _user(6, 1_787_623_648_200, "Explore trajviz/insight/", msg_id="child-user"),
             _assistant(7, 1_787_623_648_400, [
                 {"type": "text", "text": "Insight package map."},
@@ -348,6 +406,61 @@ class DshLoaderTests(unittest.TestCase):
         child_previews = [s["text_preview"] for s in child_steps]
         self.assertTrue(any("Insight package map" in (p or "") for p in child_previews))
         self.assertFalse(any((p or "") == "I'll look around." for p in child_previews))
+        self.assertTrue(all(s.get("session_title") == "Insight explorer"
+                            for s in child_steps))
+
+    def test_completion_times_stay_inside_session(self):
+        t0, t1, t2, t3, t4 = (
+            1_787_623_647_300, 1_787_623_647_400, 1_787_623_647_500,
+            1_787_623_647_800, 1_787_623_648_200,
+        )
+        session_dir = os.path.join(self.tmp, "timing")
+        _write(session_dir, "session.jsonl", [
+            _session(),
+            _user(1, t0, "do the work"),
+            _assistant(2, t1, [{"type": "text", "text": "forking"}], msg_id="p1"),
+            _assistant(3, t4, [{"type": "text", "text": "parent resume"}],
+                       msg_id="p2"),
+        ])
+        _write(session_dir, os.path.join("subagents", "child-1", "session.jsonl"), [
+            _session(id="child-1", origin="subagent", parentSession="session-parent",
+                     seedLength=1, createdAt=t2),
+            _user(2, t2, "child prompt", msg_id="cu"),
+            _assistant(3, t3, [{"type": "text", "text": "child done"}], msg_id="ca"),
+        ])
+        steps = parse_steps(load_trajectory(os.path.join(session_dir, "session.jsonl")))
+        parent_first = next(s for s in steps if s.get("id") == "p1")
+        self.assertEqual(parent_first["time_completed_ms"], t4)
+        child_user = next(s for s in steps if s.get("id") == "cu")
+        self.assertEqual(child_user["time_completed_ms"], t3)
+        child_asst = next(s for s in steps if s.get("id") == "ca")
+        self.assertFalse(child_asst.get("time_completed_ms"))
+
+    def test_nested_subagents_merged(self):
+        session_dir = os.path.join(self.tmp, "nested-export")
+        _write(session_dir, "session.jsonl", self.events)
+        _write(session_dir, os.path.join("subagents", "child-1", "session.jsonl"),
+               self._child_events())
+        grand = [
+            _session(id="grand-1", origin="subagent", parentSession="child-1",
+                     seedLength=1, createdAt=1_787_623_648_500),
+            _user(2, 1_787_623_648_600, "grandchild task", msg_id="gu"),
+            _assistant(3, 1_787_623_648_700, [
+                {"type": "text", "text": "grandchild done"},
+            ], msg_id="ga"),
+        ]
+        _write(
+            session_dir,
+            os.path.join("subagents", "child-1", "subagents", "grand-1",
+                         "session.jsonl"),
+            grand,
+        )
+        raw = load_trajectory(os.path.join(session_dir, "session.jsonl"))
+        self.assertEqual(raw["metadata"]["sub_agent_count"], 2)
+        steps = parse_steps(raw)
+        self.assertTrue(any(s.get("session_id") == "grand-1" for s in steps))
+        self.assertTrue(any("grandchild done" in (s.get("text_preview") or "")
+                            for s in steps))
 
     def test_file_interaction_chart_includes_subagent_files(self):
         session_dir = os.path.join(self.tmp, "files")
@@ -427,6 +540,15 @@ class DshLoaderTests(unittest.TestCase):
         ])
         self.assertEqual(parent, "session.jsonl")
         self.assertEqual([cid for cid, _ in children], ["child-1", "child-2"])
+
+    def test_zip_members_nested_subagents(self):
+        parent, children = _zip_dsh_members([
+            "session.jsonl",
+            "subagents/child-1/session.jsonl",
+            "subagents/child-1/subagents/grand-1/session.jsonl",
+        ])
+        self.assertEqual(parent, "session.jsonl")
+        self.assertEqual([cid for cid, _ in children], ["child-1", "grand-1"])
 
     def test_zip_members_ignores_mysubagents_false_positive(self):
         parent, children = _zip_dsh_members(["mysubagents/session.jsonl"])
@@ -546,6 +668,9 @@ class DshLoaderTests(unittest.TestCase):
         tools = {tc["tool_name"] for s in steps for tc in s["tool_calls"]}
         self.assertIn("Read", tools)
         self.assertIn("Agent", tools)
+        user_previews = [s.get("text_preview") or "" for s in steps if s["role"] == "user"]
+        self.assertTrue(all("Background subagent" not in p for p in user_previews))
+        self.assertGreaterEqual(len(user_previews), 1)
 
 
 if __name__ == "__main__":
