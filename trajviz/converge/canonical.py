@@ -70,7 +70,7 @@ _NAVIGATION_COMMANDS = {"cd", "pwd", "ls", "echo", "export", "set", "source"}
 
 # sed/awk read by default (B22): `sed -n '1,50p' file` is a view, not a write.
 # Only explicit in-place flags (see _is_in_place_edit) make them writes,
-# mirroring the Codex mapping in insight/loaders.py.
+# mirroring the Codex mapping in insight/formats/codex.py.
 _FUZZY_KEYWORDS: dict[str, str] = {
     "grep": "SEARCH", "rg": "SEARCH", "ag": "SEARCH", "find": "SEARCH",
     "cat": "FILE_READ", "head": "FILE_READ", "tail": "FILE_READ", "less": "FILE_READ",
