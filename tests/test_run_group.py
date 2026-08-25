@@ -689,6 +689,33 @@ class TimelineIdentityTests(unittest.TestCase):
             aid = agent_id_of(step)
             self.assertIn(aid, color_map)
 
+    def test_dsh_tagged_subagents_label_main_and_sub(self):
+        steps = [
+            {
+                "index": 0,
+                "role": "assistant",
+                "agent": "standard",
+                "session_id": "session-parent",
+                "is_sub_agent": False,
+                "tokens": {"total": 1},
+                "tool_call_count": 0,
+            },
+            {
+                "index": 1,
+                "role": "assistant",
+                "agent": "standard",
+                "session_id": "child-aaa-bbb",
+                "is_sub_agent": True,
+                "tokens": {"total": 1},
+                "tool_call_count": 0,
+            },
+        ]
+        _color_map, labels, _agent_id_of = bind_timeline_agents(steps)
+        values = {label for aid, label in labels.items() if aid}
+        self.assertIn("main", values)
+        self.assertTrue(any(label.startswith("sub ") for label in values))
+        self.assertFalse(any("standard" in label for label in values))
+
 
 class ScorecardDisplayTests(unittest.TestCase):
     def test_peak_zero_is_numeric_not_dash(self):

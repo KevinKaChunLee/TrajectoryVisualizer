@@ -430,7 +430,7 @@ def extract_plan_history(steps: list[dict]) -> list[dict]:
         for tc in s.get("tool_calls", []):
             name = tc.get("tool_name") or tc.get("name", "")
             # Match TodoWrite (Claude Code), todowrite (OpenCode), TaskCreate, etc.
-            if name.lower() not in ("todowrite", "taskcreate", "taskupdate"):
+            if name.lower() not in ("todowrite", "todo_write", "taskcreate", "taskupdate"):
                 continue
             inp = tc.get("input", tc.get("arguments", {}))
             if not isinstance(inp, dict):

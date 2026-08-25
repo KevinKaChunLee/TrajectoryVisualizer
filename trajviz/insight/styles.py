@@ -531,8 +531,15 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     border-bottom: 2px dashed #e2e8f0;
     cursor: ns-resize;
 }
-.resizable-chart .plotly-graph-div {
-    height: 100% !important;
+/* Keep Plotly's layout.height so tall file-interaction charts scroll inside
+   this container instead of being squashed to the visible slice (which hid
+   later files / sub-agent rows). min-height still lets a short chart stretch
+   when the user resizes the pane up. */
+.resizable-chart .plotly-graph-div,
+.resizable-chart .js-plotly-plot,
+.resizable-chart .svg-container {
+    height: auto !important;
+    min-height: 280px;
 }
 
 /* ===== Responsive breakpoints ===== */

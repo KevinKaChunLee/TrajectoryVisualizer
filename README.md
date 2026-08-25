@@ -4,7 +4,7 @@
 
 TrajViz loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
-Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, **Codex CLI**, and **Pi** out of the box.
+Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, **Codex CLI**, **Pi**, and **DeepSeek Harness** out of the box.
 
 ---
 
@@ -111,10 +111,10 @@ python -m trajviz.insight --port 8080
 ## Supported trajectory formats
 
 trajviz normalizes the following formats. **Auto-detect** is the default —
-upload a `.json` / `.jsonl` file and load it. Pick a specific format only to
+upload a `.json` / `.jsonl` / `.zip` file and load it. Pick a specific format only to
 override detection or to load a Claude Code export that lacks the usual
 `format` marker. An explicit pick still rejects a mismatched JSON file
-(Codex and Pi `.jsonl` sessions are recognized regardless of the dropdown):
+(Codex, Pi, and DeepSeek Harness `.jsonl` sessions are recognized regardless of the dropdown):
 
 | Format | Detection | Notes |
 |---|---|---|
@@ -123,6 +123,7 @@ override detection or to load a Claude Code export that lacks the usual
 | CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
 | Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the shared step model (Auto-detect recognizes `.jsonl` uploads); tool intent (Read / Grep / Glob / Write / Bash) inferred from classic `exec_command` calls and modern `exec` / `apply_patch` records |
 | Pi | `.jsonl` session starting with a `session` event | Normalized from `~/.pi/agent/sessions/` exports; `bash` / `read` / `write` / `edit` / `grep` mapped into the shared step model |
+| DeepSeek Harness | `.jsonl` session starting with a `session` header that has `createdAt` (epoch ms) and slash-typed body events (`user/message`, `tool/call`, …) | Normalized from a DSH export folder or zip (`session.jsonl` + `subagents/<id>/session.jsonl`); `bash` / `read` / `write` / `glob` / `todo_write` / `subagent_fork` mapped into the shared step model. Child logs drop the inherited parent prefix (`seedLength`). |
 
 ---
 
@@ -289,6 +290,24 @@ Pi records every session automatically as JSONL under
    leading `session` event and threads messages, thinking, tool calls
    (`bash` / `read` / `write` / …), and token usage into the shared step
    model.
+
+### DeepSeek Harness
+
+DeepSeek Harness (DSH) records each session as JSONL. The GUI export is a
+folder (or zip) named `dsh-session-<session-id>/` containing the parent
+`session.jsonl` and, when the run spawned sub-agents, `subagents/<id>/session.jsonl`.
+
+1. Run a DSH session as normal.
+2. Export / download the session log from the DSH GUI (zip), or copy the
+   session directory.
+3. Upload the **zip** (GUI exports put `session.jsonl` and `subagents/` at
+   the zip root), the session directory, or `session.jsonl`. Auto-detect
+   recognizes the leading `session` header (`createdAt`, slash-typed events)
+   and does **not** treat it as a Pi log. Child sessions are merged when
+   `subagents/` sits next to `session.jsonl`, inside the zip, or in a
+   `dsh-session-<session-id>` folder next to the file / in `~/Downloads`
+   (the dashboard copies an uploaded `session.jsonl` without that sibling
+   tree). Inherited parent turns at the front of each child log are skipped.
 
 ---
 
