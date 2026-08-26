@@ -279,9 +279,9 @@ class AnalysisChatTests(unittest.TestCase):
 
 class AnalysisUiTests(unittest.TestCase):
     def test_sidebar_is_wired_in_build_ui(self):
-        from trajviz.insight import insight
+        from trajviz.insight.ui import sidebar
 
-        source = inspect.getsource(insight.build_ui)
+        source = inspect.getsource(sidebar)
         self.assertIn("🤖 AI Trajectory Analysis", source)
         self.assertIn("analyze_loaded_trajectory", source)
         self.assertNotIn("suggest_btns", source)
