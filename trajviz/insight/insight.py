@@ -60,6 +60,7 @@ def build_ui() -> gr.Blocks:
             slots=slots,
         )
         load_events = (_load_ev, _upload_ev)
+        upload.bind_export(upload_refs, shared, load_events)
 
         sidebar.bind(sidebar_refs, shared, load_events)
         overview_tab.bind(overview, shared, upload_refs)

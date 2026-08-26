@@ -197,6 +197,12 @@ def load_session(path: str, format_hint: str = "") -> LoadedSession | LoadError:
             detected=detected,
         )
 
+    return build_loaded_session(path, raw, detected=detected)
+
+
+def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -> LoadedSession:
+    """Analyze already-loaded *raw* into a ``LoadedSession`` (no file I/O)."""
+    detected = detected if detected is not None else detect_format(raw)
     steps = parse_steps(raw)
     steps_total = len(steps)
     truncated = False

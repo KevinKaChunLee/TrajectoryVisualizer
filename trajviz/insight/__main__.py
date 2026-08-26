@@ -9,7 +9,28 @@ def main():
     parser.add_argument("--port", type=int, default=7860, help="Server port (default: 7860)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Server host (default: 127.0.0.1). Use 0.0.0.0 to accept connections from any IP.")
     parser.add_argument("--share", action="store_true", help="Create a public Gradio link")
+    parser.add_argument(
+        "--report",
+        metavar="TRAJECTORY",
+        help="Write a standalone HTML report for TRAJECTORY and exit (no dashboard)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="HTML report output file or directory (default: a temp file; prints the path)",
+    )
     args = parser.parse_args()
+
+    if args.report:
+        from .report import ReportError, report_from_path
+
+        try:
+            path = report_from_path(args.report, args.output)
+        except ReportError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+        print(path)
+        return
 
     try:
         from .insight import build_ui

@@ -8,7 +8,9 @@ import gradio as gr
 
 from ..loaders import FORMAT_DROPDOWN_CHOICES
 from ..presenters.overview import build_summary_outputs, load_warnings_html
+from ..report import ReportError, write_report_file
 from ..session import LoadedSession
+from .shared import SharedState
 
 
 @dataclass
@@ -17,6 +19,7 @@ class UploadRefs:
     format_selector: gr.Dropdown
     file_upload: gr.File
     load_btn: gr.Button
+    export_btn: gr.DownloadButton
     label_file_upload: gr.File
     label_load_btn: gr.Button
     summary_area: gr.Column
@@ -48,7 +51,15 @@ def layout() -> UploadRefs:
                 file_types=[".json", ".jsonl", ".zip"],
                 height=110,
             )
-            load_btn = gr.Button("Load Trajectory", variant="primary", size="sm", min_width=120)
+            with gr.Row():
+                load_btn = gr.Button("Load Trajectory", variant="primary", size="sm", min_width=120)
+                export_btn = gr.DownloadButton(
+                    label="Export HTML",
+                    variant="secondary",
+                    size="sm",
+                    min_width=120,
+                    interactive=False,
+                )
         with gr.Column(scale=2, min_width=200):
             label_file_upload = gr.File(
                 label="Labels (optional)",
@@ -67,6 +78,7 @@ def layout() -> UploadRefs:
         format_selector=format_selector,
         file_upload=file_upload,
         load_btn=load_btn,
+        export_btn=export_btn,
         label_file_upload=label_file_upload,
         label_load_btn=label_load_btn,
         summary_area=summary_area,
@@ -84,6 +96,36 @@ def load_slots(refs: UploadRefs) -> dict:
         "summary_banner": refs.summary_banner,
         "anomaly_strip_html": refs.anomaly_strip_html,
     }
+
+
+def prepare_html_export(raw, _steps=None, dark=False):
+    """Build the HTML snapshot after a trajectory loads.
+
+    Gradio's DownloadButton only saves in the same click that already has a
+    file URL. Generating on click (then JS-clicking a hidden button) is
+    blocked as a non-gesture download, and ``value=callable`` toasts on page
+    load. So the report is prepared here and the button just downloads.
+    """
+    payload = raw if isinstance(raw, dict) else {}
+    if not payload or payload.get("_error"):
+        return gr.update(value=None, interactive=False)
+    try:
+        path = write_report_file(payload, dark=bool(dark))
+    except ReportError:
+        return gr.update(value=None, interactive=False)
+    return gr.update(value=path, interactive=True)
+
+
+def bind_export(refs: UploadRefs, shared: SharedState, load_events: tuple) -> None:
+    """Enable Export HTML after a successful load (not as DownloadButton value=)."""
+    for event in load_events:
+        event.success(
+            fn=prepare_html_export,
+            inputs=[shared.state_raw, shared.state_steps, shared.state_dark],
+            outputs=refs.export_btn,
+            show_progress="minimal",
+            show_progress_on=refs.export_btn,
+        )
 
 
 def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict:
