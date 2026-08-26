@@ -292,6 +292,8 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn("#analysis-sidebar .analysis-panel-title", APP_CSS)
         self.assertIn("text-align: center", APP_CSS)
         self.assertIn("color-scheme: light", APP_CSS)
+        self.assertNotIn("resizable-chart .plotly-graph-div", APP_CSS)
+        self.assertIn("max-height: none !important", APP_CSS)
         self.assertIn("position=\"right\"", source)
         self.assertIn("open=False", source)
         self.assertIn('width="max(480px, 25vw)"', source)

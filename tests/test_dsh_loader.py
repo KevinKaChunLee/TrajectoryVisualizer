@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from trajviz.converge.canonical import canonicalize_steps
 from trajviz.insight.charts import bind_timeline_agents, build_file_interaction_chart
+from trajviz.insight.charts.activity import file_interaction_chart_height
 from trajviz.insight.diagnostics import extract_file_interactions
 from trajviz.insight.formatting import format_performance_md
 from trajviz.insight.loaders import (
@@ -496,6 +497,48 @@ class DshLoaderTests(unittest.TestCase):
         _, labels, _ = bind_timeline_agents(steps)
         self.assertIn("main", {v for k, v in labels.items() if k})
         self.assertFalse(any("standard" in v for v in labels.values()))
+
+    def test_file_interaction_chart_height_fits_all_files(self):
+        interactions = [
+            {
+                "step": i,
+                "path": f"/repo/src/pkg/file_{i:02d}.py",
+                "type": "read",
+                "tool": "Read",
+                "tokens": 1,
+            }
+            for i in range(20)
+        ]
+        fig = build_file_interaction_chart(interactions)
+        expected = file_interaction_chart_height(20)
+        self.assertEqual(fig.layout.height, expected)
+        self.assertGreaterEqual(expected, 28 * 20)
+        self.assertNotEqual(fig.layout.autosize, False)
+        self.assertTrue(fig.layout.yaxis.automargin)
+        meta = fig.layout.meta
+        if hasattr(meta, "to_plotly_json"):
+            meta = meta.to_plotly_json()
+        self.assertEqual(dict(meta).get("tv_chart_height"), expected)
+
+    def test_file_interaction_chart_legend_sits_below_title(self):
+        interactions = [
+            {
+                "step": 0,
+                "path": f"/repo/src/pkg/file_{i:02d}.py",
+                "type": "read",
+                "tool": "Read",
+                "tokens": 1,
+            }
+            for i in range(8)
+        ]
+        fig = build_file_interaction_chart(interactions)
+        title_y = float(fig.layout.title.y)
+        legend_y = float(fig.layout.legend.y)
+        self.assertEqual(fig.layout.title.yref, "container")
+        self.assertEqual(fig.layout.legend.yref, "container")
+        self.assertGreater(title_y, legend_y)
+        gap_px = (title_y - legend_y) * float(fig.layout.height)
+        self.assertGreaterEqual(gap_px, 24)
 
     def test_zip_export_merges_subagents(self):
         session_dir = os.path.join(self.tmp, "boxed")

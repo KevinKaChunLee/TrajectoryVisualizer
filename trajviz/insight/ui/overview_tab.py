@@ -130,7 +130,10 @@ def layout() -> OverviewRefs:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>")
                     diag_summary_html = gr.HTML("")
                     diag_file_chart = gr.Plot(
-                        show_label=False, label="File Interaction Timeline", elem_classes=["resizable-chart"]
+                        show_label=False,
+                        label="File Interaction Timeline",
+                        elem_id="diag-file-chart",
+                        elem_classes=["resizable-chart"],
                     )
                     diag_pressure_html = gr.HTML("")
                     diag_pressure_agent = gr.Dropdown(
@@ -325,6 +328,9 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
         fn=show_overview_section,
         inputs=[refs.overview_section],
         outputs=list(overview_sections),
+    ).then(
+        fn=None,
+        js="() => { if (window.tvExpandFileTimeline) { window.tvExpandFileTimeline(); setTimeout(window.tvExpandFileTimeline, 200); } }",
     )
 
     def on_pressure_agent_change(agent_key, steps, raw, dark):

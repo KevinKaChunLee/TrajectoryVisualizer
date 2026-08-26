@@ -523,24 +523,26 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     margin-top: 4px !important;
 }
 
-/* ===== Resizable chart container ===== */
+/* File-interaction timeline: grow with Plotly's layout.height so every
+   file row is visible in Diagnostics. Do not force Plotly graph divs to
+   height:auto — that overrides the pixel height and squashes the scatter.
+   Gradio's Plotly wrapper also sets autosize + Plots.resize(); a small
+   JS expander in insight.build_ui restores the intended height. */
 .resizable-chart {
-    resize: vertical !important;
-    overflow: auto !important;
-    min-height: 300px !important;
-    max-height: 1200px !important;
-    border-bottom: 2px dashed #e2e8f0;
-    cursor: ns-resize;
-}
-/* Keep Plotly's layout.height so tall file-interaction charts scroll inside
-   this container instead of being squashed to the visible slice (which hid
-   later files / sub-agent rows). min-height still lets a short chart stretch
-   when the user resizes the pane up. */
-.resizable-chart .plotly-graph-div,
-.resizable-chart .js-plotly-plot,
-.resizable-chart .svg-container {
+    min-height: 0 !important;
+    max-height: none !important;
     height: auto !important;
-    min-height: 280px;
+    overflow: visible !important;
+    resize: none;
+    border-bottom: none;
+    cursor: default;
+}
+.resizable-chart > .wrap,
+.resizable-chart .wrap,
+.resizable-chart .plot-container {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
 }
 
 /* ===== Responsive breakpoints ===== */

@@ -80,6 +80,51 @@ def build_ui() -> gr.Blocks:
                     btn.setAttribute('aria-label', 'AI Trajectory Analysis');
                     btn.setAttribute('title', 'AI Trajectory Analysis');
                 }
+                if (!window.__tvFileTimelineBound) {
+                    window.__tvFileTimelineBound = true;
+                    const ROW = 28, CHROME = 120, MIN = 340;
+                    window.tvExpandFileTimeline = function () {
+                        document.querySelectorAll('.resizable-chart').forEach((root) => {
+                            const gd = root.querySelector('.js-plotly-plot')
+                                || root.querySelector('[data-testid="plotly"]');
+                            if (!gd || !gd.layout) return;
+                            const meta = gd.layout.meta || {};
+                            const cats = (gd.layout.yaxis && gd.layout.yaxis.categoryarray)
+                                || (gd._fullLayout && gd._fullLayout.yaxis
+                                    && gd._fullLayout.yaxis._categories)
+                                || [];
+                            const n = Array.isArray(cats) ? cats.length : 0;
+                            const h = Number(meta.tv_chart_height)
+                                || (n ? Math.max(MIN, ROW * n + CHROME) : 0);
+                            if (!h) return;
+                            const plot = gd.classList.contains('js-plotly-plot')
+                                ? gd
+                                : (gd.querySelector('.js-plotly-plot') || gd);
+                            if (plot.style.height === h + 'px'
+                                && Math.abs(plot.clientHeight - h) < 4) return;
+                            plot.style.height = h + 'px';
+                            plot.style.minHeight = h + 'px';
+                            root.style.height = 'auto';
+                            root.style.maxHeight = 'none';
+                            if (window.Plotly && window.Plotly.Plots) {
+                                window.Plotly.Plots.resize(plot);
+                            }
+                        });
+                    };
+                    let timer = null;
+                    const schedule = () => {
+                        if (timer) clearTimeout(timer);
+                        timer = setTimeout(window.tvExpandFileTimeline, 60);
+                    };
+                    new MutationObserver(schedule).observe(document.documentElement, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        attributeFilter: ['style', 'class', 'hidden'],
+                    });
+                    window.addEventListener('resize', schedule);
+                    [0, 80, 250, 600].forEach((ms) => setTimeout(window.tvExpandFileTimeline, ms));
+                }
                 return [false];
             }""",
         )
