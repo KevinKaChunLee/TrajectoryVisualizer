@@ -44,11 +44,13 @@ def build_ui() -> gr.Blocks:
         slots = merge_load_slots(
             main_tabs=main_tabs,
             shared=shared,
-            upload_refs=upload_refs,
-            overview=overview,
-            patterns=patterns,
-            workflow=workflow,
-            raw=raw,
+            refs={
+                upload: upload_refs,
+                overview_tab: overview,
+                patterns_tab: patterns,
+                workflow_tab: workflow,
+                raw_tab: raw,
+            },
         )
         _load_ev, _upload_ev = bind_load(
             file_upload=upload_refs.file_upload,

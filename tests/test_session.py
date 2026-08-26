@@ -79,3 +79,41 @@ class LoadSessionTests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             merge_packer_dicts([{"token_chart": None}, {"token_chart": None}])
         self.assertIn("token_chart", str(ctx.exception))
+
+    def test_load_units_bind_pack_and_slots_to_the_same_module(self):
+        from trajviz.insight.ui.load import LOAD_UNITS
+
+        self.assertEqual(LOAD_UNITS[0].name, "shell")
+        self.assertIsNone(LOAD_UNITS[0].module)
+        tab_units = [unit for unit in LOAD_UNITS if unit.module is not None]
+        self.assertEqual(
+            [unit.name for unit in tab_units],
+            ["upload", "overview_tab", "patterns_tab", "workflow_tab", "raw_tab"],
+        )
+        for unit in tab_units:
+            self.assertTrue(callable(unit.module.pack_load))
+            self.assertTrue(callable(unit.module.load_slots))
+            self.assertIs(unit.pack, unit.module.pack_load)
+
+    def test_merge_load_slots_rejects_missing_and_extra_tabs(self):
+        from trajviz.insight.ui.load import LOAD_UNITS, merge_load_slots
+        from trajviz.insight.ui.shared import SharedState
+
+        shared = SharedState(
+            state_steps=object(),
+            state_raw=object(),
+            state_dark=object(),
+            state_analysis_brief=object(),
+        )
+        with self.assertRaises(ValueError) as missing:
+            merge_load_slots(main_tabs=object(), shared=shared, refs={})
+        missing_msg = str(missing.exception)
+        self.assertIn("missing", missing_msg)
+        self.assertIn("upload", missing_msg)
+        self.assertIn("overview_tab", missing_msg)
+
+        refs = {unit.module: object() for unit in LOAD_UNITS if unit.module is not None}
+        refs[object()] = object()
+        with self.assertRaises(ValueError) as extra:
+            merge_load_slots(main_tabs=object(), shared=shared, refs=refs)
+        self.assertIn("extra", str(extra.exception))

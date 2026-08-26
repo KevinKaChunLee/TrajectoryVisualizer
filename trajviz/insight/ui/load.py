@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import traceback
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import gradio as gr
@@ -15,6 +16,25 @@ from . import overview_tab, patterns_tab, raw_tab, upload, workflow_tab
 from .shared import SharedState
 
 PackFn = Callable[..., dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class LoadContext:
+    """Layout refs handed to each registry unit when wiring Gradio outputs."""
+
+    main_tabs: Any
+    shared: SharedState
+    refs: Mapping[object, Any]
+
+
+@dataclass(frozen=True)
+class LoadUnit:
+    """One load contributor: packed values and the Gradio components they fill."""
+
+    name: str
+    pack: PackFn
+    slots: Callable[[LoadContext], dict[str, Any]]
+    module: Any = None
 
 
 def pack_shell(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict[str, Any]:
@@ -33,14 +53,43 @@ def pack_shell(session: LoadedSession | None = None, *, dark: bool = False, bann
     }
 
 
-_PACKERS: tuple[PackFn, ...] = (
-    pack_shell,
-    upload.pack_load,
-    overview_tab.pack_load,
-    patterns_tab.pack_load,
-    workflow_tab.pack_load,
-    raw_tab.pack_load,
+def _shell_slots(ctx: LoadContext) -> dict[str, Any]:
+    return {
+        "main_tabs": ctx.main_tabs,
+        "state_steps": ctx.shared.state_steps,
+        "state_raw": ctx.shared.state_raw,
+    }
+
+
+def _tab_unit(mod: Any) -> LoadUnit:
+    """Bind a tab module's `pack_load` and `load_slots` as one registry entry."""
+
+    def slots(ctx: LoadContext, tab: Any = mod) -> dict[str, Any]:
+        return tab.load_slots(ctx.refs[tab])
+
+    name = str(getattr(mod, "__name__", type(mod).__name__)).rsplit(".", 1)[-1]
+    return LoadUnit(name=name, pack=mod.pack_load, slots=slots, module=mod)
+
+
+LOAD_UNITS: tuple[LoadUnit, ...] = (
+    LoadUnit("shell", pack_shell, _shell_slots),
+    _tab_unit(upload),
+    _tab_unit(overview_tab),
+    _tab_unit(patterns_tab),
+    _tab_unit(workflow_tab),
+    _tab_unit(raw_tab),
 )
+
+
+def _ref_label(obj: object) -> str:
+    name = getattr(obj, "__name__", None)
+    if isinstance(name, str):
+        return name.rsplit(".", 1)[-1]
+    return repr(obj)
+
+
+def _registered_tab_modules() -> frozenset[Any]:
+    return frozenset(unit.module for unit in LOAD_UNITS if unit.module is not None)
 
 
 def merge_packer_dicts(parts: list[Mapping[str, Any]]) -> dict[str, Any]:
@@ -55,8 +104,8 @@ def merge_packer_dicts(parts: list[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def collect_pack(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict[str, Any]:
-    """Run every tab packer and merge."""
-    return merge_packer_dicts([pack(session, dark=dark, banner=banner) for pack in _PACKERS])
+    """Run every registered packer and merge."""
+    return merge_packer_dicts([unit.pack(session, dark=dark, banner=banner) for unit in LOAD_UNITS])
 
 
 _LOAD_SLOT_KEYS: frozenset[str] | None = None
@@ -70,36 +119,29 @@ def load_slot_keys() -> frozenset[str]:
     return _LOAD_SLOT_KEYS
 
 
-def merge_load_slots(
-    *,
-    main_tabs,
-    shared: SharedState,
-    upload_refs: upload.UploadRefs,
-    overview: overview_tab.OverviewRefs,
-    patterns: patterns_tab.PatternsRefs,
-    workflow: workflow_tab.WorkflowRefs,
-    raw: raw_tab.RawRefs,
-) -> dict[str, Any]:
-    """Component map for `do_load`. A new tab adds `**tab.load_slots(refs)` here."""
-    slots = merge_packer_dicts(
-        [
-            {
-                "main_tabs": main_tabs,
-                "state_steps": shared.state_steps,
-                "state_raw": shared.state_raw,
-            },
-            upload.load_slots(upload_refs),
-            overview_tab.load_slots(overview),
-            patterns_tab.load_slots(patterns),
-            workflow_tab.load_slots(workflow),
-            raw_tab.load_slots(raw),
-        ]
-    )
-    expected = load_slot_keys()
-    got = frozenset(slots)
+def merge_load_slots(*, main_tabs, shared: SharedState, refs: Mapping[object, Any]) -> dict[str, Any]:
+    """Component map for `do_load`.
+
+    A new load-backed tab adds `pack_load` + `load_slots` on the tab module,
+    one `_tab_unit(tab)` in `LOAD_UNITS`, and `refs[tab] = tab.layout()` in
+    the Blocks composer.
+    """
+    expected = _registered_tab_modules()
+    got = frozenset(refs)
     if got != expected:
         raise ValueError(
-            f"Load slot keys mismatch vs packer: missing={sorted(expected - got)} extra={sorted(got - expected)}"
+            "Load tab refs mismatch vs registry: "
+            f"missing={sorted(_ref_label(m) for m in expected - got)} "
+            f"extra={sorted(_ref_label(m) for m in got - expected)}"
+        )
+    ctx = LoadContext(main_tabs=main_tabs, shared=shared, refs=refs)
+    slots = merge_packer_dicts([unit.slots(ctx) for unit in LOAD_UNITS])
+    expected_keys = load_slot_keys()
+    got_keys = frozenset(slots)
+    if got_keys != expected_keys:
+        raise ValueError(
+            "Load slot keys mismatch vs packer: "
+            f"missing={sorted(expected_keys - got_keys)} extra={sorted(got_keys - expected_keys)}"
         )
     return slots
 
