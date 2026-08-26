@@ -34,6 +34,21 @@ _COMPACTION_KIND_LABEL = {
 _OCCUPANCY_LINE_COLOR = "#7c3aed"
 _COMPACTION_MARKER_COLOR = "#e11d48"
 
+# Row pitch for the Diagnostics file timeline. Keep in sync with the
+# expander JS in insight.build_ui (Gradio forces Plotly autosize, so the
+# pane height is restored from this same formula).
+FILE_INTERACTION_ROW_PX = 28
+FILE_INTERACTION_CHROME_PX = 120
+FILE_INTERACTION_MIN_HEIGHT = 340
+
+
+def file_interaction_chart_height(unique_files: int) -> int:
+    """Pixel height so every file row is visible without overlapping labels."""
+    return max(
+        FILE_INTERACTION_MIN_HEIGHT,
+        FILE_INTERACTION_ROW_PX * unique_files + FILE_INTERACTION_CHROME_PX,
+    )
+
 
 def build_file_interaction_chart(
     interactions: list[dict],
@@ -103,7 +118,7 @@ def build_file_interaction_chart(
                 name=name,
                 marker=dict(
                     color=color,
-                    size=9,
+                    size=10,
                     symbol=symbol,
                     line=dict(color=border_colors, width=border_widths),
                 ),
@@ -142,24 +157,47 @@ def build_file_interaction_chart(
                 )
 
     unique_files = len({i["path"] for i in interactions})
-    chart_height = max(350, 25 * unique_files + 80)
+    chart_height = file_interaction_chart_height(unique_files)
 
     max_path_len = max((len(i["path"]) for i in interactions), default=20)
-    left_margin = max(150, max_path_len * 7)
-    fig_width = left_margin + 600 + 20  # left margin + plot area + right margin
+    # Cap the left gutter so long paths don't steal the plot; automargin can
+    # still grow it when labels would otherwise clip.
+    left_margin = max(180, min(520, max_path_len * 8))
     title = "File Interaction Timeline by Agent" if has_agents else "File Interaction Timeline"
 
+    # Title + legend in container coords with fixed pixel offsets so they
+    # stay stacked (title above legend) even when the chart is tall.
+    top_margin = 90
+    title_y = 1 - 8 / chart_height
+    legend_y = 1 - 42 / chart_height
     _apply_chart_layout(
         fig,
         title,
         xaxis="Step",
         yaxis="File",
         height=chart_height,
-        margin=dict(l=left_margin, r=20, t=50, b=40),
+        margin=dict(l=left_margin, r=24, t=top_margin, b=40),
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        legend=dict(
+            orientation="h",
+            yref="container",
+            yanchor="top",
+            y=legend_y,
+            xanchor="center",
+            x=0.5,
+        ),
+        meta={"tv_chart_height": chart_height},
     )
-    fig.update_layout(width=fig_width, autosize=False)
+    fig.update_layout(
+        title=dict(
+            text=title,
+            y=title_y,
+            yref="container",
+            yanchor="top",
+            x=0.5,
+            xanchor="center",
+        )
+    )
     file_order: list[str] = []
     seen_files: set[str] = set()
     for item in interactions:
@@ -170,11 +208,12 @@ def build_file_interaction_chart(
     # categoryarray is bottom→top; reverse so the first-touched files sit at the top.
     fig.update_yaxes(
         fixedrange=False,
+        automargin=True,
         categoryorder="array",
         categoryarray=list(reversed(file_order)),
     )
     fig.update_xaxes(fixedrange=False)
-    fig.update_layout(dragmode="pan")
+    fig.update_layout(dragmode="pan", autosize=True)
     _apply_dark(fig, dark)
     return fig
 

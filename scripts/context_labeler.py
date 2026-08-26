@@ -44,7 +44,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,8 +53,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts import step_labeler
-
-import requests
 
 # ── Reuse step_labeler's .env loader (already executed on import) ───────
 _env_float = step_labeler._env_float
@@ -703,7 +701,7 @@ def label_context(
         output = {
             "schema_version": SCHEMA_VERSION,
             "trajectory_file": os.path.abspath(trajectory_path),
-            "labeled_at": datetime.now(timezone.utc).isoformat(),
+            "labeled_at": datetime.now(UTC).isoformat(),
             "model": model,
             "compaction_events": compaction_events,
             "total_steps": len(labeled_steps),
