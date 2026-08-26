@@ -56,11 +56,64 @@ class LoadSessionTests(unittest.TestCase):
         self.assertIsInstance(result, LoadError)
         self.assertEqual(result.code, "unknown")
 
-    def test_packer_keeps_forty_gradio_slots(self):
-        from trajviz.insight.ui.load import empty_load_outputs, pack_load_outputs
+    def test_packer_uses_named_slots(self):
+        from trajviz.insight.ui.load import empty_load_outputs, load_slot_keys, pack_load_outputs
 
         result = load_session(str(FIXTURE))
         self.assertIsInstance(result, LoadedSession)
         packed = pack_load_outputs(result)
-        self.assertEqual(len(packed), 40)
-        self.assertEqual(len(empty_load_outputs(detail="*No file selected or file not found.*")), 40)
+        empty = empty_load_outputs(detail="*No file selected or file not found.*")
+        keys = load_slot_keys()
+        self.assertEqual(set(packed), set(keys))
+        self.assertEqual(set(empty), set(keys))
+        self.assertIsInstance(packed["state_steps"], list)
+        self.assertGreater(len(packed["state_steps"]), 0)
+        self.assertIsInstance(packed["state_raw"], dict)
+        self.assertTrue(packed["state_raw"])
+        self.assertTrue(packed["overview_kpi_html"])
+        self.assertTrue(packed["raw_json"])
+
+    def test_duplicate_packer_keys_are_rejected(self):
+        from trajviz.insight.ui.load import merge_packer_dicts
+
+        with self.assertRaises(ValueError) as ctx:
+            merge_packer_dicts([{"token_chart": None}, {"token_chart": None}])
+        self.assertIn("token_chart", str(ctx.exception))
+
+    def test_load_units_bind_pack_and_slots_to_the_same_module(self):
+        from trajviz.insight.ui.load import LOAD_UNITS
+
+        self.assertEqual(LOAD_UNITS[0].name, "shell")
+        self.assertIsNone(LOAD_UNITS[0].module)
+        tab_units = [unit for unit in LOAD_UNITS if unit.module is not None]
+        self.assertEqual(
+            [unit.name for unit in tab_units],
+            ["upload", "overview_tab", "patterns_tab", "workflow_tab", "raw_tab"],
+        )
+        for unit in tab_units:
+            self.assertTrue(callable(unit.module.pack_load))
+            self.assertTrue(callable(unit.module.load_slots))
+            self.assertIs(unit.pack, unit.module.pack_load)
+
+    def test_merge_load_slots_rejects_missing_and_extra_tabs(self):
+        from trajviz.insight.ui.load import LOAD_UNITS, merge_load_slots
+        from trajviz.insight.ui.shared import SharedState
+
+        shared = SharedState(
+            state_steps=object(),
+            state_raw=object(),
+            state_dark=object(),
+            state_analysis_brief=object(),
+        )
+        with self.assertRaises(ValueError) as missing:
+            merge_load_slots(main_tabs=object(), shared=shared, refs={})
+        missing_msg = str(missing.exception)
+        self.assertIn("missing", missing_msg)
+        self.assertIn("upload", missing_msg)
+        self.assertIn("overview_tab", missing_msg)
+
+        refs = {unit.module: object() for unit in LOAD_UNITS if unit.module is not None}
+        refs[object()] = object()
+        with self.assertRaises(ValueError) as extra:
+            merge_load_slots(main_tabs=object(), shared=shared, refs=refs)
+        self.assertIn("extra", str(extra.exception))

@@ -72,7 +72,7 @@ class OutputThroughputTests(unittest.TestCase):
 
     def test_overview_labels_generation_rate_as_output_throughput(self):
         # Import here because this UI module loads optional Gradio dependencies.
-        from trajviz.insight.presenters import _build_overview_kpi_html
+        from trajviz.insight.presenters import build_overview_kpi_html
         from trajviz.insight.formatting import (
             format_banner_html,
             format_performance_md,
@@ -93,7 +93,7 @@ class OutputThroughputTests(unittest.TestCase):
             "tool_call_count": 0,
         }
 
-        html = _build_overview_kpi_html(metrics, "10s")
+        html = build_overview_kpi_html(metrics, "10s")
 
         self.assertIn("10.0 output tok/s", html)
         self.assertIn("1/2 timed", html)

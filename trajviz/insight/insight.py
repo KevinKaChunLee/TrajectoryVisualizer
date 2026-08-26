@@ -5,8 +5,6 @@ from __future__ import annotations
 import gradio as gr
 
 from .llm_config import load_env_files
-from .presenters import trajectory_format_label  # noqa: F401  (public re-export)
-from .styles import APP_CSS  # noqa: F401  (re-exported: __main__ passes it to app.launch)
 from .ui import (
     attribution_tab,
     comparison_tab,
@@ -17,7 +15,7 @@ from .ui import (
     upload,
     workflow_tab,
 )
-from .ui.load import bind_load
+from .ui.load import bind_load, merge_load_slots
 from .ui.shared import SharedState
 
 
@@ -32,10 +30,6 @@ def build_ui() -> gr.Blocks:
             state_raw=gr.State({}),
             state_analysis_brief=gr.State(""),
         )
-        state_steps = shared.state_steps
-        state_dark = shared.state_dark
-        state_raw = shared.state_raw
-        state_analysis_brief = shared.state_analysis_brief  # noqa: F841  (analysis tests)
 
         sidebar_refs = sidebar.layout()
         upload_refs = upload.layout()
@@ -47,63 +41,23 @@ def build_ui() -> gr.Blocks:
             workflow = workflow_tab.layout()
             raw = raw_tab.layout()
 
-        summary_area = upload_refs.summary_area
-        upload_accordion = upload_refs.upload_accordion
-        file_upload = upload_refs.file_upload
-        load_btn = upload_refs.load_btn
-        format_selector = upload_refs.format_selector
-        summary_banner = upload_refs.summary_banner
-        anomaly_strip_html = upload_refs.anomaly_strip_html
-
-        all_outputs = [
-            main_tabs,
-            summary_area,
-            upload_accordion,
-            state_steps,
-            summary_banner,
-            anomaly_strip_html,
-            overview.overview_kpi_html,
-            overview.session_detail_html,
-            overview.metrics_md,
-            overview.token_chart,
-            overview.duration_chart,
-            overview.context_growth_chart,
-            overview.behavior_md,
-            overview.tool_chart,
-            overview.tool_outcome_chart,
-            overview.agent_summary_html,
-            overview.agent_token_chart,
-            overview.agent_swimlane_chart,
-            overview.diag_summary_html,
-            overview.diag_pressure_html,
-            overview.diag_pressure_agent,
-            overview.diag_pressure_chart,
-            overview.diag_file_chart,
-            overview.diag_rootcause_html,
-            overview.error_class_chart,
-            overview.plan_timeline_chart,
-            overview.hotspots_md,
-            overview.per_message_md,
-            workflow.wf_filter_chips_html,
-            workflow.wf_filter_hidden,
-            workflow.wf_count_html,
-            workflow.toc_html,
-            workflow.workflow_html,
-            workflow.detail_store,
-            workflow.detail_html,
-            raw.raw_json,
-            patterns.patterns_tool_html,
-            patterns.patterns_failure_html,
-            patterns.antipattern_summary_html,
-            state_raw,
-        ]
-
+        slots = merge_load_slots(
+            main_tabs=main_tabs,
+            shared=shared,
+            refs={
+                upload: upload_refs,
+                overview_tab: overview,
+                patterns_tab: patterns,
+                workflow_tab: workflow,
+                raw_tab: raw,
+            },
+        )
         _load_ev, _upload_ev = bind_load(
-            file_upload=file_upload,
-            load_btn=load_btn,
-            format_selector=format_selector,
-            state_dark=state_dark,
-            all_outputs=all_outputs,
+            file_upload=upload_refs.file_upload,
+            load_btn=upload_refs.load_btn,
+            format_selector=upload_refs.format_selector,
+            state_dark=shared.state_dark,
+            slots=slots,
         )
         load_events = (_load_ev, _upload_ev)
 
@@ -115,8 +69,8 @@ def build_ui() -> gr.Blocks:
 
         app.load(
             fn=lambda dark: dark,
-            inputs=[state_dark],
-            outputs=[state_dark],
+            inputs=[shared.state_dark],
+            outputs=[shared.state_dark],
             js="""() => {
                 const btn = document.querySelector('#analysis-sidebar .toggle-button');
                 if (btn) {

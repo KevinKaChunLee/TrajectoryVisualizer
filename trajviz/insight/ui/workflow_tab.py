@@ -9,9 +9,11 @@ import gradio as gr
 from ..presenters import (
     DETAIL_PLACEHOLDER,
     FILTER_CHIPS_DEFAULT,
-    _build_filtered_workflow_outputs,
+    build_filtered_workflow_outputs,
+    build_workflow_outputs,
 )
 from ..rendering import render_filter_chips
+from ..session import LoadedSession
 from .shared import SharedState
 
 WORKFLOW_JS = """
@@ -368,6 +370,44 @@ def layout() -> WorkflowRefs:
     )
 
 
+def load_slots(refs: WorkflowRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {
+        "wf_filter_chips_html": refs.wf_filter_chips_html,
+        "wf_filter_hidden": refs.wf_filter_hidden,
+        "wf_count_html": refs.wf_count_html,
+        "toc_html": refs.toc_html,
+        "workflow_html": refs.workflow_html,
+        "detail_store": refs.detail_store,
+        "detail_html": refs.detail_html,
+    }
+
+
+def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict:
+    """Named Workflow values for a load (empty when *session* is None)."""
+    del dark, banner
+    if session is None:
+        return {
+            "wf_filter_chips_html": render_filter_chips(),
+            "wf_filter_hidden": ",".join(FILTER_CHIPS_DEFAULT),
+            "wf_count_html": "",
+            "toc_html": "",
+            "workflow_html": "<div></div>",
+            "detail_store": "",
+            "detail_html": DETAIL_PLACEHOLDER,
+        }
+    wf = build_workflow_outputs(session.steps)
+    return {
+        "wf_filter_chips_html": wf["wf_chips"],
+        "wf_filter_hidden": wf["wf_filter_val"],
+        "wf_count_html": wf["wf_count"],
+        "toc_html": wf["toc_html_val"],
+        "workflow_html": wf["wf_html"],
+        "detail_store": wf["detail_store_val"],
+        "detail_html": DETAIL_PLACEHOLDER,
+    }
+
+
 def bind(refs: WorkflowRefs, shared: SharedState) -> None:
     state_steps = shared.state_steps
     wf_filter_hidden = refs.wf_filter_hidden
@@ -378,7 +418,7 @@ def bind(refs: WorkflowRefs, shared: SharedState) -> None:
 
     def do_filter_workflow(steps, filter_csv, keyword, current_toc):
         """Re-render Workflow cards, count, and TOC with filters applied."""
-        return _build_filtered_workflow_outputs(steps, filter_csv, keyword, current_toc)
+        return build_filtered_workflow_outputs(steps, filter_csv, keyword, current_toc)
 
     def on_toc_toggle(current_toc):
         """Toggle TOC sidebar visibility via CSS class."""

@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 import gradio as gr
 
+from ..presenters import raw_json_text
+from ..session import LoadedSession
+
 
 @dataclass
 class RawRefs:
@@ -21,3 +24,16 @@ def layout() -> RawRefs:
             max_lines=50,
         )
     return RawRefs(raw_json=raw_json)
+
+
+def load_slots(refs: RawRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {"raw_json": refs.raw_json}
+
+
+def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict:
+    """Named Raw Data values for a load (empty when *session* is None)."""
+    del dark, banner
+    if session is None:
+        return {"raw_json": ""}
+    return {"raw_json": raw_json_text(session.raw)}

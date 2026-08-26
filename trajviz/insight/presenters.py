@@ -39,7 +39,8 @@ from .formatting import (
 from .help import HELP_TEXT
 from .labels import aggregate_labels, load_labeled_json
 from .loaders import FORMAT_LABELS
-from .metrics import extract_agent_info
+from .metrics import compute_diagnostic_metrics, extract_agent_info
+from .palette import LABEL_PHASE_COLORS
 from .rendering import (
     _diag_jump_onclick,
     build_antipattern_summary_html,
@@ -50,7 +51,7 @@ from .rendering import (
     render_toc_sidebar,
     render_workflow_html,
 )
-from .session import LoadedSession
+from .session import MAX_STEPS, LoadedSession
 
 DETAIL_PLACEHOLDER = (
     "<div id='wf-detail-content'>"
@@ -63,13 +64,6 @@ ROLE_FILTERS = ["Assistant", "User"]
 FEATURE_FILTERS = ["Tool Calls", "Errors", "Reasoning"]
 ALL_FEATURE_FILTER = "All"
 FILTER_CHIPS_DEFAULT = [*ROLE_FILTERS, ALL_FEATURE_FILTER]
-
-# Names tests and older call sites still use.
-_ROLE_FILTERS = ROLE_FILTERS
-_FEATURE_FILTERS = FEATURE_FILTERS
-_ALL_FEATURE_FILTER = ALL_FEATURE_FILTER
-_FILTER_CHIPS_DEFAULT = FILTER_CHIPS_DEFAULT
-_DETAIL_PLACEHOLDER = DETAIL_PLACEHOLDER
 
 
 def trajectory_format_label(fmt: str | None) -> str:
@@ -103,7 +97,7 @@ def _workflow_step_labels(step: dict) -> set[str]:
     return labels
 
 
-def _filter_workflow_steps(
+def filter_workflow_steps(
     steps: list[dict],
     active_filters: list[str],
     keyword: str = "",
@@ -152,7 +146,7 @@ def _filter_workflow_steps(
     return filtered
 
 
-def _build_filtered_workflow_outputs(
+def build_filtered_workflow_outputs(
     steps: list[dict],
     filter_csv: str,
     keyword: str,
@@ -172,7 +166,7 @@ def _build_filtered_workflow_outputs(
         )
 
     active_filters = [value.strip() for value in (filter_csv or "").split(",") if value.strip()]
-    indices = _filter_workflow_steps(steps, active_filters, keyword)
+    indices = filter_workflow_steps(steps, active_filters, keyword)
     filtered_steps = [steps[position] for position in indices]
 
     if not (set(active_filters) & set(ROLE_FILTERS)):
@@ -269,7 +263,7 @@ def _build_session_detail_html(
     return f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>{chips}</div>"
 
 
-def _build_overview_kpi_html(
+def build_overview_kpi_html(
     metrics: dict, wall_fmt: str, verdicts: list[dict] | None = None, message_rows: list[dict] | None = None
 ) -> str:
     """Build at-a-glance KPI card strip for Overview tab.
@@ -370,15 +364,13 @@ def _build_overview_kpi_html(
     return "<div class='ov-kpi-grid'>" + "".join(card_html) + "</div>"
 
 
-def _empty_plotly_fig() -> go.Figure:
+def empty_plotly_fig() -> go.Figure:
     fig = go.Figure()
-    fig.update_layout(
-        template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-    )
+    fig.update_layout(template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
     return fig
 
 
-def _build_overview_outputs(session: LoadedSession) -> dict:
+def build_overview_outputs(session: LoadedSession) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
     steps = session.steps
     raw = session.raw
@@ -390,9 +382,8 @@ def _build_overview_outputs(session: LoadedSession) -> dict:
     trajectory_format = session.format
 
     banner = format_banner_html(os.path.basename(file_path), metrics, wfmt, trajectory_format=trajectory_format)
-    kpi_html = _build_overview_kpi_html(metrics, wfmt, verdicts=verdicts, message_rows=message_rows)
+    kpi_html = build_overview_kpi_html(metrics, wfmt, verdicts=verdicts, message_rows=message_rows)
     metrics_text = format_performance_md(metrics, wfmt)
-    from .metrics import compute_diagnostic_metrics
 
     traj = raw.get("trajectory") or raw.get("messages") or []
     diag_metrics = compute_diagnostic_metrics(steps, traj) if traj else None
@@ -425,7 +416,18 @@ def _build_overview_outputs(session: LoadedSession) -> dict:
     }
 
 
-def _build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
+def build_antipattern_html(session: LoadedSession) -> str:
+    """Anti-pattern summary HTML for the Patterns tab."""
+    error_count = sum(1 for s in session.steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
+    return build_antipattern_summary_html(
+        session.fruitless_streaks,
+        session.tool_selection,
+        session.plan_metrics,
+        error_count=error_count,
+    )
+
+
+def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
     """Build all chart figures and analytics markdown."""
     steps = session.steps
     message_rows = session.message_rows
@@ -442,13 +444,7 @@ def _build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
     error_class_fig = build_error_classification_chart(steps, dark=dark)
     context_growth_fig = build_context_growth_chart(message_rows, dark=dark)
 
-    error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
-    antipattern_html = build_antipattern_summary_html(
-        session.fruitless_streaks,
-        session.tool_selection,
-        session.plan_metrics,
-        error_count=error_count,
-    )
+    antipattern_html = build_antipattern_html(session)
 
     return {
         "tok_fig": tok_fig,
@@ -465,14 +461,17 @@ def _build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
     }
 
 
-def _build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dict:
+def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dict:
     """Build diagnostics outputs from precomputed session domain data."""
-    empty_fig = _empty_plotly_fig()
+    empty_fig = empty_plotly_fig()
     interactions = session.file_interactions
     target_files = session.target_files
     file_chart = (
         build_file_interaction_chart(
-            interactions, target_files, dark=dark, steps=session.steps,
+            interactions,
+            target_files,
+            dark=dark,
+            steps=session.steps,
         )
         if interactions
         else empty_fig
@@ -521,7 +520,7 @@ def _build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> di
     }
 
 
-def _build_workflow_outputs(steps: list[dict]) -> dict:
+def build_workflow_outputs(steps: list[dict]) -> dict:
     """Build workflow HTML, TOC, filter chips, and detail store."""
     wf_html = render_workflow_html(steps)
     wf_count = f"<div class='wf-count'>Showing {len(steps)} of {len(steps)} steps</div>"
@@ -541,7 +540,7 @@ def _build_workflow_outputs(steps: list[dict]) -> dict:
     }
 
 
-def _render_tool_sequences_html(sequences: list[dict]) -> str:
+def render_tool_sequences_html(sequences: list[dict]) -> str:
     """Render tool sequence patterns as an HTML table."""
     if not sequences:
         return "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>No recurring tool sequences detected (minimum frequency: 3).</div>"
@@ -567,7 +566,7 @@ def _render_tool_sequences_html(sequences: list[dict]) -> str:
     )
 
 
-def _render_failure_patterns_html(patterns: list[dict]) -> str:
+def render_failure_patterns_html(patterns: list[dict]) -> str:
     """Render failure pattern clusters as expandable cards."""
     if not patterns:
         return "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>No errors detected — no failure patterns to analyze.</div>"
@@ -614,8 +613,6 @@ def build_label_ui_payload(file_path: str, dark: bool = False) -> dict:
     n_steps = len(agg.get("steps", []))
     phase_counts = agg.get("phase_counts", {})
     n_phases = len(phase_counts)
-
-    from .palette import LABEL_PHASE_COLORS
 
     bar_segments = "".join(
         f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
@@ -670,8 +667,6 @@ def build_label_ui_payload(file_path: str, dark: bool = False) -> dict:
 
 def load_warnings_html(session: LoadedSession) -> str:
     """HTML warning strip for truncation and token-integrity issues."""
-    from .session import MAX_STEPS
-
     chunks = []
     if session.truncated:
         extra = session.steps_total - MAX_STEPS
@@ -681,9 +676,7 @@ def load_warnings_html(session: LoadedSession) -> str:
             f"({extra:,} truncated).</p>"
         )
     for tw in session.token_warnings:
-        chunks.append(
-            f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>&#9888; {html.escape(tw)}</p>"
-        )
+        chunks.append(f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>&#9888; {html.escape(tw)}</p>")
     return "".join(chunks)
 
 

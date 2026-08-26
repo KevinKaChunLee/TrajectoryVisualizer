@@ -100,26 +100,26 @@ class WorkflowFilteringTests(unittest.TestCase):
         ]
 
     def test_roles_are_combined_with_or(self):
-        from trajviz.insight.presenters import _filter_workflow_steps
+        from trajviz.insight.presenters import filter_workflow_steps
 
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Assistant", "User", "All"]),
+            filter_workflow_steps(self.steps, ["Assistant", "User", "All"]),
             [0, 1, 2, 3, 4],
         )
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Assistant", "All"]),
+            filter_workflow_steps(self.steps, ["Assistant", "All"]),
             [1, 2, 3, 4],
         )
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["User", "All"]),
+            filter_workflow_steps(self.steps, ["User", "All"]),
             [0],
         )
 
     def test_features_are_combined_with_or_inside_selected_roles(self):
-        from trajviz.insight.presenters import _filter_workflow_steps
+        from trajviz.insight.presenters import filter_workflow_steps
 
         self.assertEqual(
-            _filter_workflow_steps(
+            filter_workflow_steps(
                 self.steps,
                 ["Assistant", "Tool Calls", "Reasoning"],
             ),
@@ -127,43 +127,43 @@ class WorkflowFilteringTests(unittest.TestCase):
         )
 
     def test_role_and_feature_groups_are_combined_with_and(self):
-        from trajviz.insight.presenters import _filter_workflow_steps
+        from trajviz.insight.presenters import filter_workflow_steps
 
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Assistant", "Tool Calls"]),
+            filter_workflow_steps(self.steps, ["Assistant", "Tool Calls"]),
             [1, 3],
         )
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["User", "Tool Calls"]),
+            filter_workflow_steps(self.steps, ["User", "Tool Calls"]),
             [],
         )
 
     def test_all_or_an_omitted_feature_selection_has_no_feature_predicate(self):
-        from trajviz.insight.presenters import _filter_workflow_steps
+        from trajviz.insight.presenters import filter_workflow_steps
 
         expected = [1, 2, 3, 4]
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Assistant", "All"]),
+            filter_workflow_steps(self.steps, ["Assistant", "All"]),
             expected,
         )
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["Assistant"]),
+            filter_workflow_steps(self.steps, ["Assistant"]),
             expected,
         )
 
     def test_no_selected_role_is_empty(self):
-        from trajviz.insight.presenters import _filter_workflow_steps
+        from trajviz.insight.presenters import filter_workflow_steps
 
         self.assertEqual(
-            _filter_workflow_steps(self.steps, ["All", "Tool Calls"]),
+            filter_workflow_steps(self.steps, ["All", "Tool Calls"]),
             [],
         )
 
     def test_agent_tokens_do_not_apply_a_hidden_filter(self):
-        from trajviz.insight.presenters import _filter_workflow_steps
+        from trajviz.insight.presenters import filter_workflow_steps
 
         self.assertEqual(
-            _filter_workflow_steps(
+            filter_workflow_steps(
                 self.steps,
                 ["Assistant", "All", "agent:sub-agent"],
             ),
@@ -171,7 +171,7 @@ class WorkflowFilteringTests(unittest.TestCase):
         )
 
     def test_keyword_is_anded_with_role_and_features(self):
-        from trajviz.insight.presenters import _filter_workflow_steps
+        from trajviz.insight.presenters import filter_workflow_steps
 
         self.steps[3]["tool_calls"][0] = {
             "tool_name": "Bash",
@@ -179,13 +179,13 @@ class WorkflowFilteringTests(unittest.TestCase):
         }
         filters = ["Assistant", "Tool Calls"]
 
-        self.assertEqual(_filter_workflow_steps(self.steps, filters, "pytest"), [3])
-        self.assertEqual(_filter_workflow_steps(self.steps, filters, "inspect"), [1])
+        self.assertEqual(filter_workflow_steps(self.steps, filters, "pytest"), [3])
+        self.assertEqual(filter_workflow_steps(self.steps, filters, "inspect"), [1])
 
     def test_filtered_outputs_keep_cards_count_and_toc_in_sync(self):
-        from trajviz.insight.presenters import _build_filtered_workflow_outputs
+        from trajviz.insight.presenters import build_filtered_workflow_outputs
 
-        workflow, count, toc = _build_filtered_workflow_outputs(
+        workflow, count, toc = build_filtered_workflow_outputs(
             self.steps,
             "Assistant,Errors",
             "",
@@ -265,16 +265,16 @@ class WorkflowFilteringTests(unittest.TestCase):
         self.assertIn("display: none !important", bridge_css)
 
     def test_filter_rerender_preserves_collapsed_toc(self):
-        from trajviz.insight.presenters import _build_filtered_workflow_outputs
+        from trajviz.insight.presenters import build_filtered_workflow_outputs
 
         collapsed_toc = "<nav class='wf-toc-sidebar toc-hidden' id='wf-toc-sidebar'></nav>"
-        _, _, toc = _build_filtered_workflow_outputs(
+        _, _, toc = build_filtered_workflow_outputs(
             self.steps, "Assistant,All", "", collapsed_toc,
         )
         self.assertIn("toc-hidden", toc)
 
         open_toc = "<nav class='wf-toc-sidebar' id='wf-toc-sidebar'></nav>"
-        _, _, toc = _build_filtered_workflow_outputs(
+        _, _, toc = build_filtered_workflow_outputs(
             self.steps, "Assistant,All", "", open_toc,
         )
         self.assertNotIn("toc-hidden", toc)

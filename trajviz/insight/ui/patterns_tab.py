@@ -6,6 +6,13 @@ from dataclasses import dataclass
 
 import gradio as gr
 
+from ..presenters import (
+    build_antipattern_html,
+    render_failure_patterns_html,
+    render_tool_sequences_html,
+)
+from ..session import LoadedSession
+
 
 @dataclass
 class PatternsRefs:
@@ -36,3 +43,28 @@ def layout() -> PatternsRefs:
         patterns_failure_html=patterns_failure_html,
         antipattern_summary_html=antipattern_summary_html,
     )
+
+
+def load_slots(refs: PatternsRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {
+        "patterns_tool_html": refs.patterns_tool_html,
+        "patterns_failure_html": refs.patterns_failure_html,
+        "antipattern_summary_html": refs.antipattern_summary_html,
+    }
+
+
+def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict:
+    """Named Patterns values for a load (empty when *session* is None)."""
+    del dark, banner
+    if session is None:
+        return {
+            "patterns_tool_html": "",
+            "patterns_failure_html": "",
+            "antipattern_summary_html": "",
+        }
+    return {
+        "patterns_tool_html": render_tool_sequences_html(session.tool_sequences),
+        "patterns_failure_html": render_failure_patterns_html(session.failure_patterns),
+        "antipattern_summary_html": build_antipattern_html(session),
+    }
