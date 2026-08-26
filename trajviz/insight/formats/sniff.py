@@ -1,4 +1,6 @@
-"""Object-payload format sniffing shared by parse and detect."""
+"""Object and event-stream format sniffing shared by parse and detect."""
+
+from __future__ import annotations
 
 _OBJECT_FORMATS = frozenset({"ccsession", "codearts", "opencode"})
 _EVENT_FORMATS = frozenset({"codex", "pi", "dsh"})
@@ -9,6 +11,74 @@ _FORMAT_STAMPS = {
     "pi": "_pi_format",
     "dsh": "_dsh_format",
 }
+
+
+def _looks_like_codex_jsonl(events: list) -> bool:
+    """True when an event stream starts with Codex ``session_meta``."""
+    return bool(events) and isinstance(events[0], dict) and events[0].get("type") == "session_meta"
+
+
+def _looks_like_dsh_jsonl(events: list) -> bool:
+    """True when an event stream is a DeepSeek Harness session log.
+
+    DSH and Pi both lead with ``type: session`` plus a string ``id``. DSH
+    headers carry ``createdAt`` (epoch ms) and/or ``delegationDepth`` /
+    ``agentPreset`` / ``origin: subagent``; body events use slash-separated
+    types (``user/message``, ``tool/call``).
+    """
+    if not events or not isinstance(events[0], dict):
+        return False
+    first = events[0]
+    if first.get("type") != "session":
+        return False
+    ident = first.get("id")
+    if not isinstance(ident, str) or not ident:
+        return False
+    created = first.get("createdAt")
+    if isinstance(created, (int, float)) and not isinstance(created, bool):
+        return True
+    if "delegationDepth" in first or "agentPreset" in first:
+        return True
+    if first.get("origin") == "subagent":
+        return True
+    for event in events[1:12]:
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("type")
+        if isinstance(etype, str) and "/" in etype:
+            return True
+    return False
+
+
+def _looks_like_pi_jsonl(events: list) -> bool:
+    """True when an event stream starts with a Pi ``session`` header.
+
+    Distinct from Codex ``session_meta`` and DeepSeek Harness (checked first).
+    Requires a non-empty string ``id`` so a generic ``{"type": "session"}``
+    log line is not treated as Pi.
+    """
+    if not events or not isinstance(events[0], dict):
+        return False
+    first = events[0]
+    if first.get("type") != "session":
+        return False
+    ident = first.get("id")
+    return isinstance(ident, str) and bool(ident)
+
+
+def _detect_event_stream_format(events: list) -> str:
+    """Detect Codex / DSH / Pi from a parsed event array (JSONL or a JSON list)."""
+    if not events or not isinstance(events[0], dict):
+        return "unknown"
+    if _looks_like_codex_jsonl(events):
+        return "codex"
+    # DSH before Pi: both lead with ``type: session`` + string ``id``.
+    if _looks_like_dsh_jsonl(events):
+        return "dsh"
+    if _looks_like_pi_jsonl(events):
+        return "pi"
+    return "unknown"
+
 
 def _detect_object_format(raw: dict) -> str:
     """Detect format of a parsed JSON object (raw export or already-converted)."""

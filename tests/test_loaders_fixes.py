@@ -50,12 +50,16 @@ def _write(tmp, name, obj, jsonl=False, raw_text=None):
 def _codex_session(extra_events):
     """A minimal Codex rollout: session_meta + user prompt + extra_events."""
     return [
-        _codex_event("session_meta", "2026-01-05T12:00:00.000Z",
-                     {"id": "s1", "cwd": "/p/proj", "cli_version": "1.2.3",
-                      "model": "gpt-5", "model_provider": "openai"}),
-        _codex_event("response_item", "2026-01-05T12:00:01.000Z",
-                     {"type": "message", "role": "user",
-                      "content": [{"type": "input_text", "text": "fix it"}]}),
+        _codex_event(
+            "session_meta",
+            "2026-01-05T12:00:00.000Z",
+            {"id": "s1", "cwd": "/p/proj", "cli_version": "1.2.3", "model": "gpt-5", "model_provider": "openai"},
+        ),
+        _codex_event(
+            "response_item",
+            "2026-01-05T12:00:01.000Z",
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "fix it"}]},
+        ),
     ] + extra_events
 
 
@@ -117,8 +121,7 @@ class B3NumericTimestampTests(unittest.TestCase):
         raw = {
             "format": "ccsession-trajectory",
             "trajectory": [
-                {"role": "assistant", "timestamp": 1712345678000,
-                 "content": [{"type": "text", "text": "hello"}]},
+                {"role": "assistant", "timestamp": 1712345678000, "content": [{"type": "text", "text": "hello"}]},
             ],
         }
         p = _write(self.tmp, "cc-numeric-ts.json", raw)
@@ -136,17 +139,26 @@ class B4CodexStatusHeuristicTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
 
     def _load_with_output(self, output):
-        events = _codex_session([
-            _codex_event("response_item", "2026-01-05T12:00:02.000Z",
-                         {"type": "function_call", "call_id": "c1",
-                          "name": "exec_command",
-                          "arguments": json.dumps({"cmd": "npx tsc"})}),
-            _codex_event("response_item", "2026-01-05T12:00:03.000Z",
-                         {"type": "function_call_output", "call_id": "c1",
-                          "output": output}),
-            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
-                         {"type": "task_complete"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event(
+                    "response_item",
+                    "2026-01-05T12:00:02.000Z",
+                    {
+                        "type": "function_call",
+                        "call_id": "c1",
+                        "name": "exec_command",
+                        "arguments": json.dumps({"cmd": "npx tsc"}),
+                    },
+                ),
+                _codex_event(
+                    "response_item",
+                    "2026-01-05T12:00:03.000Z",
+                    {"type": "function_call_output", "call_id": "c1", "output": output},
+                ),
+                _codex_event("event_msg", "2026-01-05T12:00:04.000Z", {"type": "task_complete"}),
+            ]
+        )
         return load_trajectory(_write(self.tmp, "rollout.jsonl", events, jsonl=True))
 
     def _status(self, output):
@@ -155,27 +167,22 @@ class B4CodexStatusHeuristicTests(unittest.TestCase):
         return calls[0]["status"]
 
     def test_benign_error_wording_is_success(self):
-        self.assertEqual(
-            self._status("All checks passed! Found 0 errors in 12 files."),
-            "success")
+        self.assertEqual(self._status("All checks passed! Found 0 errors in 12 files."), "success")
 
     def test_error_free_wording_is_success(self):
         self.assertEqual(self._status("Build completed, error-free."), "success")
 
     def test_metadata_exit_code_zero_is_authoritative_over_error_text(self):
-        output = json.dumps({"output": "Error: transient warning noise",
-                             "metadata": {"exit_code": 0}})
+        output = json.dumps({"output": "Error: transient warning noise", "metadata": {"exit_code": 0}})
         self.assertEqual(self._status(output), "success")
 
     def test_metadata_nonzero_exit_code_is_error_despite_benign_text(self):
-        output = json.dumps({"output": "Found 0 errors",
-                             "metadata": {"exit_code": 2}})
+        output = json.dumps({"output": "Found 0 errors", "metadata": {"exit_code": 2}})
         self.assertEqual(self._status(output), "error")
 
     def test_anchored_fallback_still_flags_real_errors(self):
         self.assertEqual(self._status("Error: file not found"), "error")
-        self.assertEqual(
-            self._status("Traceback (most recent call last):\n  ..."), "error")
+        self.assertEqual(self._status("Traceback (most recent call last):\n  ..."), "error")
 
     def test_exited_with_code_fallback_preserved(self):
         self.assertEqual(self._status("process exited with code 2"), "error")
@@ -190,12 +197,20 @@ class B2DanglingToolCallTests(unittest.TestCase):
 
     def test_dangling_function_call_surfaces_as_error_part(self):
         # Session interrupted mid-command: function_call with no output.
-        events = _codex_session([
-            _codex_event("response_item", "2026-01-05T12:00:02.000Z",
-                         {"type": "function_call", "call_id": "c-dangling",
-                          "name": "exec_command",
-                          "arguments": json.dumps({"cmd": "pytest -x"})}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event(
+                    "response_item",
+                    "2026-01-05T12:00:02.000Z",
+                    {
+                        "type": "function_call",
+                        "call_id": "c-dangling",
+                        "name": "exec_command",
+                        "arguments": json.dumps({"cmd": "pytest -x"}),
+                    },
+                ),
+            ]
+        )
         raw = load_trajectory(_write(self.tmp, "interrupted.jsonl", events, jsonl=True))
         calls = _all_tool_calls(raw)
         self.assertEqual([t["tool_id"] for t in calls], ["c-dangling"])
@@ -204,17 +219,26 @@ class B2DanglingToolCallTests(unittest.TestCase):
     def test_output_after_task_complete_is_not_dropped(self):
         # task_complete flushes the turn (role reset); a straggler output must
         # still be emitted by the final flush, not dropped by the role guard.
-        events = _codex_session([
-            _codex_event("response_item", "2026-01-05T12:00:02.000Z",
-                         {"type": "function_call", "call_id": "c-late",
-                          "name": "exec_command",
-                          "arguments": json.dumps({"cmd": "make build"})}),
-            _codex_event("event_msg", "2026-01-05T12:00:03.000Z",
-                         {"type": "task_complete"}),
-            _codex_event("response_item", "2026-01-05T12:00:04.000Z",
-                         {"type": "function_call_output", "call_id": "c-late",
-                          "output": "done"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event(
+                    "response_item",
+                    "2026-01-05T12:00:02.000Z",
+                    {
+                        "type": "function_call",
+                        "call_id": "c-late",
+                        "name": "exec_command",
+                        "arguments": json.dumps({"cmd": "make build"}),
+                    },
+                ),
+                _codex_event("event_msg", "2026-01-05T12:00:03.000Z", {"type": "task_complete"}),
+                _codex_event(
+                    "response_item",
+                    "2026-01-05T12:00:04.000Z",
+                    {"type": "function_call_output", "call_id": "c-late", "output": "done"},
+                ),
+            ]
+        )
         raw = load_trajectory(_write(self.tmp, "late-output.jsonl", events, jsonl=True))
         calls = _all_tool_calls(raw)
         self.assertEqual([t["tool_id"] for t in calls], ["c-late"])
@@ -229,10 +253,8 @@ class C1LegacyCodeArtsTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.legacy = {
             "format": "codearts",
-            "export_metadata": {"schema_version": 2,
-                                "source_format": "codearts_legacy_json"},
-            "messages": [{"sender": "user", "content": "hello",
-                          "timestamp": "2026-01-05T12:00:00.000Z"}],
+            "export_metadata": {"schema_version": 2, "source_format": "codearts_legacy_json"},
+            "messages": [{"sender": "user", "content": "hello", "timestamp": "2026-01-05T12:00:00.000Z"}],
         }
 
     def test_legacy_export_detected_as_codearts(self):
@@ -247,8 +269,7 @@ class C1LegacyCodeArtsTests(unittest.TestCase):
     def test_sqlite_export_still_detected(self):
         # Widening the branch must not regress the sqlite-export arm.
         sqlite_export = {
-            "export_metadata": {"schema_version": 2,
-                                "source_format": "codearts_opencode_sqlite"},
+            "export_metadata": {"schema_version": 2, "source_format": "codearts_opencode_sqlite"},
             "info": {"id": "s1"},
             "messages": [],
         }
@@ -272,10 +293,11 @@ class SourceShaContractTests(unittest.TestCase):
         self.assertEqual(loaded["_source_path"], p)
 
     def test_codex_jsonl_path_attaches_sha_of_parsed_bytes(self):
-        events = _codex_session([
-            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
-                         {"type": "task_complete"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event("event_msg", "2026-01-05T12:00:04.000Z", {"type": "task_complete"}),
+            ]
+        )
         p = _write(self.tmp, "rollout.jsonl", events, jsonl=True)
         with open(p, "rb") as f:
             expected = hashlib.sha256(f.read()).hexdigest()
@@ -289,9 +311,14 @@ class FormatLabelsTests(unittest.TestCase):
     def test_covers_all_detectable_formats(self):
         self.assertEqual(
             FORMAT_LABELS,
-            {"ccsession": "Claude Code", "codearts": "CodeArts",
-             "opencode": "OpenCode", "codex": "Codex CLI", "pi": "Pi",
-             "dsh": "DeepSeek Harness"},
+            {
+                "ccsession": "Claude Code",
+                "codearts": "CodeArts",
+                "opencode": "OpenCode",
+                "codex": "Codex CLI",
+                "pi": "Pi",
+                "dsh": "DeepSeek Harness",
+            },
         )
 
     def test_dropdown_defaults_to_auto_detect(self):
@@ -334,40 +361,47 @@ class UnifiedDispatcherTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
 
     def test_detect_format_on_event_array(self):
+        self.assertEqual(detect_format([{"type": "session_meta", "payload": {}}]), "codex")
+        self.assertEqual(detect_format([{"type": "session", "id": "s1"}]), "pi")
         self.assertEqual(
-            detect_format([{"type": "session_meta", "payload": {}}]), "codex")
-        self.assertEqual(
-            detect_format([{"type": "session", "id": "s1"}]), "pi")
-        self.assertEqual(
-            detect_format([{
-                "type": "session", "id": "session-1",
-                "createdAt": 1_700_000_000_000, "delegationDepth": 0,
-            }]), "dsh")
+            detect_format(
+                [
+                    {
+                        "type": "session",
+                        "id": "session-1",
+                        "createdAt": 1_700_000_000_000,
+                        "delegationDepth": 0,
+                    }
+                ]
+            ),
+            "dsh",
+        )
         self.assertEqual(detect_format([{"type": "message", "id": "m"}]), "unknown")
 
     def test_codex_json_array_loads_without_jsonl_extension(self):
-        events = _codex_session([
-            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
-                         {"type": "task_complete"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event("event_msg", "2026-01-05T12:00:04.000Z", {"type": "task_complete"}),
+            ]
+        )
         p = _write(self.tmp, "rollout.json", events)
         raw = load_trajectory(p)
         self.assertNotIn("_error", raw)
         self.assertEqual(detect_format(raw), "codex")
 
     def test_single_codex_event_object_loads_as_json(self):
-        event = _codex_event("session_meta", "2026-01-05T12:00:00.000Z",
-                             {"id": "s1", "cwd": "/p", "model": "gpt-5"})
+        event = _codex_event("session_meta", "2026-01-05T12:00:00.000Z", {"id": "s1", "cwd": "/p", "model": "gpt-5"})
         p = _write(self.tmp, "meta.json", event)
         raw = load_trajectory(p)
         self.assertNotIn("_error", raw)
         self.assertEqual(detect_format(raw), "codex")
 
     def test_codex_ndjson_wrong_json_extension_still_loads(self):
-        events = _codex_session([
-            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
-                         {"type": "task_complete"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event("event_msg", "2026-01-05T12:00:04.000Z", {"type": "task_complete"}),
+            ]
+        )
         p = _write(self.tmp, "rollout.json", events, jsonl=True)
         raw = load_trajectory(p)
         self.assertNotIn("_error", raw)
@@ -381,20 +415,22 @@ class UnifiedDispatcherTests(unittest.TestCase):
         self.assertEqual(detect_format(raw), "ccsession")
 
     def test_jsonl_extension_is_case_insensitive(self):
-        events = _codex_session([
-            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
-                         {"type": "task_complete"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event("event_msg", "2026-01-05T12:00:04.000Z", {"type": "task_complete"}),
+            ]
+        )
         p = _write(self.tmp, "rollout.JSONL", events, jsonl=True)
         raw = load_trajectory(p)
         self.assertNotIn("_error", raw)
         self.assertEqual(detect_format(raw), "codex")
 
     def test_format_hint_mismatches_detected_jsonl(self):
-        events = _codex_session([
-            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
-                         {"type": "task_complete"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event("event_msg", "2026-01-05T12:00:04.000Z", {"type": "task_complete"}),
+            ]
+        )
         p = _write(self.tmp, "rollout.jsonl", events, jsonl=True)
         raw = load_trajectory(p, format_hint="ccsession")
         self.assertEqual(raw.get("_error_code"), "mismatch")
@@ -428,10 +464,11 @@ class UnifiedDispatcherTests(unittest.TestCase):
         self.assertIn("event array", raw["_error"])
 
     def test_already_converted_codex_json_object_reloads(self):
-        events = _codex_session([
-            _codex_event("event_msg", "2026-01-05T12:00:04.000Z",
-                         {"type": "task_complete"}),
-        ])
+        events = _codex_session(
+            [
+                _codex_event("event_msg", "2026-01-05T12:00:04.000Z", {"type": "task_complete"}),
+            ]
+        )
         first = load_trajectory(_write(self.tmp, "a.jsonl", events, jsonl=True))
         dumped = {k: v for k, v in first.items() if not k.startswith("_source")}
         second = load_trajectory(_write(self.tmp, "converted.json", dumped))
@@ -451,10 +488,13 @@ class UnifiedDispatcherTests(unittest.TestCase):
 
     def test_pi_json_array_loads_without_jsonl_extension(self):
         events = [
-            {"type": "session", "id": "sess-1", "cwd": "/p",
-             "timestamp": "2026-08-24T01:29:43.221Z"},
-            {"type": "message", "id": "m1", "timestamp": "2026-08-24T01:30:33.026Z",
-             "message": {"role": "user", "content": "hello", "timestamp": 1}},
+            {"type": "session", "id": "sess-1", "cwd": "/p", "timestamp": "2026-08-24T01:29:43.221Z"},
+            {
+                "type": "message",
+                "id": "m1",
+                "timestamp": "2026-08-24T01:30:33.026Z",
+                "message": {"role": "user", "content": "hello", "timestamp": 1},
+            },
         ]
         p = _write(self.tmp, "session.json", events)
         raw = load_trajectory(p)
@@ -462,12 +502,42 @@ class UnifiedDispatcherTests(unittest.TestCase):
         self.assertEqual(detect_format(raw), "pi")
 
     def test_format_hint_forces_unknown_events_as_pi(self):
-        events = [{"type": "message", "id": "m1",
-                   "message": {"role": "user", "content": "hello"}}]
+        events = [{"type": "message", "id": "m1", "message": {"role": "user", "content": "hello"}}]
         p = _write(self.tmp, "other.jsonl", events, jsonl=True)
         raw = load_trajectory(p, format_hint="pi")
         self.assertNotIn("_error", raw)
         self.assertEqual(detect_format(raw), "pi")
+
+
+class FacadeDispatchTests(unittest.TestCase):
+    """Sniff, converters, and FORMAT_LABELS must stay aligned; unknown keys fail closed."""
+
+    def test_event_converters_match_sniff_formats(self):
+        from trajviz.insight.formats.sniff import _EVENT_FORMATS, _OBJECT_FORMATS
+        from trajviz.insight.loaders import FORMAT_LABELS, _EVENT_CONVERTERS
+
+        self.assertEqual(set(_EVENT_CONVERTERS), set(_EVENT_FORMATS))
+        self.assertEqual(set(FORMAT_LABELS), set(_OBJECT_FORMATS | _EVENT_FORMATS))
+
+    def test_apply_format_unknown_event_member_does_not_default_to_pi(self):
+        from unittest.mock import patch
+
+        from trajviz.insight.loaders import _apply_format
+
+        events = [{"type": "session", "id": "s1"}]
+        extra = frozenset({"codex", "pi", "dsh", "newfmt"})
+        with patch("trajviz.insight.loaders._EVENT_FORMATS", extra):
+            result = _apply_format(events, "newfmt")
+        self.assertIn("_error", result)
+        self.assertIn("newfmt", result["_error"])
+        self.assertNotIn("_pi_format", result)
+
+    def test_apply_format_unknown_object_key_fails_closed(self):
+        from trajviz.insight.loaders import _apply_format
+
+        result = _apply_format({"info": {}, "messages": []}, "not-a-format")
+        self.assertIn("_error", result)
+        self.assertIn("not-a-format", result["_error"])
 
 
 if __name__ == "__main__":
