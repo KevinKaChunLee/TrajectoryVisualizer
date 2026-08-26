@@ -19,13 +19,18 @@ def main():
         "--output",
         help="HTML report output file or directory (default: a temp file; prints the path)",
     )
+    parser.add_argument(
+        "--dark",
+        action="store_true",
+        help="Render the HTML report with dark charts and tokens (with --report)",
+    )
     args = parser.parse_args()
 
     if args.report:
         from .report import ReportError, report_from_path
 
         try:
-            path = report_from_path(args.report, args.output)
+            path = report_from_path(args.report, args.output, dark=args.dark)
         except ReportError as exc:
             print(exc, file=sys.stderr)
             sys.exit(1)

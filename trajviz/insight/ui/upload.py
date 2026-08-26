@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import traceback
 from dataclasses import dataclass
 
 import gradio as gr
@@ -95,7 +98,27 @@ def load_slots(refs: UploadRefs) -> dict:
         "upload_accordion": refs.upload_accordion,
         "summary_banner": refs.summary_banner,
         "anomaly_strip_html": refs.anomaly_strip_html,
+        "export_btn": refs.export_btn,
     }
+
+
+_TEMP_EXPORT_PREFIX = "trajviz-report-"
+_last_temp_export_dir: str | None = None
+
+
+def _export_off():
+    return gr.update(value=None, interactive=False)
+
+
+def _replace_temp_export_dir(new_path: str) -> None:
+    """Drop the previous mkdtemp export dir after a replacement file is written."""
+    global _last_temp_export_dir
+    parent = os.path.dirname(os.path.abspath(new_path))
+    previous = _last_temp_export_dir
+    if os.path.basename(parent).startswith(_TEMP_EXPORT_PREFIX):
+        _last_temp_export_dir = parent
+    if previous and previous != parent and os.path.basename(previous).startswith(_TEMP_EXPORT_PREFIX):
+        shutil.rmtree(previous, ignore_errors=True)
 
 
 def prepare_html_export(raw, _steps=None, dark=False):
@@ -108,11 +131,15 @@ def prepare_html_export(raw, _steps=None, dark=False):
     """
     payload = raw if isinstance(raw, dict) else {}
     if not payload or payload.get("_error"):
-        return gr.update(value=None, interactive=False)
+        return _export_off()
     try:
         path = write_report_file(payload, dark=bool(dark))
     except ReportError:
-        return gr.update(value=None, interactive=False)
+        return _export_off()
+    except Exception:
+        traceback.print_exc()
+        return _export_off()
+    _replace_temp_export_dir(path)
     return gr.update(value=path, interactive=True)
 
 
@@ -129,14 +156,20 @@ def bind_export(refs: UploadRefs, shared: SharedState, load_events: tuple) -> No
 
 
 def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict:
-    """Named upload-row values for a load (error banner when *session* is None)."""
+    """Named upload-row values for a load (error banner when *session* is None).
+
+    Export is always disarmed here so a reload cannot download the previous
+    file; ``prepare_html_export`` re-enables the button after a successful load.
+    """
     del dark
+    export_off = _export_off()
     if session is None:
         return {
             "summary_area": gr.update(visible=bool(banner)),
             "upload_accordion": gr.update(),
             "summary_banner": banner,
             "anomaly_strip_html": "",
+            "export_btn": export_off,
         }
     summary = build_summary_outputs(session)
     return {
@@ -144,4 +177,5 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "upload_accordion": gr.update(),
         "summary_banner": load_warnings_html(session) + summary["banner"],
         "anomaly_strip_html": summary["anomaly_html"],
+        "export_btn": export_off,
     }

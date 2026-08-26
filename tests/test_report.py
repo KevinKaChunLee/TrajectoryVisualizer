@@ -44,10 +44,27 @@ class MixedMarkdownTests(unittest.TestCase):
         self.assertIn("<td><code>assistant</code></td>", html)
         self.assertIn("<em>No data</em>", html)
 
+    def test_inline_escapes_script_in_table_cells(self):
+        md = "| Step | Finish |\n|---|---|\n| 1 | `</td><script>alert(1)</script>` |\n"
+        html = _mixed_md_to_html(md)
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;/td&gt;", html)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertIn("<code>", html)
+
+    def test_inline_escapes_script_in_headings(self):
+        html = _mixed_md_to_html("### </h3><script>x</script>\n")
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertIn("<h3>", html)
+
 
 class ReportBuildTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        import trajviz.insight.ui.upload as upload_mod
+
+        upload_mod._last_temp_export_dir = None
         self.oc = {
             "info": {
                 "id": "ses_test",
@@ -107,6 +124,24 @@ class ReportBuildTests(unittest.TestCase):
         self.assertIn("Recurring tool sequences", doc)
         self.assertNotIn("wf-filter-chips", doc)
         self.assertNotIn("Load Trajectory", doc)
+        self.assertIn("class='tv-theme-light'", doc)
+        self.assertIn("color-scheme: light", doc)
+
+    def test_dark_forces_document_color_scheme(self):
+        doc = build_report_html(self._loaded(), dark=True)
+        self.assertIn("class='tv-theme-dark'", doc)
+        self.assertIn("color-scheme: dark", doc)
+        self.assertNotIn("class='tv-theme-light'", doc)
+
+    def test_token_warnings_appear_in_header(self):
+        from trajviz.insight.session import build_loaded_session
+
+        raw = self._loaded()
+        session = build_loaded_session(raw.get("_source_path") or "oc.json", raw)
+        session.token_warnings = ["input tokens exceed total"]
+        doc = build_report_html(session)
+        self.assertIn("input tokens exceed total", doc)
+        self.assertIn("tv-note", doc)
 
     def test_plotly_included_once_via_cdn_when_charts_exist(self):
         doc = build_report_html(self._loaded())
@@ -165,6 +200,30 @@ class ReportBuildTests(unittest.TestCase):
         self.assertFalse(upd.get("interactive", True))
         self.assertIsNone(upd.get("value"))
 
+    def test_pack_load_disables_export_on_empty_and_loaded(self):
+        from trajviz.insight.session import LoadedSession, load_session
+        from trajviz.insight.ui.upload import pack_load
+
+        empty = pack_load()
+        self.assertFalse(empty["export_btn"].get("interactive", True))
+        self.assertIsNone(empty["export_btn"].get("value"))
+
+        session = load_session(_write(self.tmp, "pack.json", self.oc))
+        self.assertIsInstance(session, LoadedSession)
+        loaded = pack_load(session)
+        self.assertFalse(loaded["export_btn"].get("interactive", True))
+        self.assertIsNone(loaded["export_btn"].get("value"))
+
+    def test_prepare_export_swallows_unexpected_errors(self):
+        from unittest.mock import patch
+
+        from trajviz.insight.ui.upload import prepare_html_export
+
+        with patch("trajviz.insight.ui.upload.write_report_file", side_effect=OSError("disk")):
+            upd = prepare_html_export(self._loaded(), None, False)
+        self.assertFalse(upd.get("interactive", True))
+        self.assertIsNone(upd.get("value"))
+
     def test_prepare_export_writes_file(self):
         from trajviz.insight.ui.upload import prepare_html_export
 
@@ -176,6 +235,21 @@ class ReportBuildTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
         with open(path, encoding="utf-8") as f:
             self.assertIn("TrajViz HTML report", f.read())
+
+    def test_prepare_export_replaces_previous_temp_dir(self):
+        from trajviz.insight.ui.upload import prepare_html_export
+
+        raw = self._loaded()
+        first = prepare_html_export(raw, None, False)
+        path1 = first.get("value")
+        dir1 = os.path.dirname(path1)
+        self.assertTrue(os.path.isdir(dir1))
+        second = prepare_html_export(raw, None, False)
+        path2 = second.get("value")
+        dir2 = os.path.dirname(path2)
+        self.assertTrue(os.path.isfile(path2))
+        self.assertNotEqual(dir1, dir2)
+        self.assertFalse(os.path.isdir(dir1))
 
 
 if __name__ == "__main__":

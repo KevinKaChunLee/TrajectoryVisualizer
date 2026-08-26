@@ -17,13 +17,18 @@ from typing import Any
 import plotly.graph_objects as go
 
 from .loaders import FORMAT_LABELS
-from .presenters.overview import build_chart_outputs, build_diagnostics_outputs, build_overview_outputs
+from .presenters.overview import (
+    build_chart_outputs,
+    build_diagnostics_outputs,
+    build_overview_outputs,
+    load_warnings_html,
+)
 from .presenters.patterns import (
     build_antipattern_html,
     render_failure_patterns_html,
     render_tool_sequences_html,
 )
-from .session import MAX_STEPS, LoadedSession, LoadError, build_loaded_session, load_session
+from .session import LoadedSession, LoadError, build_loaded_session, load_session
 from .styles import APP_CSS
 
 _PLOTLY_CDN = "cdn"
@@ -55,14 +60,6 @@ def build_report_html(
     pat_fail = render_failure_patterns_html(session.failure_patterns)
     antipattern = build_antipattern_html(session)
 
-    truncated_note = ""
-    if session.truncated:
-        extra = session.steps_total - MAX_STEPS
-        truncated_note = (
-            f"Showing first {MAX_STEPS:,} of {session.steps_total:,} steps "
-            f"({extra:,} truncated), same cap as the dashboard."
-        )
-
     figures: list[tuple[str, go.Figure]] = [
         ("Token usage", ch["tok_fig"]),
         ("Step duration", ch["dur_fig"]),
@@ -89,8 +86,9 @@ def build_report_html(
         html_part, include_js = _charts_html(items, include_js)
         return html_part
 
+    theme_class = "tv-theme-dark" if dark else "tv-theme-light"
     sections: list[str] = [
-        _header_html(title, basename, fmt_label, generated, truncated_note),
+        _header_html(title, basename, fmt_label, generated, load_warnings_html(session)),
         _section("Summary", ov["banner"] + ov["anomaly_html"] + ov["kpi_html"] + ov["session_detail"]),
         _section("Performance", _mixed_md_to_html(ov["metrics_text"])),
         charts(figures[:3]),
@@ -107,17 +105,13 @@ def build_report_html(
         _section("Per-message metrics", _mixed_md_to_html(ov["per_message_text"])),
         _section(
             "Patterns",
-            "<h3>Recurring tool sequences</h3>"
-            + pat_tool
-            + "<h3>Failure patterns</h3>"
-            + pat_fail
-            + antipattern,
+            "<h3>Recurring tool sequences</h3>" + pat_tool + "<h3>Failure patterns</h3>" + pat_fail + antipattern,
         ),
     ]
 
     body = "\n".join(s for s in sections if s)
     return (
-        "<!DOCTYPE html>\n<html lang='en'>\n<head>\n"
+        f"<!DOCTYPE html>\n<html lang='en' class='{theme_class}'>\n<head>\n"
         f"<meta charset='utf-8'>\n<meta name='viewport' content='width=device-width, initial-scale=1'>\n"
         f"<title>{html.escape(title)}</title>\n"
         f"<style>\n{_embedded_css()}\n</style>\n"
@@ -180,6 +174,8 @@ def _embedded_css() -> str:
     app = _STYLE_TAG.sub("", APP_CSS)
     app = _HTML_COMMENT.sub("", app)
     layout = """
+html.tv-theme-light { color-scheme: light; }
+html.tv-theme-dark { color-scheme: dark; }
 body { margin: 0; background: var(--ov-bg, #f6f8fc); color: var(--ov-text, #0f172a); }
 .tv-report { max-width: 1100px; margin: 0 auto; padding: 24px 20px 72px; }
 .tv-report-kicker { font-size: 12px; color: var(--ov-muted); letter-spacing: 0.04em; text-transform: uppercase; }
@@ -204,8 +200,8 @@ body { margin: 0; background: var(--ov-bg, #f6f8fc); color: var(--ov-text, #0f17
     return layout + "\n" + app
 
 
-def _header_html(title: str, basename: str, fmt_label: str, generated: str, note: str) -> str:
-    note_html = f"<p class='tv-note'>{html.escape(note)}</p>" if note else ""
+def _header_html(title: str, basename: str, fmt_label: str, generated: str, warnings_html: str) -> str:
+    note_html = f"<div class='tv-note'>{warnings_html}</div>" if (warnings_html or "").strip() else ""
     return (
         "<header>"
         "<div class='tv-report-kicker'>TrajViz HTML report</div>"
@@ -220,7 +216,9 @@ def _header_html(title: str, basename: str, fmt_label: str, generated: str, note
 def _section(title: str, inner: str) -> str:
     if not (inner or "").strip():
         return ""
-    return f"<section class='tv-section' id='{html.escape(_slug(title))}'><h2>{html.escape(title)}</h2>{inner}</section>"
+    return (
+        f"<section class='tv-section' id='{html.escape(_slug(title))}'><h2>{html.escape(title)}</h2>{inner}</section>"
+    )
 
 
 def _slug(title: str) -> str:
@@ -304,9 +302,6 @@ def _md_table_to_html(block: list[str]) -> str:
 
 
 def _inline(text: str) -> str:
-    if "<" in text and ">" in text:
-        text = _BOLD.sub(r"<strong>\1</strong>", text)
-        return _CODE.sub(r"<code>\1</code>", text)
     escaped = html.escape(text)
     escaped = _BOLD.sub(r"<strong>\1</strong>", escaped)
     escaped = _CODE.sub(r"<code>\1</code>", escaped)
