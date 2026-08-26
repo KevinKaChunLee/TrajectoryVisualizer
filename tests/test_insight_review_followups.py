@@ -72,7 +72,7 @@ class OutputThroughputTests(unittest.TestCase):
 
     def test_overview_labels_generation_rate_as_output_throughput(self):
         # Import here because this UI module loads optional Gradio dependencies.
-        from trajviz.insight.insight import _build_overview_kpi_html
+        from trajviz.insight.presenters import _build_overview_kpi_html
         from trajviz.insight.formatting import (
             format_banner_html,
             format_performance_md,

@@ -1,0 +1,371 @@
+"""Overview tab: performance through labels, plus pressure-agent and label callbacks."""
+
+from __future__ import annotations
+
+import html
+import os
+from dataclasses import dataclass
+
+import gradio as gr
+import plotly.graph_objects as go
+
+from ..charts import build_context_pressure_chart
+from ..diagnostics import PRESSURE_ALL_AGENTS, context_pressure_series
+from ..formatting import format_context_pressure_html
+from ..help import HELP_TEXT
+from ..presenters import build_label_ui_payload
+from .shared import SharedState
+from .upload import UploadRefs
+
+
+@dataclass
+class OverviewRefs:
+    session_detail_html: gr.HTML
+    overview_kpi_html: gr.HTML
+    overview_section: gr.Radio
+    performance_section: gr.Column
+    efficiency_section: gr.Column
+    tools_section: gr.Column
+    agents_section: gr.Column
+    diagnostics_section: gr.Column
+    deep_dive_section: gr.Column
+    labels_section: gr.Column
+    metrics_md: gr.Markdown
+    token_chart: gr.Plot
+    duration_chart: gr.Plot
+    context_growth_chart: gr.Plot
+    behavior_md: gr.Markdown
+    tool_chart: gr.Plot
+    tool_outcome_chart: gr.Plot
+    agent_summary_html: gr.HTML
+    agent_token_chart: gr.Plot
+    agent_swimlane_chart: gr.Plot
+    diag_summary_html: gr.HTML
+    diag_file_chart: gr.Plot
+    diag_pressure_html: gr.HTML
+    diag_pressure_agent: gr.Dropdown
+    diag_pressure_chart: gr.Plot
+    diag_rootcause_html: gr.HTML
+    error_class_chart: gr.Plot
+    plan_timeline_chart: gr.Plot
+    hotspots_md: gr.Markdown
+    per_message_md: gr.Markdown
+    label_status_html: gr.HTML
+    label_charts_row1: gr.Row
+    label_phase_count_chart: gr.Plot
+    label_action_count_chart: gr.Plot
+    label_charts_row2: gr.Row
+    label_phase_dur_chart: gr.Plot
+    label_action_dur_chart: gr.Plot
+    label_timeline_row: gr.Row
+    label_timeline_chart: gr.Plot
+
+
+OVERVIEW_SECTION_NAMES = [
+    "Performance",
+    "Efficiency",
+    "Tools",
+    "Agents",
+    "Diagnostics",
+    "Deep Dive",
+    "Labels",
+]
+
+
+def layout() -> OverviewRefs:
+    with gr.TabItem("Overview"):
+        session_detail_html = gr.HTML("")
+        overview_kpi_html = gr.HTML("", elem_classes=["overview-kpi-strip"])
+
+        overview_section_names = OVERVIEW_SECTION_NAMES
+        with gr.Row(elem_classes=["overview-content-layout"]):
+            with gr.Column(scale=0, min_width=160, elem_classes=["overview-section-nav"]):
+                gr.HTML("<div class='overview-nav-title'>Contents</div>")
+                overview_section = gr.Radio(
+                    choices=overview_section_names,
+                    value="Performance",
+                    show_label=False,
+                    container=False,
+                    elem_classes=["overview-section-radio"],
+                )
+
+            with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
+                with gr.Column(visible=True) as performance_section:
+                    gr.HTML(
+                        f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>"
+                    )
+                    metrics_md = gr.Markdown("")
+                    with gr.Row(equal_height=True):
+                        token_chart = gr.Plot(show_label=False, label="Token Usage")
+                        duration_chart = gr.Plot(show_label=False, label="Step Duration")
+
+                with gr.Column(visible=False) as efficiency_section:
+                    gr.HTML(
+                        f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>"
+                    )
+                    context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
+
+                with gr.Column(visible=False) as tools_section:
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_tools'])}</div>")
+                    behavior_md = gr.Markdown("")
+                    with gr.Row(equal_height=True):
+                        tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
+                        gr.Column(scale=1)
+                    with gr.Row(equal_height=True):
+                        tool_outcome_chart = gr.Plot(show_label=False, label="Tool Outcome Timeline")
+
+                with gr.Column(visible=False) as agents_section:
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
+                    agent_summary_html = gr.HTML("")
+                    with gr.Row(equal_height=True):
+                        agent_token_chart = gr.Plot(show_label=False, label="Token Breakdown by Agent")
+                        gr.Column(scale=1)
+                    with gr.Row(equal_height=True):
+                        agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
+
+                with gr.Column(visible=False) as diagnostics_section:
+                    gr.HTML(
+                        f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>"
+                    )
+                    diag_summary_html = gr.HTML("")
+                    diag_file_chart = gr.Plot(
+                        show_label=False, label="File Interaction Timeline", elem_classes=["resizable-chart"]
+                    )
+                    diag_pressure_html = gr.HTML("")
+                    diag_pressure_agent = gr.Dropdown(
+                        label="Agent",
+                        choices=[("All agents", PRESSURE_ALL_AGENTS)],
+                        value=PRESSURE_ALL_AGENTS,
+                        visible=False,
+                        interactive=True,
+                    )
+                    diag_pressure_chart = gr.Plot(
+                        show_label=False,
+                        label="Context Window Pressure",
+                    )
+                    diag_rootcause_html = gr.HTML("")
+                    with gr.Row(equal_height=True):
+                        error_class_chart = gr.Plot(show_label=False, label="Tool Error Classification")
+                        plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
+
+                with gr.Column(visible=False) as deep_dive_section:
+                    hotspots_md = gr.Markdown("")
+                    per_message_md = gr.Markdown("")
+
+                with gr.Column(visible=False) as labels_section:
+                    gr.HTML(
+                        "<div class='section-subtitle'>Phase and action classification from labeled JSON</div>"
+                    )
+                    label_status_html = gr.HTML(
+                        "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                        "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
+                    )
+                    with gr.Row(equal_height=True, visible=False) as label_charts_row1:
+                        label_phase_count_chart = gr.Plot(show_label=False, label="Phase Count Distribution")
+                        label_action_count_chart = gr.Plot(show_label=False, label="Action Count Distribution")
+                    with gr.Row(equal_height=True, visible=False) as label_charts_row2:
+                        label_phase_dur_chart = gr.Plot(show_label=False, label="Phase Duration Distribution")
+                        label_action_dur_chart = gr.Plot(show_label=False, label="Action Duration Distribution")
+                    with gr.Row(equal_height=True, visible=False) as label_timeline_row:
+                        label_timeline_chart = gr.Plot(show_label=False, label="Step Timeline")
+
+    return OverviewRefs(
+        session_detail_html=session_detail_html,
+        overview_kpi_html=overview_kpi_html,
+        overview_section=overview_section,
+        performance_section=performance_section,
+        efficiency_section=efficiency_section,
+        tools_section=tools_section,
+        agents_section=agents_section,
+        diagnostics_section=diagnostics_section,
+        deep_dive_section=deep_dive_section,
+        labels_section=labels_section,
+        metrics_md=metrics_md,
+        token_chart=token_chart,
+        duration_chart=duration_chart,
+        context_growth_chart=context_growth_chart,
+        behavior_md=behavior_md,
+        tool_chart=tool_chart,
+        tool_outcome_chart=tool_outcome_chart,
+        agent_summary_html=agent_summary_html,
+        agent_token_chart=agent_token_chart,
+        agent_swimlane_chart=agent_swimlane_chart,
+        diag_summary_html=diag_summary_html,
+        diag_file_chart=diag_file_chart,
+        diag_pressure_html=diag_pressure_html,
+        diag_pressure_agent=diag_pressure_agent,
+        diag_pressure_chart=diag_pressure_chart,
+        diag_rootcause_html=diag_rootcause_html,
+        error_class_chart=error_class_chart,
+        plan_timeline_chart=plan_timeline_chart,
+        hotspots_md=hotspots_md,
+        per_message_md=per_message_md,
+        label_status_html=label_status_html,
+        label_charts_row1=label_charts_row1,
+        label_phase_count_chart=label_phase_count_chart,
+        label_action_count_chart=label_action_count_chart,
+        label_charts_row2=label_charts_row2,
+        label_phase_dur_chart=label_phase_dur_chart,
+        label_action_dur_chart=label_action_dur_chart,
+        label_timeline_row=label_timeline_row,
+        label_timeline_chart=label_timeline_chart,
+    )
+
+
+def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
+    overview_section_names = OVERVIEW_SECTION_NAMES
+    overview_sections = (
+        refs.performance_section,
+        refs.efficiency_section,
+        refs.tools_section,
+        refs.agents_section,
+        refs.diagnostics_section,
+        refs.deep_dive_section,
+        refs.labels_section,
+    )
+
+    def show_overview_section(selected):
+        return tuple(gr.update(visible=name == selected) for name in overview_section_names)
+
+    refs.overview_section.change(
+        fn=show_overview_section,
+        inputs=[refs.overview_section],
+        outputs=list(overview_sections),
+    )
+
+    def on_pressure_agent_change(agent_key, steps, raw, dark):
+        """Rebuild the pressure chart for the selected agent/subagent."""
+        if not steps:
+            empty = go.Figure()
+            empty.update_layout(
+                template="plotly_white",
+                height=380,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            return empty, ""
+        key = agent_key or PRESSURE_ALL_AGENTS
+        fig = build_context_pressure_chart(
+            steps,
+            agent_key=key,
+            raw=raw if isinstance(raw, dict) else None,
+            dark=bool(dark),
+        )
+        html_strip = format_context_pressure_html(
+            context_pressure_series(
+                steps,
+                agent_key=key,
+                raw=raw if isinstance(raw, dict) else None,
+            )
+        )
+        return fig, html_strip
+
+    refs.diag_pressure_agent.change(
+        fn=on_pressure_agent_change,
+        inputs=[refs.diag_pressure_agent, shared.state_steps, shared.state_raw, shared.state_dark],
+        outputs=[refs.diag_pressure_chart, refs.diag_pressure_html],
+    )
+
+    _empty_label_fig = go.Figure()
+    _empty_label_fig.update_layout(
+        template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+    )
+
+    def do_load_labels(upload_obj, dark=False):
+        """Load labeled JSON and update all label UI components."""
+        file_path = None
+        if upload_obj is not None:
+            file_path = upload_obj if isinstance(upload_obj, str) else upload_obj.name
+
+        empty = _empty_label_fig
+
+        if not file_path or not os.path.isfile(file_path):
+            return (
+                "",
+                "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>",
+                gr.update(visible=False),
+                empty,
+                empty,
+                gr.update(visible=False),
+                empty,
+                empty,
+                gr.update(visible=False),
+                empty,
+            )
+
+        try:
+            payload = build_label_ui_payload(file_path, dark=bool(dark))
+        except Exception as exc:
+            return (
+                "",
+                f"<div style='padding:1em;color:#dc2626;text-align:center;'>Error: {html.escape(str(exc))}</div>",
+                gr.update(visible=False),
+                empty,
+                empty,
+                gr.update(visible=False),
+                empty,
+                empty,
+                gr.update(visible=False),
+                empty,
+            )
+
+        return (
+            payload["badge_html"],
+            payload["status_html"],
+            gr.update(visible=True),
+            payload["phase_count_fig"],
+            payload["action_count_fig"],
+            gr.update(visible=True),
+            payload["phase_duration_fig"],
+            payload["action_duration_fig"],
+            gr.update(visible=True),
+            payload["timeline_fig"],
+        )
+
+    label_outputs = [
+        upload.label_badge_html,
+        refs.label_status_html,
+        refs.label_charts_row1,
+        refs.label_phase_count_chart,
+        refs.label_action_count_chart,
+        refs.label_charts_row2,
+        refs.label_phase_dur_chart,
+        refs.label_action_dur_chart,
+        refs.label_timeline_row,
+        refs.label_timeline_chart,
+    ]
+    label_inputs = [upload.label_file_upload, shared.state_dark]
+    upload.label_load_btn.click(
+        fn=do_load_labels,
+        inputs=label_inputs,
+        outputs=label_outputs,
+    )
+    upload.label_file_upload.change(
+        fn=do_load_labels,
+        inputs=label_inputs,
+        outputs=label_outputs,
+    )
+
+    def _reset_labels():
+        empty = _empty_label_fig
+        return (
+            "",
+            (
+                "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+                "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
+            ),
+            gr.update(visible=False),
+            empty,
+            empty,
+            gr.update(visible=False),
+            empty,
+            empty,
+            gr.update(visible=False),
+            empty,
+            gr.update(value=None),
+        )
+
+    _reset_outputs = label_outputs + [upload.label_file_upload]
+    upload.load_btn.click(fn=_reset_labels, inputs=None, outputs=_reset_outputs)
+    upload.file_upload.change(fn=_reset_labels, inputs=None, outputs=_reset_outputs)

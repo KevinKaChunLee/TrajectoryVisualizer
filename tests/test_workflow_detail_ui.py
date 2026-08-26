@@ -28,9 +28,9 @@ class WorkflowDetailUiTests(unittest.TestCase):
         return step
 
     def test_selecting_workflow_card_resets_detail_panel_scroll(self):
-        from trajviz.insight import insight
+        from trajviz.insight.ui import workflow_tab
 
-        source = inspect.getsource(insight.build_ui)
+        source = inspect.getsource(workflow_tab)
 
         self.assertIn("detailPanel.scrollTop = 0", source)
 
@@ -65,9 +65,9 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertNotIn("onclick=", html[html.index("class='dp-tabs'"):html.index("data-tab-content='content'")])
 
     def test_workflow_registers_delegated_detail_tab_handler(self):
-        from trajviz.insight import insight
+        from trajviz.insight.ui import workflow_tab
 
-        source = inspect.getsource(insight.build_ui)
+        source = inspect.getsource(workflow_tab)
 
         self.assertIn("__dpTabHandlerAttached", source)
         self.assertIn("document.addEventListener('click', function(e) {", source)
