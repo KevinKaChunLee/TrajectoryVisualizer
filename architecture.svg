@@ -142,7 +142,7 @@
   <!-- Rendering -->
   <rect x="40" y="970" width="340" height="160" rx="10" fill="#ffffff" stroke="#e07b39" stroke-width="1.5"/>
   <text x="60" y="996" font-size="14" font-weight="700" fill="#c25f1f">Rendering</text>
-  <rect x="60" y="1008" width="300" height="34" rx="7" fill="#fffaf4" stroke="#f0c79b" stroke-width="1.2"/><text x="76" y="1030" font-size="12.5" fill="#0f172a"><tspan font-weight="700">charts.py</tspan> · Plotly</text>
+  <rect x="60" y="1008" width="300" height="34" rx="7" fill="#fffaf4" stroke="#f0c79b" stroke-width="1.2"/><text x="76" y="1030" font-size="12.5" fill="#0f172a"><tspan font-weight="700">charts/</tspan> · Plotly</text>
   <rect x="60" y="1048" width="300" height="34" rx="7" fill="#fffaf4" stroke="#f0c79b" stroke-width="1.2"/><text x="76" y="1070" font-size="12.5" fill="#0f172a"><tspan font-weight="700">rendering.py</tspan> · HTML</text>
   <rect x="60" y="1088" width="300" height="34" rx="7" fill="#fffaf4" stroke="#f0c79b" stroke-width="1.2"/><text x="76" y="1110" font-size="12.5" fill="#0f172a"><tspan font-weight="700">styles.py</tspan> · CSS</text>
 
