@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from ..loaders import FORMAT_DROPDOWN_CHOICES
-from ..presenters import build_overview_outputs, load_warnings_html
+from ..presenters.overview import build_summary_outputs, load_warnings_html
 from ..session import LoadedSession
 
 
@@ -96,10 +96,10 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "summary_banner": banner,
             "anomaly_strip_html": "",
         }
-    ov = build_overview_outputs(session)
+    summary = build_summary_outputs(session)
     return {
         "summary_area": gr.update(visible=True),
         "upload_accordion": gr.update(),
-        "summary_banner": load_warnings_html(session) + ov["banner"],
-        "anomaly_strip_html": ov["anomaly_html"],
+        "summary_banner": load_warnings_html(session) + summary["banner"],
+        "anomaly_strip_html": summary["anomaly_html"],
     }

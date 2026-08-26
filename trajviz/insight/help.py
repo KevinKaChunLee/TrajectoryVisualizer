@@ -1,7 +1,7 @@
 """Centralized help text registry for metric tooltips and section explanations."""
 
 # Tooltip/subtitle text keyed by identifier. Only keys referenced by
-# presenters.py / overview_tab.py are live: the four Overview KPI cards
+# presenters/overview.py / overview_tab.py are live: the four Overview KPI cards
 # (rendered as data-help tooltips) and the Overview section subtitles.
 # Add an entry here only together with the UI code that renders it.
 HELP_TEXT: dict[str, str] = {
@@ -10,7 +10,6 @@ HELP_TEXT: dict[str, str] = {
     "wall_clock": "Elapsed wall-clock time from first to last step, including idle gaps between steps.",
     "tokens": "Total tokens consumed across all steps: input + output + reasoning + cache read.",
     "tool_success": "Percentage of tool calls that completed without errors. 100% means no tool failures.",
-
     # Section subtitles
     "section_performance": "Token consumption, step timing, and overall resource usage patterns.",
     "section_efficiency": "Context growth over time and compression events.",

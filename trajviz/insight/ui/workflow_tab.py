@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import gradio as gr
 
-from ..presenters import (
+from ..presenters.workflow import (
     DETAIL_PLACEHOLDER,
     FILTER_CHIPS_DEFAULT,
     build_filtered_workflow_outputs,

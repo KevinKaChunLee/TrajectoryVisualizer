@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import gradio as gr
 
-from ..presenters import (
+from ..presenters.patterns import (
     build_antipattern_html,
     render_failure_patterns_html,
     render_tool_sequences_html,

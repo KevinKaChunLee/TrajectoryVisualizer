@@ -1,0 +1,79 @@
+"""Patterns tab HTML: tool sequences, failure clusters, and anti-patterns."""
+
+from __future__ import annotations
+
+import html
+
+from ..rendering import build_antipattern_summary_html
+from ..session import LoadedSession
+
+
+def build_antipattern_html(session: LoadedSession) -> str:
+    """Anti-pattern summary HTML for the Patterns tab."""
+    error_count = sum(1 for s in session.steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
+    return build_antipattern_summary_html(
+        session.fruitless_streaks,
+        session.tool_selection,
+        session.plan_metrics,
+        error_count=error_count,
+    )
+
+
+def render_tool_sequences_html(sequences: list[dict]) -> str:
+    """Render tool sequence patterns as an HTML table."""
+    if not sequences:
+        return "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>No recurring tool sequences detected (minimum frequency: 3).</div>"
+    rows = []
+    for s in sequences[:20]:
+        seq_str = " → ".join(html.escape(t) for t in s["sequence"])
+        indices = ", ".join(str(i) for i in s["step_indices"][:10])
+        if len(s["step_indices"]) > 10:
+            indices += f" … (+{len(s['step_indices']) - 10} more)"
+        rows.append(
+            f"<tr style='border-bottom:1px solid var(--ov-border);'>"
+            f"<td style='padding:6px 10px;font-family:monospace;font-size:12px;'>{seq_str}</td>"
+            f"<td style='padding:6px 10px;text-align:center;font-weight:700;'>{s['frequency']}</td>"
+            f"<td style='padding:6px 10px;font-size:11px;color:var(--ov-muted);'>{indices}</td>"
+            f"</tr>"
+        )
+    return (
+        "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
+        "<tr style='background:var(--ov-table-header-bg);'>"
+        "<th style='text-align:left;padding:6px 10px;'>Sequence</th>"
+        "<th style='text-align:center;padding:6px 10px;'>Count</th>"
+        "<th style='text-align:left;padding:6px 10px;'>Step Indices</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
+def render_failure_patterns_html(patterns: list[dict]) -> str:
+    """Render failure pattern clusters as expandable cards."""
+    if not patterns:
+        return "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>No errors detected — no failure patterns to analyze.</div>"
+    cards = []
+    for p in patterns:
+        label = html.escape(p.get("cluster_label", "Unknown"))
+        count = p.get("count", 0)
+        example = html.escape(str(p.get("example_error", ""))[:200])
+        recovery = p.get("recovery_path")
+        recovery_html = " → ".join(html.escape(t) for t in recovery) if recovery else "<em>No recovery path found</em>"
+        step_ids = p.get("steps") or []
+        steps_html = (
+            "".join(
+                f"<span style='display:inline-block;padding:1px 6px;margin:0 4px 2px 0;"
+                f"border-radius:8px;background:var(--ov-table-header-bg);"
+                f"font-size:11px;font-variant-numeric:tabular-nums;'>#{int(idx)}</span>"
+                for idx in step_ids
+            )
+            if step_ids
+            else "<em>—</em>"
+        )
+        cards.append(
+            f"<div class='overview-card' style='margin-bottom:8px;'>"
+            f"<div style='font-weight:700;font-size:13px;color:var(--ov-text);'>{label} "
+            f"<span style='font-size:11px;color:var(--ov-muted);font-weight:400;'>({count} occurrences)</span></div>"
+            f"<div style='font-size:12px;color:var(--ov-muted);margin:4px 0;'>{example}</div>"
+            f"<div style='font-size:12px;margin-bottom:4px;'><strong>Steps:</strong> {steps_html}</div>"
+            f"<div style='font-size:12px;'><strong>Recovery path:</strong> {recovery_html}</div>"
+            f"</div>"
+        )
+    return "".join(cards)
