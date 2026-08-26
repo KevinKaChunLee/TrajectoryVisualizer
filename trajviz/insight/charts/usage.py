@@ -5,6 +5,7 @@ from __future__ import annotations
 import statistics
 from collections import defaultdict
 
+from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
 from ..parser import infer_non_cache_input
@@ -15,7 +16,6 @@ from ..palette import (
     SESSION_COLORS,
     TOKEN_COLORS,
 )
-from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
 from ._timeline import _legend_label, bind_timeline_agents
 
 

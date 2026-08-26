@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from ._layout import _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
 from ..palette import LABEL_PHASE_COLORS
-from ._layout import _apply_chart_layout, _apply_dark, _empty_figure
 
 _LABEL_FONT = dict(size=13)  # consistent font size across label charts
 _CANONICAL_PHASES = ["understand", "plan", "implement", "debug", "validate", "report"]

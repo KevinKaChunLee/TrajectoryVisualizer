@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from ._layout import _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
 from ..palette import SESSION_COLORS, TOOL_OUTCOME_COLORS
-from ._layout import _apply_chart_layout, _apply_dark, _empty_figure
 from ._timeline import (
     _disambiguate_timeline_labels,
     _legend_label,
