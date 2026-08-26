@@ -51,7 +51,13 @@ def main():
         sys.exit(1)
 
     app = build_ui()
-    app.launch(server_name=args.host, server_port=args.port, share=args.share, css=APP_CSS)
+    app.launch(
+        server_name=args.host,
+        server_port=args.port,
+        share=args.share,
+        css=APP_CSS,
+        head='<meta name="color-scheme" content="light">',
+    )
 
 
 if __name__ == "__main__":

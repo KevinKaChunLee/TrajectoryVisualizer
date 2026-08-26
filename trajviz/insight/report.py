@@ -113,6 +113,7 @@ def build_report_html(
     return (
         f"<!DOCTYPE html>\n<html lang='en' class='{theme_class}'>\n<head>\n"
         f"<meta charset='utf-8'>\n<meta name='viewport' content='width=device-width, initial-scale=1'>\n"
+        f"<meta name='color-scheme' content='{'dark' if dark else 'light'}'>\n"
         f"<title>{html.escape(title)}</title>\n"
         f"<style>\n{_embedded_css()}\n</style>\n"
         "</head>\n<body>\n"

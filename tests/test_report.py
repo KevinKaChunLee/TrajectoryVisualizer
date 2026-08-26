@@ -126,11 +126,13 @@ class ReportBuildTests(unittest.TestCase):
         self.assertNotIn("Load Trajectory", doc)
         self.assertIn("class='tv-theme-light'", doc)
         self.assertIn("color-scheme: light", doc)
+        self.assertIn("<meta name='color-scheme' content='light'>", doc)
 
     def test_dark_forces_document_color_scheme(self):
         doc = build_report_html(self._loaded(), dark=True)
         self.assertIn("class='tv-theme-dark'", doc)
         self.assertIn("color-scheme: dark", doc)
+        self.assertIn("<meta name='color-scheme' content='dark'>", doc)
         self.assertNotIn("class='tv-theme-light'", doc)
 
     def test_token_warnings_appear_in_header(self):
@@ -184,6 +186,8 @@ class ReportBuildTests(unittest.TestCase):
         self.assertNotIn("value=prepare_html_export", src)
         self.assertNotIn("value=_prepare_html_export", src)
         self.assertNotIn("value=_export_html_report", src)
+        self.assertNotIn("prefers-color-scheme", src)
+        self.assertIn("return [false]", src)
 
         app = build_ui()
         fns = getattr(app, "fns", None) or app.default_config.fns
