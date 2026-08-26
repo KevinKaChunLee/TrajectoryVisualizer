@@ -416,6 +416,17 @@ def build_overview_outputs(session: LoadedSession) -> dict:
     }
 
 
+def build_antipattern_html(session: LoadedSession) -> str:
+    """Anti-pattern summary HTML for the Patterns tab."""
+    error_count = sum(1 for s in session.steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
+    return build_antipattern_summary_html(
+        session.fruitless_streaks,
+        session.tool_selection,
+        session.plan_metrics,
+        error_count=error_count,
+    )
+
+
 def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
     """Build all chart figures and analytics markdown."""
     steps = session.steps
@@ -433,13 +444,7 @@ def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
     error_class_fig = build_error_classification_chart(steps, dark=dark)
     context_growth_fig = build_context_growth_chart(message_rows, dark=dark)
 
-    error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
-    antipattern_html = build_antipattern_summary_html(
-        session.fruitless_streaks,
-        session.tool_selection,
-        session.plan_metrics,
-        error_count=error_count,
-    )
+    antipattern_html = build_antipattern_html(session)
 
     return {
         "tok_fig": tok_fig,

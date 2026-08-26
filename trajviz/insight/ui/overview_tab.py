@@ -13,7 +13,14 @@ from ..charts import build_context_pressure_chart
 from ..diagnostics import PRESSURE_ALL_AGENTS, context_pressure_series
 from ..formatting import format_context_pressure_html
 from ..help import HELP_TEXT
-from ..presenters import build_label_ui_payload
+from ..presenters import (
+    build_chart_outputs,
+    build_diagnostics_outputs,
+    build_label_ui_payload,
+    build_overview_outputs,
+    empty_plotly_fig,
+)
+from ..session import LoadedSession
 from .shared import SharedState
 from .upload import UploadRefs
 
@@ -91,18 +98,14 @@ def layout() -> OverviewRefs:
 
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
-                    gr.HTML(
-                        f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>"
-                    )
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>")
                     metrics_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
                         duration_chart = gr.Plot(show_label=False, label="Step Duration")
 
                 with gr.Column(visible=False) as efficiency_section:
-                    gr.HTML(
-                        f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>"
-                    )
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>")
                     context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
 
                 with gr.Column(visible=False) as tools_section:
@@ -124,9 +127,7 @@ def layout() -> OverviewRefs:
                         agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
 
                 with gr.Column(visible=False) as diagnostics_section:
-                    gr.HTML(
-                        f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>"
-                    )
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>")
                     diag_summary_html = gr.HTML("")
                     diag_file_chart = gr.Plot(
                         show_label=False, label="File Interaction Timeline", elem_classes=["resizable-chart"]
@@ -153,9 +154,7 @@ def layout() -> OverviewRefs:
                     per_message_md = gr.Markdown("")
 
                 with gr.Column(visible=False) as labels_section:
-                    gr.HTML(
-                        "<div class='section-subtitle'>Phase and action classification from labeled JSON</div>"
-                    )
+                    gr.HTML("<div class='section-subtitle'>Phase and action classification from labeled JSON</div>")
                     label_status_html = gr.HTML(
                         "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
                         "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
@@ -237,6 +236,73 @@ def load_slots(refs: OverviewRefs) -> dict:
         "plan_timeline_chart": refs.plan_timeline_chart,
         "hotspots_md": refs.hotspots_md,
         "per_message_md": refs.per_message_md,
+    }
+
+
+def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict:
+    """Named Overview values for a load (empty when *session* is None)."""
+    del banner
+    fig = empty_plotly_fig()
+    if session is None:
+        return {
+            "overview_kpi_html": "",
+            "session_detail_html": "",
+            "metrics_md": "",
+            "token_chart": fig,
+            "duration_chart": fig,
+            "context_growth_chart": fig,
+            "behavior_md": "",
+            "tool_chart": fig,
+            "tool_outcome_chart": fig,
+            "agent_summary_html": "",
+            "agent_token_chart": fig,
+            "agent_swimlane_chart": fig,
+            "diag_summary_html": "",
+            "diag_pressure_html": "",
+            "diag_pressure_agent": gr.update(
+                choices=[("All agents", PRESSURE_ALL_AGENTS)],
+                value=PRESSURE_ALL_AGENTS,
+                visible=False,
+            ),
+            "diag_pressure_chart": fig,
+            "diag_file_chart": fig,
+            "diag_rootcause_html": "",
+            "error_class_chart": fig,
+            "plan_timeline_chart": fig,
+            "hotspots_md": "",
+            "per_message_md": "",
+        }
+
+    ov = build_overview_outputs(session)
+    ch = build_chart_outputs(session, dark=dark)
+    dg = build_diagnostics_outputs(session, dark=dark)
+    return {
+        "overview_kpi_html": ov["kpi_html"],
+        "session_detail_html": ov["session_detail"],
+        "metrics_md": ov["metrics_text"],
+        "token_chart": ch["tok_fig"],
+        "duration_chart": ch["dur_fig"],
+        "context_growth_chart": ch["context_growth_fig"],
+        "behavior_md": ov["behavior_text"],
+        "tool_chart": ch["tl_fig"],
+        "tool_outcome_chart": ch["tool_outcome_fig"],
+        "agent_summary_html": ch["agent_cards_html"],
+        "agent_token_chart": ch["agent_tok_fig"],
+        "agent_swimlane_chart": ch["swimlane_fig"],
+        "diag_summary_html": dg["diag_summary_html"],
+        "diag_pressure_html": dg["diag_pressure_html"],
+        "diag_pressure_agent": gr.update(
+            choices=dg["diag_pressure_dropdown"]["choices"],
+            value=dg["diag_pressure_dropdown"]["value"],
+            visible=dg["diag_pressure_dropdown"]["visible"],
+        ),
+        "diag_pressure_chart": dg["diag_pressure_chart"],
+        "diag_file_chart": dg["diag_file_chart"],
+        "diag_rootcause_html": dg["diag_rootcause_html"],
+        "error_class_chart": ch["error_class_fig"],
+        "plan_timeline_chart": ch["plan_timeline_fig"],
+        "hotspots_md": ov["hotspots_text"],
+        "per_message_md": ov["per_message_text"],
     }
 
 

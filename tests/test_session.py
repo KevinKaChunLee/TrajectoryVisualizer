@@ -73,9 +73,9 @@ class LoadSessionTests(unittest.TestCase):
         self.assertTrue(packed["overview_kpi_html"])
         self.assertTrue(packed["raw_json"])
 
-    def test_unknown_packer_key_is_rejected(self):
-        from trajviz.insight.ui.load import _overlay, _slot_defaults
+    def test_duplicate_packer_keys_are_rejected(self):
+        from trajviz.insight.ui.load import merge_packer_dicts
 
         with self.assertRaises(ValueError) as ctx:
-            _overlay(_slot_defaults(), {"not_a_slot": ""})
-        self.assertIn("not_a_slot", str(ctx.exception))
+            merge_packer_dicts([{"token_chart": None}, {"token_chart": None}])
+        self.assertIn("token_chart", str(ctx.exception))

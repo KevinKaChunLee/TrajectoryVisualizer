@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import gradio as gr
 
 from ..loaders import FORMAT_DROPDOWN_CHOICES
+from ..presenters import build_overview_outputs, load_warnings_html
+from ..session import LoadedSession
 
 
 @dataclass
@@ -81,4 +83,23 @@ def load_slots(refs: UploadRefs) -> dict:
         "upload_accordion": refs.upload_accordion,
         "summary_banner": refs.summary_banner,
         "anomaly_strip_html": refs.anomaly_strip_html,
+    }
+
+
+def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict:
+    """Named upload-row values for a load (error banner when *session* is None)."""
+    del dark
+    if session is None:
+        return {
+            "summary_area": gr.update(visible=bool(banner)),
+            "upload_accordion": gr.update(),
+            "summary_banner": banner,
+            "anomaly_strip_html": "",
+        }
+    ov = build_overview_outputs(session)
+    return {
+        "summary_area": gr.update(visible=True),
+        "upload_accordion": gr.update(),
+        "summary_banner": load_warnings_html(session) + ov["banner"],
+        "anomaly_strip_html": ov["anomaly_html"],
     }

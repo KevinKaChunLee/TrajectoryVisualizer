@@ -1,102 +1,73 @@
-"""Load-path Gradio packer: LoadedSession / LoadError → a named slot dict."""
+"""Load-path Gradio packer: merge per-tab named slot dicts."""
 
 from __future__ import annotations
 
 import html
 import traceback
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import gradio as gr
 
-from ..diagnostics import PRESSURE_ALL_AGENTS
 from ..loaders import FORMAT_LABELS
-from ..presenters import (
-    DETAIL_PLACEHOLDER,
-    FILTER_CHIPS_DEFAULT,
-    build_chart_outputs,
-    build_diagnostics_outputs,
-    build_overview_outputs,
-    build_workflow_outputs,
-    empty_plotly_fig,
-    load_warnings_html,
-    raw_json_text,
-    render_failure_patterns_html,
-    render_tool_sequences_html,
-)
-from ..rendering import render_filter_chips
 from ..session import LoadError, LoadedSession, load_session
 from . import overview_tab, patterns_tab, raw_tab, upload, workflow_tab
 from .shared import SharedState
 
+PackFn = Callable[..., dict[str, Any]]
 
-def _slot_defaults(banner: str = "") -> dict[str, Any]:
-    """Schema + empty values for every load slot. Adding a tab starts here."""
-    fig = empty_plotly_fig()
+
+def pack_shell(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict[str, Any]:
+    """Tabs visibility and Gradio state filled on load."""
+    del dark, banner
+    if session is None:
+        return {
+            "main_tabs": gr.update(visible=False),
+            "state_steps": [],
+            "state_raw": {},
+        }
     return {
-        "main_tabs": gr.update(visible=False),
-        "summary_area": gr.update(visible=bool(banner)),
-        "upload_accordion": gr.update(),
-        "state_steps": [],
-        "summary_banner": banner,
-        "anomaly_strip_html": "",
-        "overview_kpi_html": "",
-        "session_detail_html": "",
-        "metrics_md": "",
-        "token_chart": fig,
-        "duration_chart": fig,
-        "context_growth_chart": fig,
-        "behavior_md": "",
-        "tool_chart": fig,
-        "tool_outcome_chart": fig,
-        "agent_summary_html": "",
-        "agent_token_chart": fig,
-        "agent_swimlane_chart": fig,
-        "diag_summary_html": "",
-        "diag_pressure_html": "",
-        "diag_pressure_agent": gr.update(
-            choices=[("All agents", PRESSURE_ALL_AGENTS)],
-            value=PRESSURE_ALL_AGENTS,
-            visible=False,
-        ),
-        "diag_pressure_chart": fig,
-        "diag_file_chart": fig,
-        "diag_rootcause_html": "",
-        "error_class_chart": fig,
-        "plan_timeline_chart": fig,
-        "hotspots_md": "",
-        "per_message_md": "",
-        "wf_filter_chips_html": render_filter_chips(),
-        "wf_filter_hidden": ",".join(FILTER_CHIPS_DEFAULT),
-        "wf_count_html": "",
-        "toc_html": "",
-        "workflow_html": "<div></div>",
-        "detail_store": "",
-        "detail_html": DETAIL_PLACEHOLDER,
-        "raw_json": "",
-        "patterns_tool_html": "",
-        "patterns_failure_html": "",
-        "antipattern_summary_html": "",
-        "state_raw": {},
+        "main_tabs": gr.update(visible=True),
+        "state_steps": session.steps,
+        "state_raw": session.raw,
     }
+
+
+_PACKERS: tuple[PackFn, ...] = (
+    pack_shell,
+    upload.pack_load,
+    overview_tab.pack_load,
+    patterns_tab.pack_load,
+    workflow_tab.pack_load,
+    raw_tab.pack_load,
+)
+
+
+def merge_packer_dicts(parts: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Union packer dicts; duplicate keys are a bug."""
+    packed: dict[str, Any] = {}
+    for part in parts:
+        overlap = packed.keys() & part.keys()
+        if overlap:
+            raise ValueError(f"Duplicate load slot keys: {sorted(overlap)}")
+        packed.update(part)
+    return packed
+
+
+def collect_pack(session: LoadedSession | None = None, *, dark: bool = False, banner: str = "") -> dict[str, Any]:
+    """Run every tab packer and merge."""
+    return merge_packer_dicts([pack(session, dark=dark, banner=banner) for pack in _PACKERS])
 
 
 _LOAD_SLOT_KEYS: frozenset[str] | None = None
 
 
 def load_slot_keys() -> frozenset[str]:
-    """Names the packer and `merge_load_slots` must agree on."""
+    """Union of keys every packer emits (empty load)."""
     global _LOAD_SLOT_KEYS
     if _LOAD_SLOT_KEYS is None:
-        _LOAD_SLOT_KEYS = frozenset(_slot_defaults())
+        _LOAD_SLOT_KEYS = frozenset(collect_pack())
     return _LOAD_SLOT_KEYS
-
-
-def _overlay(packed: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-    extra = updates.keys() - packed.keys()
-    if extra:
-        raise ValueError(f"Unknown load slot keys: {sorted(extra)}")
-    packed.update(updates)
-    return packed
 
 
 def merge_load_slots(
@@ -110,16 +81,20 @@ def merge_load_slots(
     raw: raw_tab.RawRefs,
 ) -> dict[str, Any]:
     """Component map for `do_load`. A new tab adds `**tab.load_slots(refs)` here."""
-    slots = {
-        "main_tabs": main_tabs,
-        "state_steps": shared.state_steps,
-        "state_raw": shared.state_raw,
-        **upload.load_slots(upload_refs),
-        **overview_tab.load_slots(overview),
-        **patterns_tab.load_slots(patterns),
-        **workflow_tab.load_slots(workflow),
-        **raw_tab.load_slots(raw),
-    }
+    slots = merge_packer_dicts(
+        [
+            {
+                "main_tabs": main_tabs,
+                "state_steps": shared.state_steps,
+                "state_raw": shared.state_raw,
+            },
+            upload.load_slots(upload_refs),
+            overview_tab.load_slots(overview),
+            patterns_tab.load_slots(patterns),
+            workflow_tab.load_slots(workflow),
+            raw_tab.load_slots(raw),
+        ]
+    )
     expected = load_slot_keys()
     got = frozenset(slots)
     if got != expected:
@@ -145,7 +120,7 @@ def empty_load_outputs(banner: str = "", detail: str = "*No data*") -> dict[str,
         banner += (
             f"<p style='color:var(--ov-muted);font-size:13px;margin:4px 0 0;'>{html.escape(detail.strip('*'))}</p>"
         )
-    return _slot_defaults(banner=banner)
+    return collect_pack(banner=banner)
 
 
 def _pack_error(err: LoadError) -> dict[str, Any]:
@@ -179,60 +154,12 @@ def pack_load_outputs(result: LoadedSession | LoadError, dark: bool = False) -> 
     """Map a load result onto named Gradio slots."""
     if isinstance(result, LoadError):
         return _pack_error(result)
-
-    ov = build_overview_outputs(result)
-    ch = build_chart_outputs(result, dark=dark)
-    dg = build_diagnostics_outputs(result, dark=dark)
-    wf = build_workflow_outputs(result.steps)
-    warnings = load_warnings_html(result)
-    return _overlay(
-        _slot_defaults(),
-        {
-            "main_tabs": gr.update(visible=True),
-            "summary_area": gr.update(visible=True),
-            "state_steps": result.steps,
-            "summary_banner": warnings + ov["banner"],
-            "anomaly_strip_html": ov["anomaly_html"],
-            "overview_kpi_html": ov["kpi_html"],
-            "session_detail_html": ov["session_detail"],
-            "metrics_md": ov["metrics_text"],
-            "token_chart": ch["tok_fig"],
-            "duration_chart": ch["dur_fig"],
-            "context_growth_chart": ch["context_growth_fig"],
-            "behavior_md": ov["behavior_text"],
-            "tool_chart": ch["tl_fig"],
-            "tool_outcome_chart": ch["tool_outcome_fig"],
-            "agent_summary_html": ch["agent_cards_html"],
-            "agent_token_chart": ch["agent_tok_fig"],
-            "agent_swimlane_chart": ch["swimlane_fig"],
-            "diag_summary_html": dg["diag_summary_html"],
-            "diag_pressure_html": dg["diag_pressure_html"],
-            "diag_pressure_agent": gr.update(
-                choices=dg["diag_pressure_dropdown"]["choices"],
-                value=dg["diag_pressure_dropdown"]["value"],
-                visible=dg["diag_pressure_dropdown"]["visible"],
-            ),
-            "diag_pressure_chart": dg["diag_pressure_chart"],
-            "diag_file_chart": dg["diag_file_chart"],
-            "diag_rootcause_html": dg["diag_rootcause_html"],
-            "error_class_chart": ch["error_class_fig"],
-            "plan_timeline_chart": ch["plan_timeline_fig"],
-            "hotspots_md": ov["hotspots_text"],
-            "per_message_md": ov["per_message_text"],
-            "wf_filter_chips_html": wf["wf_chips"],
-            "wf_filter_hidden": wf["wf_filter_val"],
-            "wf_count_html": wf["wf_count"],
-            "toc_html": wf["toc_html_val"],
-            "workflow_html": wf["wf_html"],
-            "detail_store": wf["detail_store_val"],
-            "detail_html": DETAIL_PLACEHOLDER,
-            "raw_json": raw_json_text(result.raw),
-            "patterns_tool_html": render_tool_sequences_html(result.tool_sequences),
-            "patterns_failure_html": render_failure_patterns_html(result.failure_patterns),
-            "antipattern_summary_html": ch["antipattern_html"],
-            "state_raw": result.raw,
-        },
-    )
+    packed = collect_pack(result, dark=dark)
+    expected = load_slot_keys()
+    got = frozenset(packed)
+    if got != expected:
+        raise ValueError(f"Load packer keys mismatch: missing={sorted(expected - got)} extra={sorted(got - expected)}")
+    return packed
 
 
 def do_load(upload_obj, dark=False, selected_format="", *, slots: dict[str, Any] | None = None):
