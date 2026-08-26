@@ -13,6 +13,7 @@ APP_CSS = """
         'Hiragino Sans GB', 'Noto Sans JP', 'Noto Sans KR', sans-serif;
 }
 :root {
+    color-scheme: light;
     --ov-bg: #f6f8fc;
     --ov-card: #ffffff;
     --ov-border: #dce3ef;

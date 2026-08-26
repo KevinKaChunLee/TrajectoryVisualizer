@@ -63,7 +63,13 @@ python -m trajviz.insight
 trajviz
 ```
 
-Default: `http://localhost:7860`. Upload a trajectory JSON via the file picker at the top of the UI.
+Default: `http://localhost:7860`. Upload a trajectory JSON via the file picker at the top of the UI. After load, **Export HTML** downloads a standalone Overview + charts + Patterns snapshot (charts stay interactive via Plotly's CDN).
+
+Headless report, no dashboard:
+
+```bash
+python -m trajviz.insight --report path/to/trajectory.json -o report.html
+```
 
 The **AI Trajectory Analysis** sidebar starts closed; open it from the
 labeled control on the right edge. It runs an automatic analysis

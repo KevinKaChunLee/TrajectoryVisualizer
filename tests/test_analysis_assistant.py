@@ -291,6 +291,7 @@ class AnalysisUiTests(unittest.TestCase):
         from trajviz.insight.styles import APP_CSS
         self.assertIn("#analysis-sidebar .analysis-panel-title", APP_CSS)
         self.assertIn("text-align: center", APP_CSS)
+        self.assertIn("color-scheme: light", APP_CSS)
         self.assertIn("position=\"right\"", source)
         self.assertIn("open=False", source)
         self.assertIn('width="max(480px, 25vw)"', source)

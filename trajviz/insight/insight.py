@@ -60,6 +60,7 @@ def build_ui() -> gr.Blocks:
             slots=slots,
         )
         load_events = (_load_ev, _upload_ev)
+        upload.bind_export(upload_refs, shared, load_events)
 
         sidebar.bind(sidebar_refs, shared, load_events)
         overview_tab.bind(overview, shared, upload_refs)
@@ -68,16 +69,18 @@ def build_ui() -> gr.Blocks:
         workflow_tab.bind(workflow, shared)
 
         app.load(
-            fn=lambda dark: dark,
-            inputs=[shared.state_dark],
+            fn=lambda _dark=False: False,
             outputs=[shared.state_dark],
             js="""() => {
+                document.documentElement.style.colorScheme = 'light';
+                document.documentElement.classList.remove('dark');
+                if (document.body) document.body.classList.remove('dark');
                 const btn = document.querySelector('#analysis-sidebar .toggle-button');
                 if (btn) {
                     btn.setAttribute('aria-label', 'AI Trajectory Analysis');
                     btn.setAttribute('title', 'AI Trajectory Analysis');
                 }
-                return [window.matchMedia('(prefers-color-scheme: dark)').matches];
+                return [false];
             }""",
         )
 
