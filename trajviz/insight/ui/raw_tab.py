@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import gradio as gr
 
-from ..presenters import raw_json_text
+from ..presenters.raw import raw_json_text
 from ..session import LoadedSession
 
 

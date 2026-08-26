@@ -7,8 +7,6 @@ import.
 
 from __future__ import annotations
 
-import os
-import zipfile
 from typing import Any
 
 from .formats.claude_code import _convert_claude_code_to_internal
@@ -20,20 +18,22 @@ from .formats.common import (  # noqa: F401  (re-exported public / test API)
     safe_get,
 )
 from .formats.dsh import (
+    DshZipContents,
     _convert_dsh_to_internal,
     _dsh_drop_seed_prefix,  # noqa: F401
-    _looks_like_dsh_jsonl,
     _zip_dsh_members,  # noqa: F401
-    _zip_member_over_budget,
-    _DSH_ZIP_MAX_CHILD_MEMBERS,
+    parse_dsh_zip,
+    resolve_dsh_session_path,
 )
 from .formats.opencode import _convert_opencode_metadata
 from .formats.parse import _normalize_payload, _parse_trajectory_text, _path_ext
-from .formats.pi import _convert_pi_to_internal, _looks_like_pi_jsonl
+from .formats.pi import _convert_pi_to_internal
 from .formats.sniff import (
-    _detect_object_format,
     _EVENT_FORMATS,
     _FORMAT_STAMPS,
+    _OBJECT_FORMATS,
+    _detect_event_stream_format,
+    _detect_object_format,
 )
 
 # Canonical display names for the detected trajectory formats.  Defined here,
@@ -56,18 +56,35 @@ FORMAT_DROPDOWN_CHOICES: list[tuple[str, str]] = [
 ]
 
 
-def _detect_event_stream_format(events: list) -> str:
-    """Detect Codex / DSH / Pi from a parsed event array (JSONL or a JSON list)."""
-    if not events or not isinstance(events[0], dict):
-        return "unknown"
-    if events[0].get("type") == "session_meta":
-        return "codex"
-    # DSH before Pi: both lead with ``type: session`` + string ``id``.
-    if _looks_like_dsh_jsonl(events):
-        return "dsh"
-    if _looks_like_pi_jsonl(events):
-        return "pi"
-    return "unknown"
+def _convert_codex_events(payload: list, *, source_path: str | None = None) -> dict:
+    del source_path
+    return _convert_codex_to_internal(payload)
+
+
+def _convert_dsh_events(payload: list, *, source_path: str | None = None) -> dict:
+    return _convert_dsh_to_internal(payload, source_path=source_path)
+
+
+def _convert_pi_events(payload: list, *, source_path: str | None = None) -> dict:
+    del source_path
+    return _convert_pi_to_internal(payload)
+
+
+_EVENT_CONVERTERS = {
+    "codex": _convert_codex_events,
+    "dsh": _convert_dsh_events,
+    "pi": _convert_pi_events,
+}
+if set(_EVENT_CONVERTERS) != _EVENT_FORMATS:
+    raise RuntimeError(
+        "Event converters must match sniff._EVENT_FORMATS: "
+        f"converters={sorted(_EVENT_CONVERTERS)} sniff={sorted(_EVENT_FORMATS)}"
+    )
+if set(FORMAT_LABELS) != _OBJECT_FORMATS | _EVENT_FORMATS:
+    raise RuntimeError(
+        "FORMAT_LABELS must match sniff object+event formats: "
+        f"labels={sorted(FORMAT_LABELS)} sniff={sorted(_OBJECT_FORMATS | _EVENT_FORMATS)}"
+    )
 
 
 def detect_format(raw: Any) -> str:
@@ -147,8 +164,7 @@ def _kind_mismatch_error(fmt: str) -> dict:
     label = FORMAT_LABELS.get(fmt, fmt)
     if fmt in _EVENT_FORMATS:
         leading = "session_meta" if fmt == "codex" else "session"
-        return {"_error": f"{label} expects a JSONL event array "
-                          f"(leading {leading} event)."}
+        return {"_error": f"{label} expects a JSONL event array (leading {leading} event)."}
     return {"_error": f"{label} expects a JSON object, not an event array."}
 
 
@@ -165,11 +181,10 @@ def _apply_format(payload: Any, fmt: str, *, source_path: str | None = None) -> 
     if fmt in _EVENT_FORMATS:
         if not isinstance(payload, list):
             return _kind_mismatch_error(fmt)
-        if fmt == "codex":
-            return _convert_codex_to_internal(payload)
-        if fmt == "dsh":
-            return _convert_dsh_to_internal(payload, source_path=source_path)
-        return _convert_pi_to_internal(payload)
+        convert = _EVENT_CONVERTERS.get(fmt)
+        if convert is None:
+            return {"_error": f"Unknown event format: {fmt}"}
+        return convert(payload, source_path=source_path)
 
     if not isinstance(payload, dict):
         return _kind_mismatch_error(fmt)
@@ -180,83 +195,37 @@ def _apply_format(payload: Any, fmt: str, *, source_path: str | None = None) -> 
         # correctly) but have no parser yet: their 'sender'/'content' messages
         # are not OpenCode-shaped and would silently produce empty steps.
         if safe_get(payload, "export_metadata", "source_format") == "codearts_legacy_json":
-            return {"_error": "CodeArts legacy-JSON export detected "
-                              "(source_format=codearts_legacy_json): this legacy "
-                              "message schema is not yet supported. Re-export the "
-                              "session from the CodeArts SQLite database instead."}
+            return {
+                "_error": "CodeArts legacy-JSON export detected "
+                "(source_format=codearts_legacy_json): this legacy "
+                "message schema is not yet supported. Re-export the "
+                "session from the CodeArts SQLite database instead."
+            }
         return _convert_codearts_metadata(payload)
     if fmt == "opencode":
         return _convert_opencode_metadata(payload)
-    return payload if isinstance(payload, dict) else {"_error": _UNSUPPORTED_EVENT_STREAM}
-
-
-def _resolve_trajectory_path(file_path: str) -> tuple[str, str | None]:
-    """If *file_path* is a DSH session directory, return its ``session.jsonl``.
-
-    Returns ``(path, error)``. Directories without ``session.jsonl`` error.
-    """
-    if os.path.isdir(file_path):
-        nested = os.path.join(file_path, "session.jsonl")
-        if os.path.isfile(nested):
-            return nested, None
-        return file_path, f"Directory has no session.jsonl: {file_path}"
-    return file_path, None
-
-
-def _parse_zip_member_events(archive: zipfile.ZipFile, member: str) -> list[dict]:
-    try:
-        raw = archive.read(member)
-    except KeyError:
-        return []
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return []
-    payload, err = _parse_trajectory_text(text, member)
-    if err:
-        return []
-    payload = _normalize_payload(payload, member)
-    if isinstance(payload, list):
-        return [event for event in payload if isinstance(event, dict)]
-    return []
+    return {"_error": f"Unknown trajectory format: {fmt}"}
 
 
 def _load_zip_trajectory(file_path: str, format_hint: str | None, source_sha: str) -> dict:
     """Load a DSH export zip (``session.jsonl`` + optional ``subagents/``)."""
-    try:
-        archive = zipfile.ZipFile(file_path)
-    except (OSError, zipfile.BadZipFile) as exc:
-        return {"_error": f"Invalid zip archive: {exc}"}
-    with archive:
-        parent_member, child_members = _zip_dsh_members(archive.namelist())
-        if not parent_member:
-            return {"_error": "Zip archive has no session.jsonl."}
-        budget = [0]
-        if _zip_member_over_budget(archive, parent_member, budget):
-            return {"_error": f"Zip member too large: {parent_member}"}
-        events = _parse_zip_member_events(archive, parent_member)
-        if not events:
-            return {"_error": f"Could not parse {parent_member} from zip."}
-        detected = detect_format(events)
-        hint = format_hint if format_hint in FORMAT_LABELS else None
-        fmt, reason = _resolve_format(detected, hint)
-        if reason == "mismatch":
-            return _format_mismatch_error(hint or "", detected)
-        if fmt != "dsh":
-            result = _apply_format(events, fmt, source_path=file_path)
-        else:
-            child_lists: list[list[dict]] | None
-            if child_members:
-                child_lists = []
-                for _child_id, member in child_members[:_DSH_ZIP_MAX_CHILD_MEMBERS]:
-                    if _zip_member_over_budget(archive, member, budget):
-                        continue
-                    child_lists.append(_parse_zip_member_events(archive, member))
-            else:
-                child_lists = None
-            result = _convert_dsh_to_internal(
-                events, source_path=file_path, child_event_lists=child_lists,
-            )
+    parsed = parse_dsh_zip(file_path)
+    if not isinstance(parsed, DshZipContents):
+        return parsed
+    events = parsed.parent_events
+    detected = detect_format(events)
+    hint = format_hint if format_hint in FORMAT_LABELS else None
+    fmt, reason = _resolve_format(detected, hint)
+    if reason == "mismatch":
+        return _format_mismatch_error(hint or "", detected)
+    if fmt != "dsh":
+        result = _apply_format(events, fmt, source_path=file_path)
+    else:
+        result = _convert_dsh_to_internal(
+            events,
+            source_path=file_path,
+            child_event_lists=parsed.child_event_lists,
+        )
     if "_error" in result:
         return result
     result["_source_path"] = file_path
@@ -278,7 +247,7 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
     if _path_ext(file_path) == ".log":
         return {"_error": "Unsupported file type: .log files are no longer supported."}
 
-    file_path, path_error = _resolve_trajectory_path(file_path)
+    file_path, path_error = resolve_dsh_session_path(file_path)
     if path_error:
         return {"_error": path_error}
 
@@ -323,4 +292,5 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
 
 def _sha256_bytes(data: bytes) -> str:
     import hashlib
+
     return hashlib.sha256(data).hexdigest()

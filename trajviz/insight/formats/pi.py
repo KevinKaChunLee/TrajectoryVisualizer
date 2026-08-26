@@ -5,21 +5,6 @@ from typing import Any
 
 from .common import _iso_to_epoch_ms
 
-def _looks_like_pi_jsonl(events: list) -> bool:
-    """True when an event stream starts with a Pi ``session`` header.
-
-    Distinct from Codex ``session_meta`` and DeepSeek Harness (checked first).
-    Requires a non-empty string ``id`` so a generic ``{"type": "session"}``
-    log line is not treated as Pi.
-    """
-    if not events or not isinstance(events[0], dict):
-        return False
-    first = events[0]
-    if first.get("type") != "session":
-        return False
-    ident = first.get("id")
-    return isinstance(ident, str) and bool(ident)
-
 # Pi coding-agent tools use lowercase names and a `path` argument. Map them to
 # the Claude Code / OpenCode vocabulary so file-interaction charts and write
 # detection work without a second set of aliases.
@@ -123,9 +108,7 @@ def _pi_normalize_tool(name: str, arguments: Any) -> tuple[str, dict]:
             arguments = json.loads(arguments)
         except json.JSONDecodeError:
             arguments = {"raw": arguments}
-    args = dict(arguments) if isinstance(arguments, dict) else (
-        {} if arguments is None else {"raw": arguments}
-    )
+    args = dict(arguments) if isinstance(arguments, dict) else ({} if arguments is None else {"raw": arguments})
     if canonical in ("Read", "Write", "Edit") and "file_path" not in args and "path" in args:
         args["file_path"] = args["path"]
     if canonical == "Bash" and "command" not in args and "cmd" in args:
@@ -151,8 +134,7 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
     current_model = ""
     current_provider = ""
 
-    def _append(role: str, ts: int | None, parts: list, tokens: dict | None = None,
-                extra: dict | None = None) -> None:
+    def _append(role: str, ts: int | None, parts: list, tokens: dict | None = None, extra: dict | None = None) -> None:
         info: dict[str, Any] = {
             "role": role,
             "time": {"created": ts or 0},
@@ -211,7 +193,8 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
                     parts.append({"type": "text", "text": item.get("text", "")})
                 elif ctype == "toolCall":
                     tool_name, tool_input = _pi_normalize_tool(
-                        item.get("name", "?"), item.get("arguments"),
+                        item.get("name", "?"),
+                        item.get("arguments"),
                     )
                     call_id = item.get("id") or ""
                     part = {
@@ -255,15 +238,21 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
                     part["error"] = output
             else:
                 tool_name, _ = _pi_normalize_tool(msg.get("toolName") or "?", {})
-                _append("assistant", ts, [{
-                    "type": "tool",
-                    "tool_name": tool_name,
-                    "tool_id": call_id,
-                    "status": status,
-                    "input": {},
-                    "output": output,
-                    **({"error": output} if is_error else {}),
-                }])
+                _append(
+                    "assistant",
+                    ts,
+                    [
+                        {
+                            "type": "tool",
+                            "tool_name": tool_name,
+                            "tool_id": call_id,
+                            "status": status,
+                            "input": {},
+                            "output": output,
+                            **({"error": output} if is_error else {}),
+                        }
+                    ],
+                )
 
     for part in pending_tools.values():
         if part.get("status") == "pending":
@@ -289,12 +278,9 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
     start_ms = _iso_to_epoch_ms(first_ts_iso)
     end_ms = _iso_to_epoch_ms(last_ts_iso)
     total_duration = (
-        round((end_ms - start_ms) / 1000.0, 3)
-        if isinstance(start_ms, int) and isinstance(end_ms, int) else 0
+        round((end_ms - start_ms) / 1000.0, 3) if isinstance(start_ms, int) and isinstance(end_ms, int) else 0
     )
-    total_tokens = sum(
-        (m["info"].get("tokens") or {}).get("total", 0) for m in messages
-    )
+    total_tokens = sum((m["info"].get("tokens") or {}).get("total", 0) for m in messages)
     last_model = current_model
     last_provider = current_provider
 

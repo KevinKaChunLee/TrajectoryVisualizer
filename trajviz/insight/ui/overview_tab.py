@@ -13,10 +13,10 @@ from ..charts import build_context_pressure_chart
 from ..diagnostics import PRESSURE_ALL_AGENTS, context_pressure_series
 from ..formatting import format_context_pressure_html
 from ..help import HELP_TEXT
-from ..presenters import (
+from ..presenters.label_ui import build_label_ui_payload
+from ..presenters.overview import (
     build_chart_outputs,
     build_diagnostics_outputs,
-    build_label_ui_payload,
     build_overview_outputs,
     empty_plotly_fig,
 )
