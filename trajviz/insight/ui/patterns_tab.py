@@ -36,3 +36,12 @@ def layout() -> PatternsRefs:
         patterns_failure_html=patterns_failure_html,
         antipattern_summary_html=antipattern_summary_html,
     )
+
+
+def load_slots(refs: PatternsRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {
+        "patterns_tool_html": refs.patterns_tool_html,
+        "patterns_failure_html": refs.patterns_failure_html,
+        "antipattern_summary_html": refs.antipattern_summary_html,
+    }

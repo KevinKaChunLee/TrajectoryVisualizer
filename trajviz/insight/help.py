@@ -1,9 +1,9 @@
 """Centralized help text registry for metric tooltips and section explanations."""
 
 # Tooltip/subtitle text keyed by identifier. Only keys referenced by
-# insight.py are live: the four Overview KPI cards (rendered as data-help
-# tooltips) and the Overview section subtitles. Add an entry here only
-# together with the UI code that renders it.
+# presenters.py / overview_tab.py are live: the four Overview KPI cards
+# (rendered as data-help tooltips) and the Overview section subtitles.
+# Add an entry here only together with the UI code that renders it.
 HELP_TEXT: dict[str, str] = {
     # KPI card metrics
     "steps": "Total number of conversation turns (user + assistant messages) in the trajectory.",

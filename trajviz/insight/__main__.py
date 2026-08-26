@@ -12,7 +12,8 @@ def main():
     args = parser.parse_args()
 
     try:
-        from .insight import build_ui, APP_CSS
+        from .insight import build_ui
+        from .styles import APP_CSS
     except ImportError:
         print(
             "Error: Insight dependencies are not installed.\n"

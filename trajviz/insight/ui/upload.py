@@ -72,3 +72,13 @@ def layout() -> UploadRefs:
         label_badge_html=label_badge_html,
         anomaly_strip_html=anomaly_strip_html,
     )
+
+
+def load_slots(refs: UploadRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {
+        "summary_area": refs.summary_area,
+        "upload_accordion": refs.upload_accordion,
+        "summary_banner": refs.summary_banner,
+        "anomaly_strip_html": refs.anomaly_strip_html,
+    }

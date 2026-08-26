@@ -56,11 +56,26 @@ class LoadSessionTests(unittest.TestCase):
         self.assertIsInstance(result, LoadError)
         self.assertEqual(result.code, "unknown")
 
-    def test_packer_keeps_forty_gradio_slots(self):
-        from trajviz.insight.ui.load import empty_load_outputs, pack_load_outputs
+    def test_packer_uses_named_slots(self):
+        from trajviz.insight.ui.load import empty_load_outputs, load_slot_keys, pack_load_outputs
 
         result = load_session(str(FIXTURE))
         self.assertIsInstance(result, LoadedSession)
         packed = pack_load_outputs(result)
-        self.assertEqual(len(packed), 40)
-        self.assertEqual(len(empty_load_outputs(detail="*No file selected or file not found.*")), 40)
+        empty = empty_load_outputs(detail="*No file selected or file not found.*")
+        keys = load_slot_keys()
+        self.assertEqual(set(packed), set(keys))
+        self.assertEqual(set(empty), set(keys))
+        self.assertIsInstance(packed["state_steps"], list)
+        self.assertGreater(len(packed["state_steps"]), 0)
+        self.assertIsInstance(packed["state_raw"], dict)
+        self.assertTrue(packed["state_raw"])
+        self.assertTrue(packed["overview_kpi_html"])
+        self.assertTrue(packed["raw_json"])
+
+    def test_unknown_packer_key_is_rejected(self):
+        from trajviz.insight.ui.load import _overlay, _slot_defaults
+
+        with self.assertRaises(ValueError) as ctx:
+            _overlay(_slot_defaults(), {"not_a_slot": ""})
+        self.assertIn("not_a_slot", str(ctx.exception))

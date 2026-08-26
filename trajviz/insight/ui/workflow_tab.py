@@ -9,7 +9,7 @@ import gradio as gr
 from ..presenters import (
     DETAIL_PLACEHOLDER,
     FILTER_CHIPS_DEFAULT,
-    _build_filtered_workflow_outputs,
+    build_filtered_workflow_outputs,
 )
 from ..rendering import render_filter_chips
 from .shared import SharedState
@@ -368,6 +368,19 @@ def layout() -> WorkflowRefs:
     )
 
 
+def load_slots(refs: WorkflowRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {
+        "wf_filter_chips_html": refs.wf_filter_chips_html,
+        "wf_filter_hidden": refs.wf_filter_hidden,
+        "wf_count_html": refs.wf_count_html,
+        "toc_html": refs.toc_html,
+        "workflow_html": refs.workflow_html,
+        "detail_store": refs.detail_store,
+        "detail_html": refs.detail_html,
+    }
+
+
 def bind(refs: WorkflowRefs, shared: SharedState) -> None:
     state_steps = shared.state_steps
     wf_filter_hidden = refs.wf_filter_hidden
@@ -378,7 +391,7 @@ def bind(refs: WorkflowRefs, shared: SharedState) -> None:
 
     def do_filter_workflow(steps, filter_csv, keyword, current_toc):
         """Re-render Workflow cards, count, and TOC with filters applied."""
-        return _build_filtered_workflow_outputs(steps, filter_csv, keyword, current_toc)
+        return build_filtered_workflow_outputs(steps, filter_csv, keyword, current_toc)
 
     def on_toc_toggle(current_toc):
         """Toggle TOC sidebar visibility via CSS class."""

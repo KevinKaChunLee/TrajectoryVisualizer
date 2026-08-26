@@ -212,6 +212,34 @@ def layout() -> OverviewRefs:
     )
 
 
+def load_slots(refs: OverviewRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {
+        "overview_kpi_html": refs.overview_kpi_html,
+        "session_detail_html": refs.session_detail_html,
+        "metrics_md": refs.metrics_md,
+        "token_chart": refs.token_chart,
+        "duration_chart": refs.duration_chart,
+        "context_growth_chart": refs.context_growth_chart,
+        "behavior_md": refs.behavior_md,
+        "tool_chart": refs.tool_chart,
+        "tool_outcome_chart": refs.tool_outcome_chart,
+        "agent_summary_html": refs.agent_summary_html,
+        "agent_token_chart": refs.agent_token_chart,
+        "agent_swimlane_chart": refs.agent_swimlane_chart,
+        "diag_summary_html": refs.diag_summary_html,
+        "diag_pressure_html": refs.diag_pressure_html,
+        "diag_pressure_agent": refs.diag_pressure_agent,
+        "diag_pressure_chart": refs.diag_pressure_chart,
+        "diag_file_chart": refs.diag_file_chart,
+        "diag_rootcause_html": refs.diag_rootcause_html,
+        "error_class_chart": refs.error_class_chart,
+        "plan_timeline_chart": refs.plan_timeline_chart,
+        "hotspots_md": refs.hotspots_md,
+        "per_message_md": refs.per_message_md,
+    }
+
+
 def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
     overview_section_names = OVERVIEW_SECTION_NAMES
     overview_sections = (

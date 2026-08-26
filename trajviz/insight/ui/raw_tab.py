@@ -21,3 +21,8 @@ def layout() -> RawRefs:
             max_lines=50,
         )
     return RawRefs(raw_json=raw_json)
+
+
+def load_slots(refs: RawRefs) -> dict:
+    """Named Gradio components filled by the load packer."""
+    return {"raw_json": refs.raw_json}
