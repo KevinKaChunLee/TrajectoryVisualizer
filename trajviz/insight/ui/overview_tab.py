@@ -43,6 +43,7 @@ class OverviewRefs:
     context_growth_chart: gr.Plot
     behavior_md: gr.Markdown
     tool_chart: gr.Plot
+    skill_chart: gr.Plot
     tool_outcome_chart: gr.Plot
     agent_summary_html: gr.HTML
     agent_token_chart: gr.Plot
@@ -113,7 +114,7 @@ def layout() -> OverviewRefs:
                     behavior_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
                         tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
-                        gr.Column(scale=1)
+                        skill_chart = gr.Plot(show_label=False, label="Skill Calls by Agent")
                     with gr.Row(equal_height=True):
                         tool_outcome_chart = gr.Plot(show_label=False, label="Tool Outcome Timeline")
 
@@ -188,6 +189,7 @@ def layout() -> OverviewRefs:
         context_growth_chart=context_growth_chart,
         behavior_md=behavior_md,
         tool_chart=tool_chart,
+        skill_chart=skill_chart,
         tool_outcome_chart=tool_outcome_chart,
         agent_summary_html=agent_summary_html,
         agent_token_chart=agent_token_chart,
@@ -225,6 +227,7 @@ def load_slots(refs: OverviewRefs) -> dict:
         "context_growth_chart": refs.context_growth_chart,
         "behavior_md": refs.behavior_md,
         "tool_chart": refs.tool_chart,
+        "skill_chart": refs.skill_chart,
         "tool_outcome_chart": refs.tool_outcome_chart,
         "agent_summary_html": refs.agent_summary_html,
         "agent_token_chart": refs.agent_token_chart,
@@ -256,6 +259,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "context_growth_chart": fig,
             "behavior_md": "",
             "tool_chart": fig,
+            "skill_chart": fig,
             "tool_outcome_chart": fig,
             "agent_summary_html": "",
             "agent_token_chart": fig,
@@ -288,6 +292,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "context_growth_chart": ch["context_growth_fig"],
         "behavior_md": ov["behavior_text"],
         "tool_chart": ch["tl_fig"],
+        "skill_chart": ch["skill_fig"],
         "tool_outcome_chart": ch["tool_outcome_fig"],
         "agent_summary_html": ch["agent_cards_html"],
         "agent_token_chart": ch["agent_tok_fig"],

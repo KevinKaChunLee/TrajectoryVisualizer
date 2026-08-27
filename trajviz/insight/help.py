@@ -13,7 +13,7 @@ HELP_TEXT: dict[str, str] = {
     # Section subtitles
     "section_performance": "Token consumption, step timing, and overall resource usage patterns.",
     "section_efficiency": "Context growth over time and compression events.",
-    "section_tools": "Tool usage frequency, outcome timeline, and behavioral diagnostics.",
+    "section_tools": "Tool usage frequency, Skill-tool calls by agent, outcome timeline, and behavioral diagnostics.",
     "section_agents": "Multi-agent breakdown, spawning relationships, and per-agent performance.",
     "section_diagnostics": "File targeting, errors, and context-window pressure — occupancy of each agent's window over steps, with compaction drops.",
 }

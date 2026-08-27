@@ -127,6 +127,20 @@ class ReportBuildTests(unittest.TestCase):
         self.assertIn("class='tv-theme-light'", doc)
         self.assertIn("color-scheme: light", doc)
         self.assertIn("<meta name='color-scheme' content='light'>", doc)
+        self.assertNotIn("Skill calls by agent", doc)
+
+    def test_skill_chart_included_when_skills_present(self):
+        from trajviz.insight.session import build_loaded_session
+
+        raw = self._loaded()
+        session = build_loaded_session(raw.get("_source_path") or "oc.json", raw)
+        assistant = next(s for s in session.steps if s.get("role") == "assistant")
+        assistant.setdefault("tool_calls", []).append(
+            {"tool_name": "Skill", "status": "completed", "input": {"skill": "create-hook"}}
+        )
+        doc = build_report_html(session)
+        self.assertIn("Skill calls by agent", doc)
+        self.assertIn("create-hook", doc)
 
     def test_dark_forces_document_color_scheme(self):
         doc = build_report_html(self._loaded(), dark=True)

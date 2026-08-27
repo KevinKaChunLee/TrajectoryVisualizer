@@ -35,3 +35,39 @@ def write_target_path(tool_input: dict) -> str:
         if value:
             return str(value)
     return ""
+
+
+# Tool names whose input names a Skill (Claude Code Skill, Cursor Skill, etc.).
+SKILL_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "skill",
+        "skills",
+        "invoke_skill",
+        "run_skill",
+    }
+)
+
+# Input keys that carry the skill id, in precedence order.
+SKILL_NAME_KEYS: tuple[str, ...] = (
+    "skill",
+    "name",
+    "skill_name",
+    "skillName",
+    "id",
+    "skill_id",
+)
+
+
+def parse_skill_name(tool_name: str, tool_input: object) -> str | None:
+    """Return skill id when this call invokes a Skill tool; else None."""
+    name_l = (tool_name or "").lower()
+    if name_l not in SKILL_TOOL_NAMES:
+        return None
+    if isinstance(tool_input, dict):
+        for key in SKILL_NAME_KEYS:
+            val = tool_input.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    if isinstance(tool_input, str) and tool_input.strip():
+        return tool_input.strip()
+    return "(unnamed skill)"

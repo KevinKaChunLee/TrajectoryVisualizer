@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
+from collections.abc import Callable
 
 from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
@@ -16,6 +17,7 @@ from ..palette import (
     SESSION_COLORS,
     TOKEN_COLORS,
 )
+from trajviz.tool_vocab import parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
 
 
@@ -355,6 +357,140 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
     )
     if has_agents:
         fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+    _apply_dark(fig, dark)
+    return fig
+
+
+def _hex_rgba(hex_color: str, alpha: float) -> str:
+    """Convert ``#rrggbb`` to an ``rgba()`` string."""
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _spread_sankey_y(n: int) -> list[float]:
+    """Even y positions in (0, 1), inset so first/last nodes are not clipped."""
+    if n <= 1:
+        return [0.5]
+    return [0.08 + 0.84 * i / (n - 1) for i in range(n)]
+
+
+def _trunc_skill_label(name: str, limit: int = 28) -> str:
+    return name if len(name) <= limit else name[: limit - 3] + "..."
+
+
+def collect_skill_calls(
+    steps: list[dict],
+    agent_id_of: Callable[[dict], str],
+) -> Counter[tuple[str, str]]:
+    """Count ``(agent_id, skill_id)`` pairs from Skill-tool invocations."""
+    counts: Counter[tuple[str, str]] = Counter()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        agent = agent_id_of(step)
+        for tc in step.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            skill = parse_skill_name(str(tc.get("tool_name") or ""), tc.get("input"))
+            if skill:
+                counts[(agent, skill)] += 1
+    return counts
+
+
+def build_skill_agent_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    """Sankey diagram of Skill-tool invocations: which agent called which skill."""
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
+    counts = collect_skill_calls(steps, agent_id_of)
+    if not counts:
+        fig = _empty_figure(300, "No Skill-tool invocations recorded in this trajectory.")
+        _apply_dark(fig, dark)
+        return fig
+
+    skill_totals: Counter[str] = Counter()
+    agent_totals: Counter[str] = Counter()
+    for (agent, skill), n in counts.items():
+        skill_totals[skill] += n
+        agent_totals[agent] += n
+
+    agent_ids = [aid for aid in sorted(color_map.keys(), key=lambda a: color_map[a]) if agent_totals[aid]]
+    skills = [name for name, _ in skill_totals.most_common()]
+
+    node_labels: list[str] = []
+    node_colors: list[str] = []
+    node_x: list[float] = []
+    node_y: list[float] = []
+
+    agent_ys = _spread_sankey_y(len(agent_ids))
+    skill_ys = _spread_sankey_y(len(skills))
+
+    agent_index: dict[str, int] = {}
+    for i, aid in enumerate(agent_ids):
+        agent_index[aid] = len(node_labels)
+        label = _legend_label(aid, labels)
+        node_labels.append(f"{label} ({agent_totals[aid]})")
+        node_colors.append(SESSION_COLORS[color_map[aid] % len(SESSION_COLORS)])
+        node_x.append(0.02)
+        node_y.append(agent_ys[i])
+
+    skill_index: dict[str, int] = {}
+    skill_color = "#64748b"
+    for i, skill in enumerate(skills):
+        skill_index[skill] = len(node_labels)
+        node_labels.append(f"{_trunc_skill_label(skill)} ({skill_totals[skill]})")
+        node_colors.append(skill_color)
+        node_x.append(0.98)
+        node_y.append(skill_ys[i])
+
+    sources: list[int] = []
+    targets: list[int] = []
+    values: list[int] = []
+    link_colors: list[str] = []
+    hovers: list[str] = []
+    for (agent, skill), n in counts.items():
+        sources.append(agent_index[agent])
+        targets.append(skill_index[skill])
+        values.append(n)
+        agent_color = SESSION_COLORS[color_map[agent] % len(SESSION_COLORS)]
+        link_colors.append(_hex_rgba(agent_color, 0.38))
+        agent_label = _legend_label(agent, labels)
+        noun = "call" if n == 1 else "calls"
+        hovers.append(f"{agent_label} → {skill}<br>{n} {noun}")
+
+    fig = go.Figure(
+        data=[
+            go.Sankey(
+                arrangement="fixed",
+                node=dict(
+                    pad=14,
+                    thickness=16,
+                    line=dict(width=0.5, color="rgba(148,163,184,0.45)"),
+                    label=node_labels,
+                    color=node_colors,
+                    x=node_x,
+                    y=node_y,
+                    hovertemplate="%{label}<extra></extra>",
+                ),
+                link=dict(
+                    source=sources,
+                    target=targets,
+                    value=values,
+                    color=link_colors,
+                    customdata=hovers,
+                    hovertemplate="%{customdata}<extra></extra>",
+                ),
+            )
+        ]
+    )
+    n_nodes = max(len(agent_ids), len(skills))
+    _apply_chart_layout(
+        fig,
+        "Skill Calls by Agent",
+        height=max(300, 48 * n_nodes + 80),
+        margin=dict(l=16, r=16, t=90, b=24),
+    )
     _apply_dark(fig, dark)
     return fig
 

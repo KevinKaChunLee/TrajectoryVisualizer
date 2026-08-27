@@ -9,6 +9,7 @@ from trajviz.converge.canonical import CanonicalAction
 from trajviz.insight.charts import (
     bind_timeline_agents,
     build_run_group_agent_timeline,
+    build_skill_agent_chart,
     build_tool_chart,
 )
 from trajviz.insight.rendering import render_workflow_html
@@ -131,6 +132,10 @@ class CapabilityExtractionTests(unittest.TestCase):
             "canvas",
         )
         self.assertIsNone(_parse_skill_name("Bash", {"command": "ls"}))
+        self.assertEqual(
+            _parse_skill_name("invoke_skill", {"skill_name": "statusline"}),
+            "statusline",
+        )
 
     def test_extract_tools_and_skills(self):
         steps = _steps_with_tools(
@@ -715,6 +720,60 @@ class TimelineIdentityTests(unittest.TestCase):
         self.assertIn("main", values)
         self.assertTrue(any(label.startswith("sub ") for label in values))
         self.assertFalse(any("standard" in label for label in values))
+
+
+class SkillAgentChartTests(unittest.TestCase):
+    def test_empty_when_no_skill_calls(self):
+        steps = [
+            _opencode_step(0, agent="plan", session_id="ses_root", tool="Read"),
+        ]
+        fig = build_skill_agent_chart(steps)
+        self.assertEqual(len(fig.data), 0)
+
+    def test_sankey_links_agents_to_skills(self):
+        plan = _opencode_step(0, agent="plan", session_id="ses_root", tool="Skill")
+        explore = _opencode_step(1, agent="explore", session_id="ses_ex1", tool="Skill")
+        plan["tool_calls"][0]["input"] = {"skill": "create-hook"}
+        explore["tool_calls"][0]["input"] = {"skill": "canvas"}
+        explore["tool_calls"].append(
+            {"tool_name": "Skill", "status": "completed", "input": {"skill": "create-hook"}}
+        )
+        fig = build_skill_agent_chart([plan, explore])
+        self.assertEqual(len(fig.data), 1)
+        sankey = fig.data[0]
+        self.assertEqual(sankey.type, "sankey")
+        labels = list(sankey.node.label)
+        self.assertTrue(any(lab.startswith("plan") for lab in labels))
+        self.assertTrue(any(lab.startswith("explore") for lab in labels))
+        self.assertTrue(any("create-hook" in lab for lab in labels))
+        self.assertTrue(any("canvas" in lab for lab in labels))
+        self.assertEqual(len(sankey.link.value), 3)
+        self.assertEqual(sorted(int(v) for v in sankey.link.value), [1, 1, 1])
+
+        node_of = {lab.split(" (")[0]: i for i, lab in enumerate(labels)}
+        pairs = {
+            (labels[int(s)].split(" (")[0], labels[int(t)].split(" (")[0])
+            for s, t in zip(sankey.link.source, sankey.link.target, strict=True)
+        }
+        self.assertIn(("plan", "create-hook"), pairs)
+        self.assertIn(("explore", "canvas"), pairs)
+        self.assertIn(("explore", "create-hook"), pairs)
+        self.assertEqual(node_of["plan"], 0)
+        self.assertGreater(node_of["create-hook"], node_of["plan"])
+
+    def test_aggregates_repeat_calls(self):
+        steps = [
+            _opencode_step(0, agent="plan", session_id="ses_root", tool="Skill"),
+            _opencode_step(1, agent="plan", session_id="ses_root", tool="Skill"),
+        ]
+        for step in steps:
+            step["tool_calls"][0]["input"] = {"skill": "create-rule"}
+        fig = build_skill_agent_chart(steps)
+        sankey = fig.data[0]
+        self.assertEqual([int(v) for v in sankey.link.value], [2])
+        labels = list(sankey.node.label)
+        self.assertTrue(any(lab.startswith("create-rule (2)") for lab in labels))
+        self.assertTrue(any(lab.endswith("(2)") and "create-rule" not in lab for lab in labels))
 
 
 class ScorecardDisplayTests(unittest.TestCase):
