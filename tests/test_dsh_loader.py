@@ -10,7 +10,12 @@ from unittest.mock import patch
 
 from trajviz.converge.canonical import canonicalize_steps
 from trajviz.insight.charts import bind_timeline_agents, build_file_interaction_chart
-from trajviz.insight.charts.activity import file_interaction_chart_height
+from trajviz.insight.charts.activity import (
+    FILE_PATH_LABEL_LIMIT,
+    file_interaction_chart_height,
+    shorten_middle_path,
+    unique_short_paths,
+)
 from trajviz.insight.diagnostics import extract_file_interactions
 from trajviz.insight.formatting import format_performance_md
 from trajviz.insight.loaders import (
@@ -914,6 +919,55 @@ def _asst(index, *, agent="", session_id="", is_sub_agent=None, title=""):
     if is_sub_agent is not None:
         step["is_sub_agent"] = is_sub_agent
     return step
+
+
+class FilePathLabelTests(unittest.TestCase):
+    def test_short_path_unchanged(self):
+        self.assertEqual(shorten_middle_path("src/app.py"), "src/app.py")
+
+    def test_long_path_keeps_head_and_filename(self):
+        path = "/home/user/Kevin/TrajectoryVisualizer/trajviz/insight/charts/activity.py"
+        short = shorten_middle_path(path)
+        self.assertLessEqual(len(short), FILE_PATH_LABEL_LIMIT)
+        self.assertIn("...", short)
+        self.assertTrue(short.startswith("/home"))
+        self.assertTrue(short.endswith("activity.py"))
+        self.assertNotIn("TrajectoryVisualizer", short)
+
+    def test_relative_and_windows_paths(self):
+        rel = shorten_middle_path("src/pkg/deeply/nested/module/file.py", limit=28)
+        self.assertTrue(rel.startswith("src"))
+        self.assertTrue(rel.endswith("file.py"))
+        self.assertIn("...", rel)
+        win = shorten_middle_path(r"C:\Users\name\projects\repo\src\main.py", limit=28)
+        self.assertTrue(win.startswith("C:"))
+        self.assertTrue(win.endswith("main.py"))
+        self.assertIn("...", win)
+
+    def test_same_basename_stays_unique(self):
+        a = "/workspace/pkg/alpha/util.py"
+        b = "/workspace/pkg/beta/util.py"
+        labels = unique_short_paths([a, b], limit=24)
+        self.assertNotEqual(labels[a], labels[b])
+        self.assertTrue(labels[a].endswith("util.py"))
+        self.assertTrue(labels[b].endswith("util.py"))
+
+    def test_chart_axis_uses_short_labels_hover_keeps_full_path(self):
+        long_path = "/home/user/Kevin/TrajectoryVisualizer/trajviz/insight/charts/activity.py"
+        interactions = [
+            {"step": 0, "path": long_path, "type": "read", "tool": "Read", "tokens": 1},
+            {"step": 1, "path": "README.md", "type": "read", "tool": "Read", "tokens": 1},
+        ]
+        fig = build_file_interaction_chart(interactions)
+        y_values = [str(y) for t in fig.data for y in (t.y or [])]
+        self.assertTrue(any(v.endswith("activity.py") and "..." in v for v in y_values))
+        self.assertNotIn(long_path, y_values)
+        self.assertIn("README.md", y_values)
+        cats = list(fig.layout.yaxis.categoryarray)
+        self.assertTrue(all(len(c) <= FILE_PATH_LABEL_LIMIT or c == "README.md" for c in cats))
+        hovers = [str(h) for t in fig.data for h in (t.hovertext or [])]
+        self.assertTrue(any(long_path in h for h in hovers))
+        self.assertLessEqual(fig.layout.margin.l, 320)
 
 
 class AgentDisplayLabelTests(unittest.TestCase):

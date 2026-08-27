@@ -40,6 +40,9 @@ _COMPACTION_MARKER_COLOR = "#e11d48"
 FILE_INTERACTION_ROW_PX = 28
 FILE_INTERACTION_CHROME_PX = 120
 FILE_INTERACTION_MIN_HEIGHT = 340
+# Y-axis labels keep the path head and filename; the middle becomes "...".
+FILE_PATH_LABEL_LIMIT = 40
+_PATH_ELLIPSIS = "..."
 
 
 def file_interaction_chart_height(unique_files: int) -> int:
@@ -50,6 +53,91 @@ def file_interaction_chart_height(unique_files: int) -> int:
     )
 
 
+def _ellipsize_middle_chars(text: str, limit: int, ellipsis: str = _PATH_ELLIPSIS) -> str:
+    """Character-level middle ellipsis; extra characters go to the tail (filename)."""
+    if len(text) <= limit:
+        return text
+    keep = limit - len(ellipsis)
+    if keep <= 1:
+        return (text[: max(0, keep)] + ellipsis)[:limit]
+    left = max(1, keep // 3)
+    right = keep - left
+    return text[:left] + ellipsis + text[-right:]
+
+
+def shorten_middle_path(path: str, limit: int = FILE_PATH_LABEL_LIMIT) -> str:
+    """Keep the start and end of *path*; replace omitted components with ``...``."""
+    if not path or len(path) <= limit:
+        return path
+    sep = "/" if "/" in path else "\\"
+    parts = path.split(sep)
+    if len(parts) <= 2:
+        return _ellipsize_middle_chars(path, limit)
+
+    def render(head: list[str], tail: list[str], omitted: bool) -> str:
+        bits = list(head)
+        if omitted:
+            bits.append(_PATH_ELLIPSIS)
+        bits.extend(tail)
+        if parts[0] == "":
+            return sep + sep.join(bits[1:])
+        return sep.join(bits)
+
+    head = parts[:2] if parts[0] == "" and len(parts) > 2 else parts[:1]
+    tail = [parts[-1]]
+    middle = parts[len(head) : -1]
+    label = render(head, tail, bool(middle))
+    if len(label) > limit:
+        if parts[0] == "" and len(head) > 1:
+            head = [""]
+            label = render(head, tail, True)
+        if len(label) > limit:
+            return _ellipsize_middle_chars(path, limit)
+
+    while middle:
+        trial_tail = [middle[-1], *tail]
+        trial = render(head, trial_tail, len(middle) > 1)
+        if len(trial) <= limit:
+            tail = trial_tail
+            middle = middle[:-1]
+            continue
+        trial_head = [*head, middle[0]]
+        trial = render(trial_head, tail, len(middle) > 1)
+        if len(trial) <= limit:
+            head = trial_head
+            middle = middle[1:]
+            continue
+        break
+    return render(head, tail, bool(middle))
+
+
+def unique_short_paths(paths: list[str], limit: int = FILE_PATH_LABEL_LIMIT) -> dict[str, str]:
+    """Map each full path to a unique middle-ellipsis label."""
+    labels: dict[str, str] = {}
+    used: set[str] = set()
+    for path in paths:
+        if path in labels:
+            continue
+        label = shorten_middle_path(path, limit)
+        if label in used:
+            found = None
+            for extra in range(8, 96, 8):
+                candidate = shorten_middle_path(path, limit + extra)
+                if candidate not in used:
+                    found = candidate
+                    break
+            if found is None:
+                found = path
+                n = 2
+                while found in used:
+                    found = f"{path} ({n})"
+                    n += 1
+            label = found
+        labels[path] = label
+        used.add(label)
+    return labels
+
+
 def build_file_interaction_chart(
     interactions: list[dict],
     target_files: set[str] | None = None,
@@ -58,10 +146,11 @@ def build_file_interaction_chart(
 ) -> go.Figure:
     """Build a Plotly scatter chart of file interactions across steps.
 
-    x=step index, y=file path (categorical). Color is interaction type for
-    single-agent runs, and timeline agent (same palette as the swimlane) when
-    more than one agent touched files. Marker shape is always read/write/search.
-    Target files are highlighted with a distinct marker border.
+    x=step index, y=shortened file path (categorical). Color is interaction
+    type for single-agent runs, and timeline agent (same palette as the
+    swimlane) when more than one agent touched files. Marker shape is always
+    read/write/search. Target files are highlighted with a distinct marker
+    border. Hover still shows the full path.
     """
     import os
 
@@ -92,6 +181,15 @@ def build_file_interaction_chart(
         step = step_by_idx.get(item["step"])
         return agent_id_of(step) if step else ""
 
+    file_order: list[str] = []
+    seen_files: set[str] = set()
+    for item in interactions:
+        path = item["path"]
+        if path not in seen_files:
+            seen_files.add(path)
+            file_order.append(path)
+    display = unique_short_paths(file_order)
+
     agents_present = []
     seen_agents: set[str] = set()
     for item in interactions:
@@ -103,7 +201,7 @@ def build_file_interaction_chart(
 
     def _add_group(group: list[dict], *, name: str, color: str, symbol=None) -> None:
         x = [i["step"] for i in group]
-        y = [i["path"] for i in group]
+        y = [display[i["path"]] for i in group]
         is_target = [_norm(i["path"]) in norm_targets for i in group]
         hover = [f"{name}<br>Step {i['step']}: {i['tool']} ({i['type']})<br>{i['path']}" for i in group]
         border_colors = ["#dc2626" if t else color for t in is_target]
@@ -156,13 +254,13 @@ def build_file_interaction_chart(
                     symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
                 )
 
-    unique_files = len({i["path"] for i in interactions})
+    unique_files = len(file_order)
     chart_height = file_interaction_chart_height(unique_files)
 
-    max_path_len = max((len(i["path"]) for i in interactions), default=20)
+    max_label_len = max((len(display[p]) for p in file_order), default=20)
     # Cap the left gutter so long paths don't steal the plot; automargin can
     # still grow it when labels would otherwise clip.
-    left_margin = max(180, min(520, max_path_len * 8))
+    left_margin = max(140, min(320, max_label_len * 8))
     title = "File Interaction Timeline by Agent" if has_agents else "File Interaction Timeline"
 
     # Title + legend in container coords with fixed pixel offsets so they
@@ -198,19 +296,12 @@ def build_file_interaction_chart(
             xanchor="center",
         )
     )
-    file_order: list[str] = []
-    seen_files: set[str] = set()
-    for item in interactions:
-        path = item["path"]
-        if path not in seen_files:
-            seen_files.add(path)
-            file_order.append(path)
     # categoryarray is bottom→top; reverse so the first-touched files sit at the top.
     fig.update_yaxes(
         fixedrange=False,
         automargin=True,
         categoryorder="array",
-        categoryarray=list(reversed(file_order)),
+        categoryarray=list(reversed([display[p] for p in file_order])),
     )
     fig.update_xaxes(fixedrange=False)
     fig.update_layout(dragmode="pan", autosize=True)
