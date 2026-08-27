@@ -32,6 +32,7 @@ from trajviz.insight.diagnostics import (
 from trajviz.insight.formatting import wall_clock_fmt
 from trajviz.insight.loaders import detect_format, load_trajectory
 from trajviz.insight.parser import build_message_metrics, compute_metrics, parse_steps
+from trajviz.tool_vocab import parse_skill_name as _parse_skill_name
 
 # Pattern labels shown in the UI (omit low-signal names when empty).
 _PATTERN_LABELS = {
@@ -132,31 +133,6 @@ def _fmt_signature(sig: tuple[str, str]) -> str:
         return "AGENT_SPAWN"
     short = target if len(target) <= 64 else target[:61] + "…"
     return f"{atype}({short})"
-
-
-_SKILL_TOOL_NAMES = frozenset(
-    {
-        "skill",
-        "skills",
-        "invoke_skill",
-        "run_skill",
-    }
-)
-
-
-def _parse_skill_name(tool_name: str, tool_input: Any) -> str | None:
-    """Return skill id when this call invokes a Skill tool."""
-    name_l = (tool_name or "").lower()
-    if name_l not in _SKILL_TOOL_NAMES:
-        return None
-    if isinstance(tool_input, dict):
-        for key in ("skill", "name", "skill_name", "skillName", "id", "skill_id"):
-            val = tool_input.get(key)
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-    if isinstance(tool_input, str) and tool_input.strip():
-        return tool_input.strip()
-    return "(unnamed skill)"
 
 
 def extract_capability_usage(steps: list[dict]) -> dict[str, Counter[str]]:

@@ -26,6 +26,7 @@ from .usage import (
     build_agent_token_chart,
     build_context_growth_chart,
     build_duration_chart,
+    build_skill_agent_chart,
     build_token_chart,
     build_tool_chart,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "build_phase_duration_comparison_chart",
     "build_plan_timeline_chart",
     "build_run_group_agent_timeline",
+    "build_skill_agent_chart",
     "build_token_chart",
     "build_tool_chart",
     "build_tool_outcome_timeline",
