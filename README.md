@@ -230,7 +230,8 @@ trajviz expects.
 
 ### OpenCode
 
-OpenCode stores sessions in its local store (`~/.local/share/opencode/`) and
+OpenCode stores sessions in its local store (`~/.local/share/opencode/`; on
+Windows `%USERPROFILE%\.local\share\opencode\`) and
 exposes an `export` command that writes trajectory JSON to stdout.
 
 1. Run an OpenCode session as normal.
@@ -260,7 +261,13 @@ exposes an `export` command that writes trajectory JSON to stdout.
    ```
    The consolidator follows tool-call metadata to discover child session IDs
    and emits a flat `{"sessions": [...]}` structure that the loader threads
-   into a single trajectory.
+   into a single trajectory. It looks for `opencode.db` under
+   `~/.local/share/opencode/` (and on Windows also `%LOCALAPPDATA%\opencode\`
+   and `%APPDATA%\opencode\`). Override with `OPENCODE_DATABASE` if needed:
+   ```powershell
+   $env:OPENCODE_DATABASE = "$env:USERPROFILE\.local\share\opencode\opencode.db"
+   python scripts/opencode_consolidator.py <session-id> op_trajectory.json
+   ```
 4. Upload `op_trajectory.json` in the Insight dashboard. The loader detects the
    `info` + `messages` shape automatically; sub-agent sessions are threaded in.
 
