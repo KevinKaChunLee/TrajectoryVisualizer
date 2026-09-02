@@ -798,37 +798,7 @@ def step_context_occupancy(step: dict) -> dict:
     }
 
 
-def infer_context_window_limit(
-    steps: list[dict],
-    raw: dict | None = None,
-) -> int | None:
-    """Return a context-window token limit, or None when it cannot be known.
-
-    Prefers an explicit CodeArts ``context_tokens`` / ``contextToken`` field,
-    then a small model-id prefix table. Never guesses from peak occupancy.
-    """
-    if isinstance(raw, dict):
-        md = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-        for key in ("context_tokens", "contextToken"):
-            value = md.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
-                return int(value)
-        base = raw.get("chat_base_info")
-        if isinstance(base, dict):
-            value = base.get("contextToken")
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
-                return int(value)
-    for step in steps:
-        model_id = (step.get("model_id") or "").lower()
-        if not model_id:
-            continue
-        for prefix, limit in _MODEL_CONTEXT_LIMITS:
-            if model_id.startswith(prefix):
-                return limit
-    return None
-
-
-def coerce_window_limit(value) -> int | None:
+def coerce_window_limit(value: object) -> int | None:
     """Positive token limit from a UI or raw value, else None."""
     if value is None or isinstance(value, bool):
         return None
@@ -852,11 +822,41 @@ def coerce_window_limit(value) -> int | None:
     return None
 
 
+def infer_context_window_limit(
+    steps: list[dict],
+    raw: dict | None = None,
+) -> int | None:
+    """Return a context-window token limit, or None when it cannot be known.
+
+    Prefers an explicit CodeArts ``context_tokens`` / ``contextToken`` field,
+    then a small model-id prefix table. Never guesses from peak occupancy.
+    """
+    if isinstance(raw, dict):
+        md = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        for key in ("context_tokens", "contextToken"):
+            coerced = coerce_window_limit(md.get(key))
+            if coerced:
+                return coerced
+        base = raw.get("chat_base_info")
+        if isinstance(base, dict):
+            coerced = coerce_window_limit(base.get("contextToken"))
+            if coerced:
+                return coerced
+    for step in steps:
+        model_id = (step.get("model_id") or "").lower()
+        if not model_id:
+            continue
+        for prefix, limit in _MODEL_CONTEXT_LIMITS:
+            if model_id.startswith(prefix):
+                return limit
+    return None
+
+
 def resolve_context_window_limit(
     steps: list[dict],
     raw: dict | None = None,
     *,
-    override=None,
+    override: object = None,
 ) -> int:
     """Window size for occupancy %: user override, else inferred, else 256k."""
     coerced = coerce_window_limit(override)
@@ -1129,7 +1129,7 @@ def context_pressure_series(
     *,
     agent_key: str | None = None,
     raw: dict | None = None,
-    window_limit=None,
+    window_limit: int | float | str | None = None,
 ) -> dict:
     """Build per-agent occupancy series and compaction events for charting.
 

@@ -525,7 +525,8 @@ def build_context_pressure_chart(
     agent_key: str | None = None,
     raw: dict | None = None,
     dark: bool = False,
-    window_limit=None,
+    window_limit: int | float | str | None = None,
+    series: dict | None = None,
 ) -> go.Figure:
     """Context-window occupancy over global step index, with compaction markers.
 
@@ -537,9 +538,10 @@ def build_context_pressure_chart(
     """
     from ..diagnostics import context_pressure_series
 
-    series = context_pressure_series(
-        steps, agent_key=agent_key, raw=raw, window_limit=window_limit,
-    )
+    if series is None:
+        series = context_pressure_series(
+            steps, agent_key=agent_key, raw=raw, window_limit=window_limit,
+        )
     agents = series.get("agents") or []
     events = series.get("events") or []
     window_limit = series.get("window_limit")

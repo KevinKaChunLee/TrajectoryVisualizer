@@ -14,7 +14,6 @@ from ..diagnostics import (
     DEFAULT_CONTEXT_WINDOW_LIMIT,
     PRESSURE_ALL_AGENTS,
     context_pressure_series,
-    resolve_context_window_limit,
 )
 from ..formatting import format_context_pressure_html
 from ..help import HELP_TEXT
@@ -318,7 +317,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             value=dg["diag_pressure_dropdown"]["value"],
             visible=dg["diag_pressure_dropdown"]["visible"],
         ),
-        "diag_window_limit": resolve_context_window_limit(session.steps, session.raw),
+        "diag_window_limit": session.pressure_series.get("window_limit") or DEFAULT_CONTEXT_WINDOW_LIMIT,
         "diag_pressure_chart": dg["diag_pressure_chart"],
         "diag_file_chart": dg["diag_file_chart"],
         "diag_rootcause_html": dg["diag_rootcause_html"],
@@ -356,34 +355,25 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
     def on_context_utilization_change(agent_key, window_limit, steps, raw, dark):
         """Rebuild usage table and pressure chart for agent / window-limit edits."""
         if not steps:
-            empty = go.Figure()
-            empty.update_layout(
-                template="plotly_white",
-                height=380,
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-            )
-            return empty, ""
+            return empty_plotly_fig(), ""
         key = agent_key or PRESSURE_ALL_AGENTS
         raw_dict = raw if isinstance(raw, dict) else None
-        fig = build_context_pressure_chart(
+        series = context_pressure_series(
             steps,
             agent_key=key,
             raw=raw_dict,
-            dark=bool(dark),
             window_limit=window_limit,
         )
+        fig = build_context_pressure_chart(
+            steps,
+            dark=bool(dark),
+            series=series,
+        )
         html_strip = format_context_pressure_html(
-            context_pressure_series(
-                steps,
-                agent_key=key,
-                raw=raw_dict,
-                window_limit=window_limit,
-            ),
+            series,
             steps=steps,
             raw=raw_dict,
             agent_key=key,
-            window_limit=window_limit,
         )
         return fig, html_strip
 
