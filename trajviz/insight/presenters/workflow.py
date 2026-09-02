@@ -5,7 +5,13 @@ from __future__ import annotations
 import base64
 import json
 
-from ..rendering import format_step_detail, render_filter_chips, render_toc_sidebar, render_workflow_html
+from ..rendering import (
+    format_step_detail,
+    render_filter_chips,
+    render_toc_sidebar,
+    render_workflow_html,
+    workflow_role,
+)
 
 DETAIL_PLACEHOLDER = (
     "<div id='wf-detail-content'>"
@@ -32,11 +38,13 @@ def _prerender_step_details(steps: list[dict]) -> str:
 def _workflow_step_labels(step: dict) -> set[str]:
     """Return every Workflow filter label that applies to *step*."""
     labels: set[str] = set()
-    role = step.get("role")
-    if role == "assistant":
-        labels.add("Assistant")
-    elif role == "user":
+    display = workflow_role(step)
+    if display == "user":
         labels.add("User")
+    elif step.get("role") == "assistant" or display in ("task", "system", "compaction"):
+        # Task/system/compaction are stored as user in some exports but are
+        # agent-protocol messages, not human turns.
+        labels.add("Assistant")
     if step.get("tool_call_count", 0) > 0:
         labels.add("Tool Calls")
     if step.get("error_count", 0) > 0:
