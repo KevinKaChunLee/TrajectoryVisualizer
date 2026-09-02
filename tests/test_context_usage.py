@@ -212,6 +212,21 @@ class BucketTests(unittest.TestCase):
         self.assertEqual(result["buckets"]["conversation"], 10)
         self.assertEqual(result["buckets"]["unattributed"], 9_990)
 
+    def test_residual_row_is_not_labeled_unattributed(self):
+        steps = [
+            _step(1, tokens=_tokens(inp=10_000), parts=[
+                {"type": "text", "text": _chars(10)},
+            ]),
+        ]
+        result = context_usage_breakdown(steps)
+        self.assertEqual(result["buckets"]["unattributed"], 9_990)
+        html = format_context_usage_html(result)
+        self.assertIn("Harness system definitions (not included in log)", html)
+        self.assertNotIn("Unattributed", html)
+        self.assertNotIn("System + tools", html)
+        self.assertNotIn("Estimated from logged text", html)
+        self.assertNotIn("harness overhead", html)
+
     def test_scale_when_estimate_exceeds_occupancy(self):
         steps = [
             _step(1, tokens=_tokens(inp=10), parts=[
@@ -240,6 +255,24 @@ class WindowAndCompactionTests(unittest.TestCase):
         conv = next(r for r in usage_segments(result) if r["key"] == "conversation")
         self.assertEqual(conv["window_pct"], 10.0)
         self.assertEqual(conv["loaded_pct"], 100.0)
+
+    def test_override_window_limit(self):
+        steps = [
+            _step(1, tokens=_tokens(inp=20_000), model_id="claude-sonnet-4",
+                  parts=[{"type": "text", "text": _chars(20_000)}]),
+        ]
+        result = context_usage_breakdown(steps, window_limit=256_000)
+        self.assertEqual(result["window_limit"], 256_000)
+        self.assertEqual(result["loaded_pct"], 7.8)
+
+    def test_unknown_model_defaults_to_256k(self):
+        steps = [
+            _step(1, tokens=_tokens(inp=25_600), model_id="mystery-model",
+                  parts=[{"type": "text", "text": _chars(25_600)}]),
+        ]
+        result = context_usage_breakdown(steps)
+        self.assertEqual(result["window_limit"], 256_000)
+        self.assertEqual(result["loaded_pct"], 10.0)
 
     def test_compaction_drops_pre_compaction_text(self):
         steps = [
@@ -275,6 +308,39 @@ class WindowAndCompactionTests(unittest.TestCase):
         self.assertEqual(main["occupancy"], 1_000)
         self.assertEqual(main["buckets"]["conversation"], 5)
 
+    def test_opencode_compaction_summary_on_current_window(self):
+        """Peak is pre-compaction; the stored summary is the following turn."""
+        sid = "ses_explore"
+        steps = [
+            _step(0, session_id=sid, is_sub_agent=True, agent="explore",
+                  tokens=_tokens(inp=50_000),
+                  parts=[{"type": "text", "text": "BEFORE " + _chars(40)}]),
+            _step(1, role="user", session_id=sid, is_sub_agent=True, agent="explore",
+                  parts=[{"type": "compaction", "summary": ""}]),
+            _step(2, session_id=sid, is_sub_agent=True, agent="compaction",
+                  tokens=_tokens(inp=8_000), summary=True,
+                  parts=[{"type": "text", "text": "OBJECTIVE " + _chars(30)}]),
+            _step(3, session_id=sid, is_sub_agent=True, agent="explore",
+                  tokens=_tokens(inp=9_000),
+                  parts=[{"type": "text", "text": "AFTER " + _chars(10)}]),
+        ]
+        steps[2]["mode"] = "compaction"
+        result = context_usage_breakdown(steps)
+        self.assertEqual(result["occupancy"], 9_000)
+        self.assertEqual(result["peak_occupancy"], 50_000)
+        self.assertGreater(result["buckets"]["summarized"], 0)
+        self.assertEqual(
+            result["buckets"]["summarized"],
+            estimate_tokens("OBJECTIVE " + _chars(30)),
+        )
+        after_tokens = estimate_tokens("AFTER " + _chars(10))
+        self.assertEqual(result["buckets"]["conversation"], after_tokens)
+        html = format_context_usage_html(result)
+        self.assertIn("Summarized conversation", html)
+        self.assertNotIn("Estimated from logged text", html)
+        self.assertNotIn("harness overhead", html)
+        self.assertNotIn("current window after compaction", html)
+
 
 class HtmlTests(unittest.TestCase):
     def test_html_omits_empty_categories(self):
@@ -289,7 +355,8 @@ class HtmlTests(unittest.TestCase):
             agent_key=PRESSURE_ALL_AGENTS,
         )
         self.assertIn("Conversations", html)
-        self.assertIn("Unattributed", html)
+        self.assertIn("Harness system definitions (not included in log)", html)
+        self.assertNotIn("Unattributed", html)
         self.assertIn("% window", html)
         self.assertIn("% loaded", html)
         self.assertIn("% full", html)
@@ -331,15 +398,19 @@ class HtmlTests(unittest.TestCase):
         ]
         html = format_context_usage_html(context_usage_breakdown(steps))
         self.assertNotIn("Unattributed", html)
+        self.assertNotIn("not included in log", html)
+        self.assertNotIn("Harness system definitions", html)
         self.assertIn("Conversations", html)
         self.assertNotIn("Skills", html)
-        self.assertIn("window limit unknown", html)
+        self.assertIn("% window", html)
+        self.assertNotIn("window limit unknown", html)
 
-    def test_unknown_window_omits_window_column(self):
+    def test_unknown_window_uses_256k_column(self):
         steps = [
             _step(1, tokens=_tokens(inp=80), model_id="mystery-model",
                   parts=[{"type": "text", "text": _chars(20)}]),
         ]
         html = format_context_usage_html(context_usage_breakdown(steps))
-        self.assertNotIn("% window", html)
+        self.assertIn("% window", html)
         self.assertIn("% loaded", html)
+        self.assertIn("256k", html)

@@ -4,7 +4,7 @@ Trajectories rarely record the hidden system prompt or tool JSON schemas, so
 the billed occupancy from token metrics is the source of truth for *how full*
 the window is. Logged text (messages, skill bodies, spawn prompts, tool
 outputs) is tokenized at ≈4 characters/token and attributed to buckets.
-Whatever billed occupancy remains is **unattributed** rather than guessed.
+Whatever billed occupancy remains is **not in the log** rather than guessed.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from trajviz.tool_vocab import SPAWN_TOOL_NAMES, parse_skill_name
 from .diagnostics import (
     PRESSURE_ALL_AGENTS,
     detect_compaction_events,
-    infer_context_window_limit,
     pressure_agent_id,
+    resolve_context_window_limit,
     step_context_occupancy,
 )
 from .diagnostics import _is_occupancy_step, _pressure_agent
@@ -37,7 +37,7 @@ USAGE_CATEGORIES: tuple[tuple[str, str, str], ...] = (
     ("summarized", "Summarized conversation", "#8b5cf6"),
     ("conversation", "Conversations", "#ea580c"),
     ("tool_outputs", "Tool outputs", "#059669"),
-    ("unattributed", "Unattributed", "#94a3b8"),
+    ("unattributed", "Harness system definitions (not included in log)", "#94a3b8"),
 )
 
 _SYSTEM_ROLES = frozenset({"system", "developer"})
@@ -46,6 +46,13 @@ _RULE_KEYS = ("rules", "user_rules", "userRules", "always_apply_rules", "alwaysA
 _MCP_KEYS = ("mcp", "mcp_servers", "mcpServers", "mcp_tools", "mcpTools")
 _SPAWN_NAMES_LOWER = frozenset(name.lower() for name in SPAWN_TOOL_NAMES)
 _ACCOUNTABLE_KEYS = tuple(key for key, _label, _color in USAGE_CATEGORIES if key != "unattributed")
+# Occupancy-drop / tool-prune mark a smaller window but do not store a summary.
+_EXPLICIT_COMPACTION_KINDS = frozenset({
+    "compaction_part",
+    "compaction_message",
+    "summary",
+    "compress_step",
+})
 
 
 def estimate_tokens(text: str) -> int:
@@ -123,13 +130,29 @@ def _raw_blob_tokens(raw: dict | None, keys: tuple[str, ...]) -> int:
     return total
 
 
-def _last_compaction_step(steps: list[dict], agent_id: str, peak_step: int) -> int | None:
+def _window_start_step(steps: list[dict], agent_id: str, anchor_step: int) -> int:
+    """First live step still in the window: after the last stored compaction."""
+    start = 0
+    for event in detect_compaction_events(steps):
+        if event.get("agent") != agent_id:
+            continue
+        if event.get("kind") not in _EXPLICIT_COMPACTION_KINDS:
+            continue
+        step = int(event.get("step") or 0)
+        if step < anchor_step:
+            start = max(start, step + 1)
+    return start
+
+
+def _last_compaction_step(steps: list[dict], agent_id: str, anchor_step: int) -> int | None:
     last: int | None = None
     for event in detect_compaction_events(steps):
         if event.get("agent") != agent_id:
             continue
+        if event.get("kind") not in _EXPLICIT_COMPACTION_KINDS:
+            continue
         step = int(event.get("step") or 0)
-        if step < peak_step:
+        if step < anchor_step:
             last = step if last is None else max(last, step)
     return last
 
@@ -146,12 +169,36 @@ def _compaction_part_text(part: dict) -> str:
 
 
 def _is_summary_turn(step: dict) -> bool:
-    role = str(step.get("role") or "")
-    return (
-        role == "compaction"
-        or bool(step.get("is_compaction_checkpoint"))
-        or step.get("summary") is True
-    )
+    """True when this step is a stored compaction summary, not a live turn.
+
+    OpenCode writes the summary as an assistant message with ``summary: True``
+    and ``agent`` / ``mode`` of ``compaction``. User prompts may carry a
+    ``summary: {diffs: []}`` dict — that is not a summary turn.
+    """
+    if step.get("summary") is True:
+        return True
+    if str(step.get("role") or "") == "compaction":
+        return True
+    if bool(step.get("is_compaction_checkpoint")):
+        return True
+    if str(step.get("mode") or "").lower() == "compaction":
+        return True
+    return str(step.get("agent") or "").lower() == "compaction"
+
+
+def _latest_occupancy(steps: list[dict], agent_id: str) -> tuple[int, int, int]:
+    """Last occupancy point for *agent_id*: ``(step_index, occupancy, cache_read)``."""
+    last_step, last_occ, last_cache = -1, 0, 0
+    for step in steps:
+        if not isinstance(step, dict) or not _is_occupancy_step(step):
+            continue
+        if _pressure_agent(step) != agent_id:
+            continue
+        last_step = int(step.get("index", 0))
+        occ = step_context_occupancy(step)
+        last_occ = occ["occupancy"]
+        last_cache = occ["cache_read"]
+    return last_step, last_occ, last_cache
 
 
 def _peak_occupancy_anchor(steps: list[dict], target: str | None) -> tuple[str, int, int]:
@@ -167,18 +214,6 @@ def _peak_occupancy_anchor(steps: list[dict], target: str | None) -> tuple[str, 
         if occ > best[2]:
             best = (agent_id, int(step.get("index", 0)), occ)
     return best
-
-
-def _window_start_step(steps: list[dict], agent_id: str, peak_step: int) -> int:
-    """First step still in the window: after the last compaction, else 0."""
-    start = 0
-    for event in detect_compaction_events(steps):
-        if event.get("agent") != agent_id:
-            continue
-        step = int(event.get("step") or 0)
-        if step < peak_step:
-            start = max(start, step + 1)
-    return start
 
 
 def _accumulate_step(step: dict, buckets: dict[str, int], *, summarized_only: bool = False) -> None:
@@ -249,41 +284,52 @@ def context_usage_breakdown(
     *,
     raw: dict | None = None,
     agent_key: str | None = None,
+    window_limit=None,
 ) -> dict:
-    """Bucket logged context at peak occupancy for one agent window.
+    """Bucket logged context in the agent's *current* window.
 
-    Percentages of *window* use ``window_limit`` when known; otherwise the
-    billed occupancy is the denominator (limit unknown).
+    Peak occupancy can precede compaction, so composition uses the latest
+    occupancy point. Percentages of *window* use the resolved window limit
+    (user override, inferred model/metadata, or 256k).
     """
     empty_buckets = {key: 0 for key, _label, _color in USAGE_CATEGORIES}
+    empty = {
+        "buckets": empty_buckets,
+        "occupancy": 0,
+        "peak_occupancy": 0,
+        "window_limit": None,
+        "loaded_pct": None,
+        "agent_id": "",
+        "peak_step": None,
+        "step": None,
+        "scaled": False,
+        "cache_read": 0,
+        "fresh": 0,
+        "agent_key": agent_key or PRESSURE_ALL_AGENTS,
+    }
     if not steps:
-        return {
-            "buckets": empty_buckets,
-            "occupancy": 0,
-            "window_limit": None,
-            "loaded_pct": None,
-            "agent_id": "",
-            "peak_step": None,
-            "scaled": False,
-        }
+        return empty
 
     target = pressure_agent_id(agent_key)
-    agent_id, peak_step, occupancy = _peak_occupancy_anchor(steps, target)
-    window_limit = infer_context_window_limit(steps, raw)
+    agent_id, peak_step, peak_occupancy = _peak_occupancy_anchor(steps, target)
+    anchor_step, occupancy, cache_read = _latest_occupancy(steps, agent_id)
+    window_limit = resolve_context_window_limit(steps, raw, override=window_limit)
     buckets = dict(empty_buckets)
     raw_dict = raw if isinstance(raw, dict) else None
     buckets["tools"] = _raw_blob_tokens(raw_dict, _TOOL_DEF_KEYS)
     buckets["rules"] = _raw_blob_tokens(raw_dict, _RULE_KEYS)
     buckets["mcp"] = _raw_blob_tokens(raw_dict, _MCP_KEYS)
 
-    if peak_step >= 0:
-        start = _window_start_step(steps, agent_id, peak_step)
-        last_comp = _last_compaction_step(steps, agent_id, peak_step)
+    if anchor_step >= 0:
+        start = _window_start_step(steps, agent_id, anchor_step)
+        last_comp = _last_compaction_step(steps, agent_id, anchor_step)
         if last_comp is not None and last_comp < start:
+            lo = max(0, last_comp - 1)
             for step in steps:
                 if not isinstance(step, dict):
                     continue
-                if int(step.get("index", 0)) != last_comp:
+                idx = int(step.get("index", 0))
+                if idx < lo or idx >= start:
                     continue
                 if _pressure_agent(step) != agent_id:
                     continue
@@ -292,7 +338,7 @@ def context_usage_breakdown(
             if not isinstance(step, dict):
                 continue
             idx = int(step.get("index", 0))
-            if idx < start or idx > peak_step:
+            if idx < start or idx > anchor_step:
                 continue
             if _pressure_agent(step) != agent_id:
                 continue
@@ -310,8 +356,8 @@ def context_usage_breakdown(
             scaled_vals[largest] = occupancy
         else:
             drift = occupancy - sum(scaled_vals.values())
-            target = max(_ACCOUNTABLE_KEYS, key=lambda key: (scaled_vals[key], buckets[key]))
-            scaled_vals[target] = max(0, scaled_vals[target] + drift)
+            adjust_key = max(_ACCOUNTABLE_KEYS, key=lambda key: (scaled_vals[key], buckets[key]))
+            scaled_vals[adjust_key] = max(0, scaled_vals[adjust_key] + drift)
         buckets.update(scaled_vals)
         buckets["unattributed"] = 0
         scaled = True
@@ -323,13 +369,27 @@ def context_usage_breakdown(
     return {
         "buckets": buckets,
         "occupancy": occupancy,
+        "peak_occupancy": peak_occupancy,
         "window_limit": window_limit if isinstance(window_limit, (int, float)) else None,
         "loaded_pct": loaded_pct,
         "agent_id": agent_id,
         "peak_step": peak_step if peak_step >= 0 else None,
+        "step": anchor_step if anchor_step >= 0 else None,
         "scaled": scaled,
+        "cache_read": cache_read,
+        "fresh": max(0, occupancy - cache_read),
         "agent_key": agent_key or PRESSURE_ALL_AGENTS,
     }
+
+
+def residual_display_label(breakdown: dict) -> str:
+    """Legend name for billed occupancy that is not in the trajectory text."""
+    buckets = breakdown.get("buckets") or {}
+    leftover = int(buckets.get("unattributed") or 0)
+    logged_prefix = int(buckets.get("system") or 0) + int(buckets.get("tools") or 0)
+    if leftover > logged_prefix:
+        return "Harness system definitions (not included in log)"
+    return "Other (not included in log)"
 
 
 def usage_segments(breakdown: dict) -> list[dict]:
@@ -345,6 +405,8 @@ def usage_segments(breakdown: dict) -> list[dict]:
             continue
         window_pct = round(100.0 * tokens / denom_window, 1) if denom_window else 0.0
         loaded_pct = round(100.0 * tokens / occupancy, 1) if occupancy else 0.0
+        if key == "unattributed":
+            label = residual_display_label(breakdown)
         rows.append({
             "key": key,
             "label": label,
@@ -453,26 +515,6 @@ def format_context_usage_html(breakdown: dict) -> str:
         )
         legend_class = "ctx-usage-legend ctx-usage-legend-loaded"
 
-    unattributed = int((breakdown.get("buckets") or {}).get("unattributed") or 0)
-    notes: list[str] = [
-        "Estimated from logged text (~4 characters/token)."
-    ]
-    if unattributed:
-        notes.append(
-            "Unattributed is billed prompt not present in the trajectory "
-            "(typically the hidden system prompt and tool schemas)."
-        )
-    if breakdown.get("scaled"):
-        notes.append(
-            "Logged text exceeded billed occupancy after compaction; "
-            "category sizes were scaled to occupancy."
-        )
-    note_html = (
-        '<div class="ctx-usage-note">'
-        + html.escape(" ".join(notes))
-        + "</div>"
-    )
-
     return (
         '<div class="ctx-usage">'
         '<div class="ctx-usage-head">'
@@ -481,6 +523,5 @@ def format_context_usage_html(breakdown: dict) -> str:
         "</div>"
         f"{bar_html}"
         f'<div class="{legend_class}">{legend_head}{"".join(legend_rows)}</div>'
-        f"{note_html}"
         "</div>"
     )

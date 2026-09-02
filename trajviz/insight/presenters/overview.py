@@ -10,7 +10,6 @@ import plotly.graph_objects as go
 from ..charts import (
     build_agent_swimlane_chart,
     build_agent_token_chart,
-    build_context_growth_chart,
     build_context_pressure_chart,
     build_duration_chart,
     build_error_classification_chart,
@@ -293,7 +292,6 @@ def build_overview_outputs(session: LoadedSession) -> dict:
 def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
     """Build Overview chart figures."""
     steps = session.steps
-    message_rows = session.message_rows
     agent_summaries = session.agent_summaries
     trajectory_format = session.format
 
@@ -308,7 +306,6 @@ def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
         "swimlane_fig": build_agent_swimlane_chart(steps, dark=dark),
         "plan_timeline_fig": build_plan_timeline_chart(session.plan_history, session.plan_metrics, dark=dark),
         "error_class_fig": build_error_classification_chart(steps, dark=dark),
-        "context_growth_fig": build_context_growth_chart(message_rows, dark=dark),
     }
 
 

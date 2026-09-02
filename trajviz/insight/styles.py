@@ -885,12 +885,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     text-align: right;
     color: var(--ov-muted);
 }
-.ctx-usage-note {
-    margin-top: 10px;
-    font-size: 11px;
-    line-height: 1.45;
-    color: var(--ov-muted);
-}
 
 /* Dark mode overrides */
 @media (prefers-color-scheme: dark) {

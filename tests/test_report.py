@@ -144,7 +144,7 @@ class ReportBuildTests(unittest.TestCase):
         self.assertIn("ctx-usage", doc[ctx_start:diag_start])
         self.assertNotIn("ctx-usage", doc[diag_start:doc.index("id='hotspots'")])
         self.assertIn("Context-window pressure", doc[ctx_start:diag_start])
-        self.assertIn("Context growth", doc[ctx_start:diag_start])
+        self.assertNotIn("Context growth", doc[ctx_start:diag_start])
 
     def test_skill_chart_included_when_skills_present(self):
         from trajviz.insight.session import build_loaded_session

@@ -10,7 +10,12 @@ import gradio as gr
 import plotly.graph_objects as go
 
 from ..charts import build_context_pressure_chart
-from ..diagnostics import PRESSURE_ALL_AGENTS, context_pressure_series
+from ..diagnostics import (
+    DEFAULT_CONTEXT_WINDOW_LIMIT,
+    PRESSURE_ALL_AGENTS,
+    context_pressure_series,
+    resolve_context_window_limit,
+)
 from ..formatting import format_context_pressure_html
 from ..help import HELP_TEXT
 from ..presenters.label_ui import build_label_ui_payload
@@ -40,7 +45,6 @@ class OverviewRefs:
     metrics_md: gr.Markdown
     token_chart: gr.Plot
     duration_chart: gr.Plot
-    context_growth_chart: gr.Plot
     behavior_md: gr.Markdown
     tool_chart: gr.Plot
     skill_chart: gr.Plot
@@ -52,6 +56,7 @@ class OverviewRefs:
     diag_file_chart: gr.Plot
     diag_pressure_html: gr.HTML
     diag_pressure_agent: gr.Dropdown
+    diag_window_limit: gr.Number
     diag_pressure_chart: gr.Plot
     diag_rootcause_html: gr.HTML
     error_class_chart: gr.Plot
@@ -107,19 +112,29 @@ def layout() -> OverviewRefs:
 
                 with gr.Column(visible=False) as efficiency_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_context_utilization'])}</div>")
-                    diag_pressure_agent = gr.Dropdown(
-                        label="Agent",
-                        choices=[("All agents", PRESSURE_ALL_AGENTS)],
-                        value=PRESSURE_ALL_AGENTS,
-                        visible=False,
-                        interactive=True,
-                    )
+                    with gr.Row():
+                        diag_pressure_agent = gr.Dropdown(
+                            label="Agent",
+                            choices=[("All agents", PRESSURE_ALL_AGENTS)],
+                            value=PRESSURE_ALL_AGENTS,
+                            visible=False,
+                            interactive=True,
+                            scale=2,
+                        )
+                        diag_window_limit = gr.Number(
+                            label="Window limit (tokens)",
+                            value=DEFAULT_CONTEXT_WINDOW_LIMIT,
+                            precision=0,
+                            minimum=1,
+                            step=1000,
+                            interactive=True,
+                            scale=1,
+                        )
                     diag_pressure_html = gr.HTML("")
                     diag_pressure_chart = gr.Plot(
                         show_label=False,
                         label="Context Window Pressure",
                     )
-                    context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
 
                 with gr.Column(visible=False) as tools_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_tools'])}</div>")
@@ -186,7 +201,6 @@ def layout() -> OverviewRefs:
         metrics_md=metrics_md,
         token_chart=token_chart,
         duration_chart=duration_chart,
-        context_growth_chart=context_growth_chart,
         behavior_md=behavior_md,
         tool_chart=tool_chart,
         skill_chart=skill_chart,
@@ -198,6 +212,7 @@ def layout() -> OverviewRefs:
         diag_file_chart=diag_file_chart,
         diag_pressure_html=diag_pressure_html,
         diag_pressure_agent=diag_pressure_agent,
+        diag_window_limit=diag_window_limit,
         diag_pressure_chart=diag_pressure_chart,
         diag_rootcause_html=diag_rootcause_html,
         error_class_chart=error_class_chart,
@@ -224,7 +239,6 @@ def load_slots(refs: OverviewRefs) -> dict:
         "metrics_md": refs.metrics_md,
         "token_chart": refs.token_chart,
         "duration_chart": refs.duration_chart,
-        "context_growth_chart": refs.context_growth_chart,
         "behavior_md": refs.behavior_md,
         "tool_chart": refs.tool_chart,
         "skill_chart": refs.skill_chart,
@@ -235,6 +249,7 @@ def load_slots(refs: OverviewRefs) -> dict:
         "diag_summary_html": refs.diag_summary_html,
         "diag_pressure_html": refs.diag_pressure_html,
         "diag_pressure_agent": refs.diag_pressure_agent,
+        "diag_window_limit": refs.diag_window_limit,
         "diag_pressure_chart": refs.diag_pressure_chart,
         "diag_file_chart": refs.diag_file_chart,
         "diag_rootcause_html": refs.diag_rootcause_html,
@@ -256,7 +271,6 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "metrics_md": "",
             "token_chart": fig,
             "duration_chart": fig,
-            "context_growth_chart": fig,
             "behavior_md": "",
             "tool_chart": fig,
             "skill_chart": fig,
@@ -271,6 +285,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
                 value=PRESSURE_ALL_AGENTS,
                 visible=False,
             ),
+            "diag_window_limit": DEFAULT_CONTEXT_WINDOW_LIMIT,
             "diag_pressure_chart": fig,
             "diag_file_chart": fig,
             "diag_rootcause_html": "",
@@ -289,7 +304,6 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "metrics_md": ov["metrics_text"],
         "token_chart": ch["tok_fig"],
         "duration_chart": ch["dur_fig"],
-        "context_growth_chart": ch["context_growth_fig"],
         "behavior_md": ov["behavior_text"],
         "tool_chart": ch["tl_fig"],
         "skill_chart": ch["skill_fig"],
@@ -304,6 +318,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             value=dg["diag_pressure_dropdown"]["value"],
             visible=dg["diag_pressure_dropdown"]["visible"],
         ),
+        "diag_window_limit": resolve_context_window_limit(session.steps, session.raw),
         "diag_pressure_chart": dg["diag_pressure_chart"],
         "diag_file_chart": dg["diag_file_chart"],
         "diag_rootcause_html": dg["diag_rootcause_html"],
@@ -338,8 +353,8 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
         js="() => { if (window.tvExpandFileTimeline) { window.tvExpandFileTimeline(); setTimeout(window.tvExpandFileTimeline, 200); } }",
     )
 
-    def on_pressure_agent_change(agent_key, steps, raw, dark):
-        """Rebuild the pressure chart for the selected agent/subagent."""
+    def on_context_utilization_change(agent_key, window_limit, steps, raw, dark):
+        """Rebuild usage table and pressure chart for agent / window-limit edits."""
         if not steps:
             empty = go.Figure()
             empty.update_layout(
@@ -350,28 +365,45 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
             )
             return empty, ""
         key = agent_key or PRESSURE_ALL_AGENTS
+        raw_dict = raw if isinstance(raw, dict) else None
         fig = build_context_pressure_chart(
             steps,
             agent_key=key,
-            raw=raw if isinstance(raw, dict) else None,
+            raw=raw_dict,
             dark=bool(dark),
+            window_limit=window_limit,
         )
         html_strip = format_context_pressure_html(
             context_pressure_series(
                 steps,
                 agent_key=key,
-                raw=raw if isinstance(raw, dict) else None,
+                raw=raw_dict,
+                window_limit=window_limit,
             ),
             steps=steps,
-            raw=raw if isinstance(raw, dict) else None,
+            raw=raw_dict,
             agent_key=key,
+            window_limit=window_limit,
         )
         return fig, html_strip
 
+    util_inputs = [
+        refs.diag_pressure_agent,
+        refs.diag_window_limit,
+        shared.state_steps,
+        shared.state_raw,
+        shared.state_dark,
+    ]
+    util_outputs = [refs.diag_pressure_chart, refs.diag_pressure_html]
     refs.diag_pressure_agent.change(
-        fn=on_pressure_agent_change,
-        inputs=[refs.diag_pressure_agent, shared.state_steps, shared.state_raw, shared.state_dark],
-        outputs=[refs.diag_pressure_chart, refs.diag_pressure_html],
+        fn=on_context_utilization_change,
+        inputs=util_inputs,
+        outputs=util_outputs,
+    )
+    refs.diag_window_limit.change(
+        fn=on_context_utilization_change,
+        inputs=util_inputs,
+        outputs=util_outputs,
     )
 
     _empty_label_fig = go.Figure()

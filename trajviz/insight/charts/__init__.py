@@ -24,7 +24,6 @@ from .swimlanes import (
 )
 from .usage import (
     build_agent_token_chart,
-    build_context_growth_chart,
     build_duration_chart,
     build_skill_agent_chart,
     build_token_chart,
@@ -36,7 +35,6 @@ __all__ = [
     "build_agent_color_map",
     "build_agent_swimlane_chart",
     "build_agent_token_chart",
-    "build_context_growth_chart",
     "build_context_pressure_chart",
     "build_duration_chart",
     "build_error_classification_chart",

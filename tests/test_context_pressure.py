@@ -4,12 +4,15 @@ import unittest
 
 from trajviz.insight.charts import build_context_pressure_chart
 from trajviz.insight.diagnostics import (
+    DEFAULT_CONTEXT_WINDOW_LIMIT,
     PRESSURE_ALL_AGENTS,
     PRESSURE_MAIN_AGENT,
+    coerce_window_limit,
     context_pressure_series,
     detect_compaction_events,
     infer_context_window_limit,
     pressure_agent_choices,
+    resolve_context_window_limit,
     step_context_occupancy,
 )
 from trajviz.insight.parser import parse_steps
@@ -267,10 +270,19 @@ class WindowLimitTests(unittest.TestCase):
         steps = [_step(0, model_id="claude-sonnet-4-5", tokens=_tokens(total=10, inp=10))]
         self.assertEqual(infer_context_window_limit(steps), 200_000)
 
-    def test_unknown_model_has_no_fake_percent(self):
+    def test_unknown_model_falls_back_to_256k(self):
         steps = [_step(0, model_id="mystery-model", tokens=_tokens(total=10, inp=10))]
+        self.assertIsNone(infer_context_window_limit(steps))
+        self.assertEqual(resolve_context_window_limit(steps), DEFAULT_CONTEXT_WINDOW_LIMIT)
         series = context_pressure_series(steps)
-        self.assertIsNone(series["window_limit"])
+        self.assertEqual(series["window_limit"], DEFAULT_CONTEXT_WINDOW_LIMIT)
+
+    def test_override_beats_inferred_and_default(self):
+        steps = [_step(0, model_id="claude-sonnet-4", tokens=_tokens(total=10, inp=10))]
+        self.assertEqual(resolve_context_window_limit(steps, override=256_000), 256_000)
+        self.assertEqual(coerce_window_limit("256k"), 256_000)
+        series = context_pressure_series(steps, window_limit=100_000)
+        self.assertEqual(series["window_limit"], 100_000)
 
 
 class ParserRoundTripTests(unittest.TestCase):
@@ -400,7 +412,9 @@ class ChartBuilderTests(unittest.TestCase):
         self.assertTrue(any("explore" in n for n in compact_names))
         self.assertTrue(any("plan" in n for n in compact_names))
         # Full-height vlines would cut through every series.
-        self.assertFalse(fig.layout.shapes)
+        for shape in fig.layout.shapes or []:
+            self.assertEqual(shape.type, "line")
+            self.assertEqual(shape.y0, shape.y1)
 
 
 if __name__ == "__main__":

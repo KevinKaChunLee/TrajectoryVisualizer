@@ -1,4 +1,4 @@
-"""Step and agent usage charts: tokens, duration, tools, context growth."""
+"""Step and agent usage charts: tokens, duration, and tools."""
 
 from __future__ import annotations
 
@@ -491,77 +491,6 @@ def build_skill_agent_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         height=max(300, 48 * n_nodes + 80),
         margin=dict(l=16, r=16, t=90, b=24),
     )
-    _apply_dark(fig, dark)
-    return fig
-
-
-def build_context_growth_chart(rows: list[dict], phases: list[dict] | None = None, dark: bool = False) -> go.Figure:
-    """Cumulative input tokens (context pressure) with cache-read overlay."""
-    if not rows:
-        fig = _empty_figure(340)
-        _apply_dark(fig, dark)
-        return fig
-
-    indices = [r["index"] for r in rows]
-    cum_input = []
-    cum_fresh = []
-    cum_cache = []
-    ri, rf, rc = 0, 0, 0
-    for r in rows:
-        ri += r.get("tokens_input", 0)
-        cache_read = r.get("cache_read", 0)
-        # rows["non_cache_tokens"] is already schema-normalized in build_message_metrics()
-        rf += r.get("non_cache_tokens", 0)
-        rc += cache_read
-        cum_input.append(ri)
-        cum_fresh.append(rf)
-        cum_cache.append(rc)
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=indices,
-            y=cum_input,
-            name="Cumulative Input",
-            mode="lines+markers",
-            line=dict(color="#2563eb", width=2),
-            marker=dict(size=5),
-            fill="tozeroy",
-            fillcolor="rgba(37,99,235,0.08)",
-            hovertemplate="Step %{x}<br>Cumul. Input: %{y:,}<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=indices,
-            y=cum_fresh,
-            name="Cumul. Fresh Input",
-            mode="lines+markers",
-            line=dict(color="#dc2626", width=2, dash="dot"),
-            marker=dict(size=4),
-            hovertemplate="Step %{x}<br>Cumul. Fresh: %{y:,}<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=indices,
-            y=cum_cache,
-            name="Cumul. Cache Read",
-            mode="lines+markers",
-            line=dict(color="#059669", width=2, dash="dash"),
-            marker=dict(size=4),
-            hovertemplate="Step %{x}<br>Cumul. Cache: %{y:,}<extra></extra>",
-        )
-    )
-    _apply_chart_layout(
-        fig,
-        "Context Growth (Cumulative Input Tokens)",
-        xaxis="Step",
-        yaxis="Tokens (count)",
-        height=340,
-        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
-    )
-    _add_legend_hint(fig)
     _apply_dark(fig, dark)
     return fig
 

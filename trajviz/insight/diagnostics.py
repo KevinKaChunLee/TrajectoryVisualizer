@@ -685,11 +685,13 @@ PRESSURE_MAIN_AGENT = "__main__"
 # previous non-zero same-agent occupancy.
 _OCCUPANCY_DROP_RATIO = 0.7
 
-# High-confidence model-id prefixes only — occupancy % is omitted when unknown.
+# High-confidence model-id prefixes. Unknown models fall back to
+# ``DEFAULT_CONTEXT_WINDOW_LIMIT`` (editable in the UI).
 _MODEL_CONTEXT_LIMITS: tuple[tuple[str, int], ...] = (
     ("claude", 200_000),
     ("gpt-4o", 128_000),
 )
+DEFAULT_CONTEXT_WINDOW_LIMIT = 256_000
 
 
 def pressure_agent_key(agent_id: str) -> str:
@@ -824,6 +826,46 @@ def infer_context_window_limit(
             if model_id.startswith(prefix):
                 return limit
     return None
+
+
+def coerce_window_limit(value) -> int | None:
+    """Positive token limit from a UI or raw value, else None."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower().replace(",", "").replace("_", "")
+        if not text:
+            return None
+        multiplier = 1
+        if text.endswith("m"):
+            multiplier = 1_000_000
+            text = text[:-1]
+        elif text.endswith("k"):
+            multiplier = 1_000
+            text = text[:-1]
+        try:
+            value = float(text) * multiplier
+        except ValueError:
+            return None
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    return None
+
+
+def resolve_context_window_limit(
+    steps: list[dict],
+    raw: dict | None = None,
+    *,
+    override=None,
+) -> int:
+    """Window size for occupancy %: user override, else inferred, else 256k."""
+    coerced = coerce_window_limit(override)
+    if coerced:
+        return coerced
+    inferred = infer_context_window_limit(steps, raw)
+    if inferred:
+        return inferred
+    return DEFAULT_CONTEXT_WINDOW_LIMIT
 
 
 def _previous_agent_occupancy(
@@ -1087,6 +1129,7 @@ def context_pressure_series(
     *,
     agent_key: str | None = None,
     raw: dict | None = None,
+    window_limit=None,
 ) -> dict:
     """Build per-agent occupancy series and compaction events for charting.
 
@@ -1124,7 +1167,7 @@ def context_pressure_series(
             "occupancy": occ["occupancy"],
         })
 
-    window_limit = infer_context_window_limit(steps, raw)
+    window_limit = resolve_context_window_limit(steps, raw, override=window_limit)
     labels = _disambiguate_pressure_labels(agents_order, steps)
     agents = []
     for agent_id in agents_order:
