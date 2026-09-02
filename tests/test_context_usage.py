@@ -4,10 +4,13 @@ import json
 import unittest
 
 from trajviz.insight.context_usage import (
+    SNAPSHOT_CURRENT,
     context_usage_breakdown,
     estimate_tokens,
     format_context_usage_html,
     format_token_count,
+    parse_usage_snapshot,
+    usage_snapshot_choices,
 )
 from trajviz.insight.diagnostics import PRESSURE_ALL_AGENTS, PRESSURE_MAIN_AGENT
 from trajviz.insight.formatting import format_context_pressure_html
@@ -340,6 +343,41 @@ class WindowAndCompactionTests(unittest.TestCase):
         self.assertNotIn("Estimated from logged text", html)
         self.assertNotIn("harness overhead", html)
         self.assertNotIn("current window after compaction", html)
+
+    def test_pre_compaction_snapshot_keeps_before_text(self):
+        sid = "ses_explore"
+        steps = [
+            _step(0, session_id=sid, is_sub_agent=True, agent="explore",
+                  tokens=_tokens(inp=50_000),
+                  parts=[{"type": "text", "text": "BEFORE " + _chars(40)}]),
+            _step(1, role="user", session_id=sid, is_sub_agent=True, agent="explore",
+                  parts=[{"type": "compaction", "summary": ""}]),
+            _step(2, session_id=sid, is_sub_agent=True, agent="compaction",
+                  tokens=_tokens(inp=8_000), summary=True,
+                  parts=[{"type": "text", "text": "OBJECTIVE " + _chars(30)}]),
+            _step(3, session_id=sid, is_sub_agent=True, agent="explore",
+                  tokens=_tokens(inp=9_000),
+                  parts=[{"type": "text", "text": "AFTER " + _chars(10)}]),
+        ]
+        steps[2]["mode"] = "compaction"
+        result = context_usage_breakdown(steps, snapshot_step=0)
+        self.assertEqual(result["occupancy"], 50_000)
+        self.assertEqual(result["step"], 0)
+        self.assertEqual(
+            result["buckets"]["conversation"],
+            estimate_tokens("BEFORE " + _chars(40)),
+        )
+        self.assertEqual(result["buckets"]["summarized"], 0)
+        self.assertNotIn("AFTER", format_context_usage_html(result))
+        self.assertEqual(
+            usage_snapshot_choices(steps, agent_key=PRESSURE_ALL_AGENTS),
+            [("Current window", SNAPSHOT_CURRENT)],
+        )
+        choices = usage_snapshot_choices(steps, agent_key=sid)
+        self.assertEqual(choices[0], ("Current window", SNAPSHOT_CURRENT))
+        self.assertIn("0", [value for _label, value in choices])
+        self.assertIsNone(parse_usage_snapshot(SNAPSHOT_CURRENT))
+        self.assertEqual(parse_usage_snapshot("0"), 0)
 
 
 class HtmlTests(unittest.TestCase):

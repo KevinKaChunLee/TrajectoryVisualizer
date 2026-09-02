@@ -17,6 +17,7 @@ from trajviz.tool_vocab import SPAWN_TOOL_NAMES, parse_skill_name
 
 from .diagnostics import (
     PRESSURE_ALL_AGENTS,
+    coalesce_compaction_events,
     detect_compaction_events,
     pressure_agent_id,
     resolve_context_window_limit,
@@ -53,6 +54,7 @@ _EXPLICIT_COMPACTION_KINDS = frozenset({
     "summary",
     "compress_step",
 })
+SNAPSHOT_CURRENT = "current"
 
 
 def estimate_tokens(text: str) -> int:
@@ -175,6 +177,80 @@ def _is_summary_turn(step: dict) -> bool:
     return str(step.get("agent") or "").lower() == "compaction"
 
 
+def parse_usage_snapshot(value: object) -> int | None:
+    """Occupancy step for a snapshot dropdown value, or None for the current window."""
+    if value in (None, "", SNAPSHOT_CURRENT) or isinstance(value, bool):
+        return None
+    try:
+        step = int(str(value).strip())
+    except ValueError:
+        return None
+    return step if step >= 0 else None
+
+
+def _occupancy_point_before(
+    steps: list[dict], agent_id: str, before_step: int,
+) -> tuple[int, int]:
+    """Last occupancy ``(step, tokens)`` for *agent_id* strictly before *before_step*."""
+    last_step, last_occ = -1, 0
+    for step in steps:
+        if not isinstance(step, dict) or not _is_occupancy_step(step):
+            continue
+        if _pressure_agent(step) != agent_id:
+            continue
+        idx = int(step.get("index", 0))
+        if idx >= before_step:
+            continue
+        last_step = idx
+        last_occ = step_context_occupancy(step)["occupancy"]
+    return last_step, last_occ
+
+
+def _occupancy_at(
+    steps: list[dict], step_index: int, target: str | None,
+) -> tuple[str, int, int] | None:
+    """``(agent_id, step, occupancy)`` at an occupancy step, else None."""
+    for step in steps:
+        if not isinstance(step, dict) or not _is_occupancy_step(step):
+            continue
+        if int(step.get("index", 0)) != step_index:
+            continue
+        agent_id = _pressure_agent(step)
+        if target is not None and agent_id != target:
+            continue
+        return agent_id, step_index, step_context_occupancy(step)["occupancy"]
+    return None
+
+
+def usage_snapshot_choices(
+    steps: list[dict],
+    *,
+    agent_key: str | None = None,
+) -> list[tuple[str, str]]:
+    """``(label, value)`` pairs for one agent's pre-compaction occupancy turns.
+
+    All-agents view has no snapshot list — each compaction belongs to one window.
+    """
+    choices: list[tuple[str, str]] = [("Current window", SNAPSHOT_CURRENT)]
+    target = pressure_agent_id(agent_key)
+    if target is None or not steps:
+        return choices
+    events = [
+        e for e in detect_compaction_events(steps) if e.get("agent") == target
+    ]
+    seen: set[int] = set()
+    for event in coalesce_compaction_events(events):
+        pre_step, pre_occ = _occupancy_point_before(
+            steps, target, int(event.get("step") or 0),
+        )
+        if pre_step < 0 or pre_step in seen:
+            continue
+        seen.add(pre_step)
+        occ_txt = format_token_count(pre_occ)
+        choices.append((f"Before compaction · step {pre_step} ({occ_txt})", str(pre_step)))
+    return choices
+
+
 def _window_occupancy(
     steps: list[dict], target: str | None,
 ) -> tuple[str, int, int, int, int]:
@@ -268,12 +344,15 @@ def context_usage_breakdown(
     raw: dict | None = None,
     agent_key: str | None = None,
     window_limit: int | float | str | None = None,
+    snapshot_step: int | None = None,
 ) -> dict:
-    """Bucket logged context in the agent's *current* window.
+    """Bucket logged context in the agent's *current* window, or at *snapshot_step*.
 
     Peak occupancy can precede compaction, so composition uses the latest
-    occupancy point. Percentages of *window* use the resolved window limit
-    (user override, inferred model/metadata, or 256k).
+    occupancy point unless *snapshot_step* selects a live occupancy turn
+    (typically the point right before a compaction). Percentages of *window*
+    use the resolved window limit (user override, inferred model/metadata, or
+    256k).
     """
     empty_buckets = {key: 0 for key, _label, _color in USAGE_CATEGORIES}
     empty = {
@@ -284,6 +363,7 @@ def context_usage_breakdown(
         "loaded_pct": None,
         "agent_id": "",
         "peak_step": None,
+        "step": None,
         "scaled": False,
         "agent_key": agent_key or PRESSURE_ALL_AGENTS,
     }
@@ -294,6 +374,10 @@ def context_usage_breakdown(
     agent_id, peak_step, peak_occupancy, anchor_step, occupancy = _window_occupancy(
         steps, target,
     )
+    if snapshot_step is not None:
+        hit = _occupancy_at(steps, snapshot_step, target)
+        if hit is not None:
+            agent_id, anchor_step, occupancy = hit
     window_limit = resolve_context_window_limit(steps, raw, override=window_limit)
     buckets = dict(empty_buckets)
     raw_dict = raw if isinstance(raw, dict) else None
@@ -348,6 +432,7 @@ def context_usage_breakdown(
         "loaded_pct": loaded_pct,
         "agent_id": agent_id,
         "peak_step": peak_step if peak_step >= 0 else None,
+        "step": anchor_step if anchor_step >= 0 else None,
         "scaled": scaled,
         "agent_key": agent_key or PRESSURE_ALL_AGENTS,
     }

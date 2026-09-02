@@ -10,6 +10,11 @@ import gradio as gr
 import plotly.graph_objects as go
 
 from ..charts import build_context_pressure_chart
+from ..context_usage import (
+    SNAPSHOT_CURRENT,
+    parse_usage_snapshot,
+    usage_snapshot_choices,
+)
 from ..diagnostics import (
     DEFAULT_CONTEXT_WINDOW_LIMIT,
     PRESSURE_ALL_AGENTS,
@@ -56,6 +61,7 @@ class OverviewRefs:
     diag_pressure_html: gr.HTML
     diag_pressure_agent: gr.Dropdown
     diag_window_limit: gr.Number
+    diag_usage_snapshot: gr.Dropdown
     diag_pressure_chart: gr.Plot
     diag_rootcause_html: gr.HTML
     error_class_chart: gr.Plot
@@ -116,6 +122,14 @@ def layout() -> OverviewRefs:
                             label="Agent",
                             choices=[("All agents", PRESSURE_ALL_AGENTS)],
                             value=PRESSURE_ALL_AGENTS,
+                            visible=False,
+                            interactive=True,
+                            scale=2,
+                        )
+                        diag_usage_snapshot = gr.Dropdown(
+                            label="Window snapshot",
+                            choices=[("Current window", SNAPSHOT_CURRENT)],
+                            value=SNAPSHOT_CURRENT,
                             visible=False,
                             interactive=True,
                             scale=2,
@@ -212,6 +226,7 @@ def layout() -> OverviewRefs:
         diag_pressure_html=diag_pressure_html,
         diag_pressure_agent=diag_pressure_agent,
         diag_window_limit=diag_window_limit,
+        diag_usage_snapshot=diag_usage_snapshot,
         diag_pressure_chart=diag_pressure_chart,
         diag_rootcause_html=diag_rootcause_html,
         error_class_chart=error_class_chart,
@@ -249,6 +264,7 @@ def load_slots(refs: OverviewRefs) -> dict:
         "diag_pressure_html": refs.diag_pressure_html,
         "diag_pressure_agent": refs.diag_pressure_agent,
         "diag_window_limit": refs.diag_window_limit,
+        "diag_usage_snapshot": refs.diag_usage_snapshot,
         "diag_pressure_chart": refs.diag_pressure_chart,
         "diag_file_chart": refs.diag_file_chart,
         "diag_rootcause_html": refs.diag_rootcause_html,
@@ -285,6 +301,11 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
                 visible=False,
             ),
             "diag_window_limit": DEFAULT_CONTEXT_WINDOW_LIMIT,
+            "diag_usage_snapshot": gr.update(
+                choices=[("Current window", SNAPSHOT_CURRENT)],
+                value=SNAPSHOT_CURRENT,
+                visible=False,
+            ),
             "diag_pressure_chart": fig,
             "diag_file_chart": fig,
             "diag_rootcause_html": "",
@@ -318,6 +339,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             visible=dg["diag_pressure_dropdown"]["visible"],
         ),
         "diag_window_limit": session.pressure_series.get("window_limit") or DEFAULT_CONTEXT_WINDOW_LIMIT,
+        "diag_usage_snapshot": _snapshot_dropdown_update(session.steps),
         "diag_pressure_chart": dg["diag_pressure_chart"],
         "diag_file_chart": dg["diag_file_chart"],
         "diag_rootcause_html": dg["diag_rootcause_html"],
@@ -326,6 +348,22 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "hotspots_md": ov["hotspots_text"],
         "per_message_md": ov["per_message_text"],
     }
+
+
+def _snapshot_dropdown_update(
+    steps: list[dict],
+    *,
+    agent_key: str | None = None,
+    value: str = SNAPSHOT_CURRENT,
+) -> dict:
+    choices = usage_snapshot_choices(steps, agent_key=agent_key)
+    values = {choice_value for _label, choice_value in choices}
+    selected = value if value in values else SNAPSHOT_CURRENT
+    return gr.update(
+        choices=choices,
+        value=selected,
+        visible=len(choices) > 1,
+    )
 
 
 def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
@@ -352,12 +390,14 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
         js="() => { if (window.tvExpandFileTimeline) { window.tvExpandFileTimeline(); setTimeout(window.tvExpandFileTimeline, 200); } }",
     )
 
-    def on_context_utilization_change(agent_key, window_limit, steps, raw, dark):
-        """Rebuild usage table and pressure chart for agent / window-limit edits."""
+    def _rebuild_utilization(agent_key, window_limit, snapshot_key, steps, raw, dark):
         if not steps:
             return empty_plotly_fig(), ""
         key = agent_key or PRESSURE_ALL_AGENTS
         raw_dict = raw if isinstance(raw, dict) else None
+        snapshot_step = (
+            None if key == PRESSURE_ALL_AGENTS else parse_usage_snapshot(snapshot_key)
+        )
         series = context_pressure_series(
             steps,
             agent_key=key,
@@ -368,31 +408,48 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
             steps,
             dark=bool(dark),
             series=series,
+            highlight_step=snapshot_step,
         )
         html_strip = format_context_pressure_html(
             series,
             steps=steps,
             raw=raw_dict,
             agent_key=key,
+            snapshot_step=snapshot_step,
         )
         return fig, html_strip
 
-    util_inputs = [
-        refs.diag_pressure_agent,
-        refs.diag_window_limit,
-        shared.state_steps,
-        shared.state_raw,
-        shared.state_dark,
-    ]
+    def on_agent_change(agent_key, window_limit, steps, raw, dark):
+        fig, html_strip = _rebuild_utilization(
+            agent_key, window_limit, SNAPSHOT_CURRENT, steps, raw, dark,
+        )
+        return fig, html_strip, _snapshot_dropdown_update(steps or [], agent_key=agent_key)
+
+    util_state = [shared.state_steps, shared.state_raw, shared.state_dark]
     util_outputs = [refs.diag_pressure_chart, refs.diag_pressure_html]
     refs.diag_pressure_agent.change(
-        fn=on_context_utilization_change,
-        inputs=util_inputs,
-        outputs=util_outputs,
+        fn=on_agent_change,
+        inputs=[refs.diag_pressure_agent, refs.diag_window_limit, *util_state],
+        outputs=[*util_outputs, refs.diag_usage_snapshot],
     )
     refs.diag_window_limit.change(
-        fn=on_context_utilization_change,
-        inputs=util_inputs,
+        fn=_rebuild_utilization,
+        inputs=[
+            refs.diag_pressure_agent,
+            refs.diag_window_limit,
+            refs.diag_usage_snapshot,
+            *util_state,
+        ],
+        outputs=util_outputs,
+    )
+    refs.diag_usage_snapshot.change(
+        fn=_rebuild_utilization,
+        inputs=[
+            refs.diag_pressure_agent,
+            refs.diag_window_limit,
+            refs.diag_usage_snapshot,
+            *util_state,
+        ],
         outputs=util_outputs,
     )
 

@@ -365,6 +365,7 @@ def format_context_pressure_html(
     steps: list[dict] | None = None,
     raw: dict | None = None,
     agent_key: str | None = None,
+    snapshot_step: int | None = None,
 ) -> str:
     """Stats strip and context-usage breakdown for the Diagnostics chart."""
     from .context_usage import context_usage_breakdown, format_context_usage_html
@@ -393,6 +394,7 @@ def format_context_pressure_html(
                 raw=raw,
                 agent_key=agent_key,
                 window_limit=series.get("window_limit"),
+                snapshot_step=snapshot_step,
             )
         )
     return (

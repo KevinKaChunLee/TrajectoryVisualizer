@@ -527,6 +527,7 @@ def build_context_pressure_chart(
     dark: bool = False,
     window_limit: int | float | str | None = None,
     series: dict | None = None,
+    highlight_step: int | None = None,
 ) -> go.Figure:
     """Context-window occupancy over global step index, with compaction markers.
 
@@ -669,6 +670,7 @@ def build_context_pressure_chart(
         y_max=y_max,
         marker_color=_COMPACTION_MARKER_COLOR if single else None,
     )
+    _add_snapshot_marker(fig, agents, highlight_step)
 
     if isinstance(window_limit, (int, float)) and window_limit > 0:
         fig.add_hline(
@@ -708,6 +710,42 @@ def build_context_pressure_chart(
     _add_legend_hint(fig)
     _apply_dark(fig, dark)
     return fig
+
+
+def _add_snapshot_marker(
+    fig: go.Figure,
+    agents: list[dict],
+    highlight_step: int | None,
+) -> None:
+    """Open circle on the selected occupancy turn (pre-compaction snapshot)."""
+    if highlight_step is None:
+        return
+    for agent in agents:
+        for point in agent.get("points") or []:
+            if int(point.get("step") or 0) != highlight_step:
+                continue
+            occ = int(point.get("occupancy") or 0)
+            fig.add_trace(
+                go.Scatter(
+                    x=[highlight_step],
+                    y=[occ],
+                    mode="markers",
+                    name="Selected window",
+                    marker=dict(
+                        size=16,
+                        symbol="circle-open",
+                        color=_OCCUPANCY_LINE_COLOR,
+                        line=dict(width=3, color=_OCCUPANCY_LINE_COLOR),
+                    ),
+                    hovertext=(
+                        f"Selected window<br>Step {highlight_step}"
+                        f"<br>Occupancy: {occ:,}"
+                    ),
+                    hoverinfo="text",
+                    showlegend=True,
+                )
+            )
+            return
 
 
 def _add_compaction_markers(
