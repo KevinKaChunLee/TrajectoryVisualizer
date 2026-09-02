@@ -17,10 +17,41 @@ _FILE_INTERACTION_COLORS = {
 
 _FILE_INTERACTION_SYMBOLS = {
     "read": "circle",
-    "write": "diamond",
+    "write": "square",
     "search": "triangle-up",
     "skill": "star",
 }
+
+_FILE_INTERACTION_LEGEND = {
+    "read": "read (circle)",
+    "write": "write (square)",
+    "search": "search (triangle)",
+    "skill": "skill (star)",
+}
+
+
+def _add_shape_legend(fig: go.Figure, types_present: set[str]) -> None:
+    """Legend entries that spell out marker shape (circle/square/triangle/star)."""
+    for itype, color in _FILE_INTERACTION_COLORS.items():
+        if itype not in types_present:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                name=_FILE_INTERACTION_LEGEND[itype],
+                marker=dict(
+                    color=color,
+                    size=12 if itype == "skill" else 10,
+                    symbol=_FILE_INTERACTION_SYMBOLS[itype],
+                ),
+                hoverinfo="skip",
+                legendgroup="shape",
+                legendrank=2000,
+            )
+        )
+
 
 _COMPACTION_KIND_LABEL = {
     "compaction_part": "compacted",
@@ -151,8 +182,9 @@ def build_file_interaction_chart(
     x=step index, y=shortened file path (categorical). Color is interaction
     type for single-agent runs, and timeline agent (same palette as the
     swimlane) when more than one agent touched files. Marker shape is always
-    read/write/search/skill (star). Target files are highlighted with a
-    distinct marker border. Hover still shows the full path.
+    read (circle) / write (square) / search (triangle) / skill (star); the
+    legend spells those out. Target files are highlighted with a distinct
+    marker border. Hover still shows the full path.
     """
     import os
 
@@ -252,26 +284,14 @@ def build_file_interaction_chart(
             if group:
                 _add_group(
                     group,
-                    name=itype,
+                    name=_FILE_INTERACTION_LEGEND.get(itype, itype),
                     color=color,
                     symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
                 )
 
-    if has_agents and any(i["type"] == "skill" for i in interactions):
-        fig.add_trace(
-            go.Scatter(
-                x=[None],
-                y=[None],
-                mode="markers",
-                name="skill",
-                marker=dict(
-                    color="#eab308",
-                    size=12,
-                    symbol="star",
-                ),
-                hoverinfo="skip",
-            )
-        )
+    types_present = {i["type"] for i in interactions}
+    if has_agents:
+        _add_shape_legend(fig, types_present)
 
     unique_files = len(file_order)
     chart_height = file_interaction_chart_height(unique_files)

@@ -434,9 +434,44 @@ class PatternsDiagnosticsTests(unittest.TestCase):
         from trajviz.insight.charts import build_file_interaction_chart
 
         fig = build_file_interaction_chart(inter)
-        skill_trace = next(t for t in fig.data if t.name == "skill")
+        names = {t.name for t in fig.data}
+        self.assertIn("skill (star)", names)
+        self.assertIn("read (circle)", names)
+        self.assertIn("write (square)", names)
+        skill_trace = next(t for t in fig.data if t.name == "skill (star)")
         self.assertEqual(skill_trace.marker.symbol, "star")
         self.assertIn("skill:create-hook", list(skill_trace.y))
+        write_trace = next(t for t in fig.data if t.name == "write (square)")
+        self.assertEqual(write_trace.marker.symbol, "square")
+
+    def test_multi_agent_file_legend_explains_marker_shapes(self):
+        from trajviz.insight.charts import build_file_interaction_chart
+
+        interactions = [
+            {"step": 0, "path": "/repo/a.py", "type": "read", "tool": "Read", "tokens": 1},
+            {"step": 1, "path": "/repo/a.py", "type": "write", "tool": "Edit", "tokens": 1},
+            {"step": 1, "path": "/repo", "type": "search", "tool": "Grep", "tokens": 1},
+            {"step": 2, "path": "skill:create-hook", "type": "skill", "tool": "Skill", "tokens": 1},
+        ]
+        steps = [
+            {"index": 0, "role": "assistant", "agent": "build", "is_sub_agent": False,
+             "session_id": "ses_root", "tokens": {"total": 1}, "tool_call_count": 1},
+            {"index": 1, "role": "assistant", "agent": "explore", "is_sub_agent": True,
+             "session_id": "ses_ex", "tokens": {"total": 1}, "tool_call_count": 1},
+            {"index": 2, "role": "assistant", "agent": "explore", "is_sub_agent": True,
+             "session_id": "ses_ex", "tokens": {"total": 1}, "tool_call_count": 1},
+        ]
+        fig = build_file_interaction_chart(interactions, steps=steps)
+        names = {t.name for t in fig.data if t.showlegend is not False}
+        self.assertIn("read (circle)", names)
+        self.assertIn("write (square)", names)
+        self.assertIn("search (triangle)", names)
+        self.assertIn("skill (star)", names)
+        by_name = {t.name: t for t in fig.data}
+        self.assertEqual(by_name["read (circle)"].marker.symbol, "circle")
+        self.assertEqual(by_name["write (square)"].marker.symbol, "square")
+        self.assertEqual(by_name["search (triangle)"].marker.symbol, "triangle-up")
+        self.assertEqual(by_name["skill (star)"].marker.symbol, "star")
 
     def test_hotspot_inference_excludes_pre_step_idle(self):
         step = {"index": 0, "role": "assistant", "duration": 20.0,
