@@ -12,12 +12,14 @@ _FILE_INTERACTION_COLORS = {
     "read": "#3b82f6",  # blue
     "write": "#10b981",  # green
     "search": "#f59e0b",  # orange
+    "skill": "#eab308",  # gold
 }
 
 _FILE_INTERACTION_SYMBOLS = {
     "read": "circle",
     "write": "diamond",
     "search": "triangle-up",
+    "skill": "star",
 }
 
 _COMPACTION_KIND_LABEL = {
@@ -149,8 +151,8 @@ def build_file_interaction_chart(
     x=step index, y=shortened file path (categorical). Color is interaction
     type for single-agent runs, and timeline agent (same palette as the
     swimlane) when more than one agent touched files. Marker shape is always
-    read/write/search. Target files are highlighted with a distinct marker
-    border. Hover still shows the full path.
+    read/write/search/skill (star). Target files are highlighted with a
+    distinct marker border. Hover still shows the full path.
     """
     import os
 
@@ -206,6 +208,7 @@ def build_file_interaction_chart(
         hover = [f"{name}<br>Step {i['step']}: {i['tool']} ({i['type']})<br>{i['path']}" for i in group]
         border_colors = ["#dc2626" if t else color for t in is_target]
         border_widths = [2 if t else 0 for t in is_target]
+        sizes = [12 if i["type"] == "skill" else 10 for i in group]
         if symbol is None:
             symbol = [_FILE_INTERACTION_SYMBOLS.get(i["type"], "circle") for i in group]
         fig.add_trace(
@@ -216,7 +219,7 @@ def build_file_interaction_chart(
                 name=name,
                 marker=dict(
                     color=color,
-                    size=10,
+                    size=sizes,
                     symbol=symbol,
                     line=dict(color=border_colors, width=border_widths),
                 ),
@@ -253,6 +256,22 @@ def build_file_interaction_chart(
                     color=color,
                     symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
                 )
+
+    if has_agents and any(i["type"] == "skill" for i in interactions):
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                name="skill",
+                marker=dict(
+                    color="#eab308",
+                    size=12,
+                    symbol="star",
+                ),
+                hoverinfo="skip",
+            )
+        )
 
     unique_files = len(file_order)
     chart_height = file_interaction_chart_height(unique_files)

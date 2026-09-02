@@ -15,5 +15,5 @@ HELP_TEXT: dict[str, str] = {
     "section_context_utilization": "How loaded tokens break down. Empty categories are omitted. Window limit defaults to 256k (or the inferred model size) and can be changed. Select one agent to inspect the window before a compaction. Harness system definitions (not included in log) is billed overhead this export did not record.",
     "section_tools": "Tool usage frequency, Skill-tool calls by agent, outcome timeline, and behavioral diagnostics.",
     "section_agents": "Multi-agent breakdown, spawning relationships, and per-agent performance.",
-    "section_diagnostics": "File targeting, errors, and root-cause attribution.",
+    "section_diagnostics": "File targeting, errors, and root-cause attribution. Stars on the file timeline mark skills loaded.",
 }

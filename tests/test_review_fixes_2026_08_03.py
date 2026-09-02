@@ -405,6 +405,39 @@ class PatternsDiagnosticsTests(unittest.TestCase):
         m = diagnostics.compute_file_targeting_metrics(inter, targets, len(steps))
         self.assertTrue(m["steps_to_first_touch"])
 
+    def test_skill_tool_and_skill_md_are_skill_interactions(self):
+        steps = [
+            {"index": 0, "role": "assistant", "tokens": {"total": 10}, "parts": [],
+             "tool_calls": [{"tool_name": "Skill", "input": {"skill": "create-hook"},
+                             "status": "completed"}]},
+            {"index": 1, "role": "assistant", "tokens": {"total": 10}, "parts": [],
+             "tool_calls": [{"tool_name": "Read",
+                             "input": {"file_path": "/home/user/.cursor/skills/canvas/SKILL.md"},
+                             "status": "completed"}]},
+            {"index": 2, "role": "assistant", "tokens": {"total": 10}, "parts": [],
+             "tool_calls": [{"tool_name": "Read", "input": {"file_path": "/repo/app.py"},
+                             "status": "completed"}]},
+            {"index": 3, "role": "assistant", "tokens": {"total": 10}, "parts": [],
+             "tool_calls": [{"tool_name": "Write",
+                             "input": {"file_path": "/repo/.cursor/skills/new/SKILL.md"},
+                             "status": "completed"}]},
+        ]
+        inter = diagnostics.extract_file_interactions(steps)
+        by_step = {i["step"]: i for i in inter}
+        self.assertEqual(by_step[0]["type"], "skill")
+        self.assertEqual(by_step[0]["path"], "skill:create-hook")
+        self.assertEqual(by_step[1]["type"], "skill")
+        self.assertTrue(by_step[1]["path"].endswith("SKILL.md"))
+        self.assertEqual(by_step[2]["type"], "read")
+        self.assertEqual(by_step[3]["type"], "write")
+
+        from trajviz.insight.charts import build_file_interaction_chart
+
+        fig = build_file_interaction_chart(inter)
+        skill_trace = next(t for t in fig.data if t.name == "skill")
+        self.assertEqual(skill_trace.marker.symbol, "star")
+        self.assertIn("skill:create-hook", list(skill_trace.y))
+
     def test_hotspot_inference_excludes_pre_step_idle(self):
         step = {"index": 0, "role": "assistant", "duration": 20.0,
                 "tool_calls": [{"tool_name": "Task", "time_start": None, "time_end": None,

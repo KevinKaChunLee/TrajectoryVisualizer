@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from trajviz.tool_vocab import (WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
+                                parse_skill_name as _parse_skill_name,
                                 write_target_path as _write_target_path)
 
 import os
@@ -72,11 +73,17 @@ def _extract_bash_paths(command: str) -> list[str]:
     return paths
 
 
+def _is_skill_definition_path(path: str) -> bool:
+    """True when *path* is a skill definition file (``SKILL.md``)."""
+    name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return bool(name) and name.lower() == "skill.md"
+
+
 def extract_file_interactions(steps: list[dict]) -> list[dict]:
     """Extract file path references from every tool call in parsed steps.
 
     Returns a list of records: {step, tool, path, type, tokens}
-    where type is one of: read, write, search.
+    where type is one of: read, write, search, skill.
     """
     interactions: list[dict] = []
 
@@ -125,9 +132,15 @@ def extract_file_interactions(steps: list[dict]) -> list[dict]:
                         itype = "write" if any(command.strip().startswith(c) or f" {c}" in command for c in write_cmds) else "read"
                         found_paths.append((p, itype))
 
+            skill = _parse_skill_name(tool_name, inp)
+            if skill:
+                found_paths.append((f"skill:{skill}", "skill"))
+
             for path, itype in found_paths:
                 # Normalize backslashes to forward slashes for consistency
                 path = path.replace("\\", "/")
+                if itype == "read" and _is_skill_definition_path(path):
+                    itype = "skill"
                 interactions.append({
                     "step": step_idx,
                     "tool": tool_name,
