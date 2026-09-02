@@ -537,7 +537,7 @@ def build_context_pressure_chart(
     cache under an occupancy line and, when a window limit is known, adds
     70%/90% bands.
     """
-    from ..diagnostics import context_pressure_series
+    from ..context_usage import context_pressure_series
 
     if series is None:
         series = context_pressure_series(
@@ -760,7 +760,7 @@ def _add_compaction_markers(
     """Per-agent compaction diamonds and drop stems — not full-height vlines."""
     if not events:
         return
-    from ..diagnostics import coalesce_compaction_events
+    from ..context_usage import coalesce_compaction_events
 
     labels = {a.get("agent_id", ""): a.get("label") or "main" for a in agents}
     by_agent: dict[str, list[dict]] = {}

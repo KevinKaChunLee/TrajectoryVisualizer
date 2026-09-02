@@ -20,7 +20,7 @@ from ..charts import (
     build_tool_chart,
     build_tool_outcome_timeline,
 )
-from ..diagnostics import PRESSURE_ALL_AGENTS
+from ..context_usage import PRESSURE_ALL_AGENTS
 from ..formatting import (
     format_banner_html,
     format_behavioral_md,

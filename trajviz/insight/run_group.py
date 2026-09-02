@@ -25,7 +25,7 @@ from trajviz.converge.canonical import (
     canonicalize_steps,
 )
 from trajviz.converge.divergence import classify_divergences
-from trajviz.insight.diagnostics import (
+from trajviz.insight.context_usage import (
     context_pressure_series,
     context_pressure_stats,
 )

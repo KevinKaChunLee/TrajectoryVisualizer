@@ -4,6 +4,8 @@ import json
 import unittest
 
 from trajviz.insight.context_usage import (
+    PRESSURE_ALL_AGENTS,
+    PRESSURE_MAIN_AGENT,
     SNAPSHOT_CURRENT,
     context_usage_breakdown,
     estimate_tokens,
@@ -12,7 +14,6 @@ from trajviz.insight.context_usage import (
     parse_usage_snapshot,
     usage_snapshot_choices,
 )
-from trajviz.insight.diagnostics import PRESSURE_ALL_AGENTS, PRESSURE_MAIN_AGENT
 from trajviz.insight.formatting import format_context_pressure_html
 from trajviz.tool_vocab import SPAWN_TOOL_NAMES
 

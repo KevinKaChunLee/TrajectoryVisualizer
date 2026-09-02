@@ -11,14 +11,12 @@ import plotly.graph_objects as go
 
 from ..charts import build_context_pressure_chart
 from ..context_usage import (
-    SNAPSHOT_CURRENT,
-    parse_usage_snapshot,
-    usage_snapshot_choices,
-)
-from ..diagnostics import (
     DEFAULT_CONTEXT_WINDOW_LIMIT,
     PRESSURE_ALL_AGENTS,
+    SNAPSHOT_CURRENT,
     context_pressure_series,
+    parse_usage_snapshot,
+    usage_snapshot_choices,
 )
 from ..formatting import format_context_pressure_html
 from ..help import HELP_TEXT

@@ -3,7 +3,7 @@
 import unittest
 
 from trajviz.insight.charts import build_context_pressure_chart
-from trajviz.insight.diagnostics import (
+from trajviz.insight.context_usage import (
     DEFAULT_CONTEXT_WINDOW_LIMIT,
     PRESSURE_ALL_AGENTS,
     PRESSURE_MAIN_AGENT,

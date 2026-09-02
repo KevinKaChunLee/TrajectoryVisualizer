@@ -7,18 +7,20 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .analytics import compute_step_analytics
-from .diagnostics import (
+from .context_usage import (
     PRESSURE_ALL_AGENTS,
+    context_pressure_series,
+    pressure_agent_choices,
+)
+from .diagnostics import (
     annotate_clusters_with_agents,
     cluster_errors,
     compute_bottleneck_explanations,
     compute_failure_chain_metrics,
-    context_pressure_series,
     detect_failure_chains,
     extract_file_interactions,
     identify_target_files,
     link_chains_to_agents,
-    pressure_agent_choices,
 )
 from .loaders import check_format_selection, detect_format, load_trajectory
 from .formatting import wall_clock_fmt

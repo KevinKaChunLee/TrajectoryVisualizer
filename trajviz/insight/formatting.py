@@ -369,7 +369,7 @@ def format_context_pressure_html(
 ) -> str:
     """Stats strip and context-usage breakdown for the Diagnostics chart."""
     from .context_usage import context_usage_breakdown, format_context_usage_html
-    from .diagnostics import context_pressure_stats
+    from .context_usage import context_pressure_stats
 
     stats = context_pressure_stats(series)
     peak = stats.get("peak_occupancy") or 0
