@@ -359,8 +359,15 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
     return banner
 
 
-def format_context_pressure_html(series: dict) -> str:
-    """Stats strip for the Diagnostics context-pressure chart."""
+def format_context_pressure_html(
+    series: dict,
+    *,
+    steps: list[dict] | None = None,
+    raw: dict | None = None,
+    agent_key: str | None = None,
+) -> str:
+    """Stats strip and context-usage breakdown for the Diagnostics chart."""
+    from .context_usage import context_usage_breakdown, format_context_usage_html
     from .diagnostics import context_pressure_stats
 
     stats = context_pressure_stats(series)
@@ -378,8 +385,14 @@ def format_context_pressure_html(series: dict) -> str:
     chips.append(_metric_chip("Compactions", str(stats.get("compaction_count") or 0)))
     drop = stats.get("largest_drop") or 0
     chips.append(_metric_chip("Largest drop", f"-{drop:,}" if drop else "0"))
+    usage_html = ""
+    if steps:
+        usage_html = format_context_usage_html(
+            context_usage_breakdown(steps, raw=raw, agent_key=agent_key)
+        )
     return (
-        "<div style='margin:4px 0 8px;'>"
+        usage_html
+        + "<div style='margin:4px 0 8px;'>"
         + _metric_grid(chips)
         + "</div>"
     )

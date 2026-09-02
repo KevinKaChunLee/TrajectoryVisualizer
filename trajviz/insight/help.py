@@ -12,8 +12,8 @@ HELP_TEXT: dict[str, str] = {
     "tool_success": "Percentage of tool calls that completed without errors. 100% means no tool failures.",
     # Section subtitles
     "section_performance": "Token consumption, step timing, and overall resource usage patterns.",
-    "section_efficiency": "Context growth over time and compression events.",
+    "section_context_utilization": "How the context window is filled: composition of loaded tokens, occupancy over steps, growth, and compaction. Empty usage categories are omitted.",
     "section_tools": "Tool usage frequency, Skill-tool calls by agent, outcome timeline, and behavioral diagnostics.",
     "section_agents": "Multi-agent breakdown, spawning relationships, and per-agent performance.",
-    "section_diagnostics": "File targeting, errors, and context-window pressure — occupancy of each agent's window over steps, with compaction drops.",
+    "section_diagnostics": "File targeting, errors, and root-cause attribution.",
 }

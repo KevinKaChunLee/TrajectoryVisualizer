@@ -71,7 +71,7 @@ class OverviewRefs:
 
 OVERVIEW_SECTION_NAMES = [
     "Performance",
-    "Efficiency",
+    "Context Utilization",
     "Tools",
     "Agents",
     "Diagnostics",
@@ -106,7 +106,19 @@ def layout() -> OverviewRefs:
                         duration_chart = gr.Plot(show_label=False, label="Step Duration")
 
                 with gr.Column(visible=False) as efficiency_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_efficiency'])}</div>")
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_context_utilization'])}</div>")
+                    diag_pressure_agent = gr.Dropdown(
+                        label="Agent",
+                        choices=[("All agents", PRESSURE_ALL_AGENTS)],
+                        value=PRESSURE_ALL_AGENTS,
+                        visible=False,
+                        interactive=True,
+                    )
+                    diag_pressure_html = gr.HTML("")
+                    diag_pressure_chart = gr.Plot(
+                        show_label=False,
+                        label="Context Window Pressure",
+                    )
                     context_growth_chart = gr.Plot(show_label=False, label="Context Growth")
 
                 with gr.Column(visible=False) as tools_section:
@@ -135,18 +147,6 @@ def layout() -> OverviewRefs:
                         label="File Interaction Timeline",
                         elem_id="diag-file-chart",
                         elem_classes=["resizable-chart"],
-                    )
-                    diag_pressure_html = gr.HTML("")
-                    diag_pressure_agent = gr.Dropdown(
-                        label="Agent",
-                        choices=[("All agents", PRESSURE_ALL_AGENTS)],
-                        value=PRESSURE_ALL_AGENTS,
-                        visible=False,
-                        interactive=True,
-                    )
-                    diag_pressure_chart = gr.Plot(
-                        show_label=False,
-                        label="Context Window Pressure",
                     )
                     diag_rootcause_html = gr.HTML("")
                     with gr.Row(equal_height=True):
@@ -361,7 +361,10 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
                 steps,
                 agent_key=key,
                 raw=raw if isinstance(raw, dict) else None,
-            )
+            ),
+            steps=steps,
+            raw=raw if isinstance(raw, dict) else None,
+            agent_key=key,
         )
         return fig, html_strip
 

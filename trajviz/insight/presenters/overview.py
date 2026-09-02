@@ -336,7 +336,12 @@ def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dic
         raw=session.raw,
         dark=dark,
     )
-    pressure_html = format_context_pressure_html(session.pressure_series)
+    pressure_html = format_context_pressure_html(
+        session.pressure_series,
+        steps=session.steps,
+        raw=session.raw,
+        agent_key=PRESSURE_ALL_AGENTS,
+    )
     pressure_choices = session.pressure_choices
     pressure_dropdown = {
         "choices": pressure_choices or [("All agents", PRESSURE_ALL_AGENTS)],
