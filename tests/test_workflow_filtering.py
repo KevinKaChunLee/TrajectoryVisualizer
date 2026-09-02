@@ -159,6 +159,19 @@ class WorkflowFilteringTests(unittest.TestCase):
             [],
         )
 
+    def test_subagent_handoff_is_not_a_user_filter_match(self):
+        from trajviz.insight.presenters import filter_workflow_steps
+
+        spawn = _step(5, role="user", agent="explore", text="Explore the repo")
+        spawn["parts"] = [{"type": "text", "text": "Explore the repo"}]
+        steps = [*self.steps, spawn]
+
+        self.assertEqual(
+            filter_workflow_steps(steps, ["User", "All"]),
+            [0],
+        )
+        self.assertIn(5, filter_workflow_steps(steps, ["Assistant", "All"]))
+
     def test_agent_tokens_do_not_apply_a_hidden_filter(self):
         from trajviz.insight.presenters import filter_workflow_steps
 

@@ -17,14 +17,55 @@ from .styles import WORKFLOW_CSS
 _ROLE_COLORS = {
     "user": ("var(--wf-bg-user)", "var(--wf-border-user)", "User"),
     "assistant": ("var(--wf-bg-assistant)", "var(--wf-border-assistant)", "Assistant"),
+    "task": ("var(--wf-bg-reasoning)", "var(--wf-border-reasoning)", "Task"),
+    "system": ("var(--wf-bg-default)", "var(--wf-border-default)", "System"),
+    "compaction": ("var(--wf-bg-default)", "var(--wf-border-default)", "Compaction"),
 }
 
 _ROLE_BADGE_STYLES = {
     "user": "background:var(--wf-border-user);color:white;",
     "assistant": "background:var(--wf-border-assistant);color:white;",
+    "task": "background:var(--wf-border-reasoning);color:white;",
     "system": "background:var(--wf-border-default);color:white;",
+    "compaction": "background:var(--wf-border-default);color:white;",
     "tool": "background:var(--wf-border-reasoning);color:white;",
 }
+
+
+def workflow_role(step: dict) -> str:
+    """Role key used for Workflow badges and filters.
+
+    OpenCode (and similar) record Task prompts, compaction checkpoints, and
+    synthetic continues as ``role=user``. Those are agent-protocol messages,
+    not human turns, so Workflow must not badge them as User.
+    """
+    raw = step.get("role", "")
+    role = raw if isinstance(raw, str) else str(raw or "")
+    if role != "user":
+        return role
+    parts = step.get("parts") if isinstance(step.get("parts"), list) else []
+    if step.get("is_compaction_checkpoint") or any(
+        isinstance(part, dict) and part.get("type") == "compaction" for part in parts
+    ):
+        return "compaction"
+    text_parts = [
+        part for part in parts
+        if isinstance(part, dict) and part.get("type") == "text"
+    ]
+    if text_parts and all(part.get("synthetic") for part in text_parts):
+        return "system"
+    if step.get("is_sub_agent"):
+        return "task"
+    return "user"
+
+
+def workflow_role_label(step: dict) -> str:
+    """Human-readable Workflow role badge for *step*."""
+    role = workflow_role(step)
+    colors = _ROLE_COLORS.get(role)
+    if colors:
+        return colors[2]
+    return role.title() if role else ""
 
 
 def _card_style(step: dict) -> tuple[str, str, str]:
@@ -32,16 +73,20 @@ def _card_style(step: dict) -> tuple[str, str, str]:
 
     Colors are CSS variable references so they adapt to the active theme.
     """
-    role = str(step.get("role", ""))
+    stored = step.get("role", "")
+    stored_s = stored if isinstance(stored, str) else str(stored or "")
     if step["error_count"] > 0:
         return "var(--wf-bg-error)", "var(--wf-border-error)", "Error"
     if step.get("finish") == "stop" or step.get("finish") == "end_turn":
         return "var(--wf-bg-final)", "var(--wf-border-final)", "Final"
     if step["tool_call_count"] > 0:
         return "var(--wf-bg-tool)", "var(--wf-border-tool)", "Tool Calls"
-    if step["has_reasoning"] and role == "assistant":
+    if step["has_reasoning"] and stored_s == "assistant":
         return "var(--wf-bg-reasoning)", "var(--wf-border-reasoning)", "Reasoning"
-    bg, border, label = _ROLE_COLORS.get(role, ("var(--wf-bg-default)", "var(--wf-border-default)", role.title()))
+    role = workflow_role(step)
+    bg, border, label = _ROLE_COLORS.get(
+        role, ("var(--wf-bg-default)", "var(--wf-border-default)", role.title()),
+    )
     return bg, border, label
 
 
@@ -242,7 +287,7 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
     items: list[str] = []
     for step in steps:
         idx = step.get("index", 0)
-        role = str(step.get("role", ""))
+        role = workflow_role(step)
         role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
         onclick = (
             f"(function(){{"
@@ -255,7 +300,7 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
             f"<div class='toc-entry' onclick=\"{onclick}\" data-step-idx='{idx}' style='{toc_indent}'>"
             f"<span class='toc-num'>#{idx}</span>"
             f"<span class='wf-badge' style='{role_style};font-size:11px;padding:2px 6px;'>"
-            f"{html.escape(role.title())}</span>"
+            f"{html.escape(workflow_role_label(step))}</span>"
             f"</div>"
         )
     nav_class = "wf-toc-sidebar toc-hidden" if collapsed else "wf-toc-sidebar"
@@ -312,9 +357,9 @@ def render_workflow_html(steps: list[dict]) -> str:
                 f'border:1px solid {agent_border};font-size:9px;">{html.escape(agent_label)}</span>'
             )
 
-        role = str(step.get("role", ""))
+        role = workflow_role(step)
         role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
-        role_label = role.title()
+        role_label = workflow_role_label(step)
 
         orig_idx = step.get("index", i)
 
@@ -365,10 +410,10 @@ def _fmt_timestamp(ms):
 def _format_step_header(step: dict) -> str:
     """Build the styled HTML header banner and metadata table for a step detail panel."""
     bg, border, label = _card_style(step)
-    role = str(step.get("role", ""))
+    role = workflow_role(step)
     role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
 
-    rows: list[tuple[str, str]] = [("Role", step['role'])]
+    rows: list[tuple[str, str]] = [("Role", workflow_role_label(step))]
     _optional = [
         ("agent", "Agent"), ("mode", "Mode"), ("model_id", "Model"),
         ("provider_id", "Provider"),
@@ -416,7 +461,7 @@ def _format_step_header(step: dict) -> str:
     banner = (
         f"<div class='dp-header' style='background:{border};'>"
         f"<span class='dp-badge'>#{step['index']}</span>"
-        f"<span class='dp-badge' style='{role_style}'>{html.escape(role.title())}</span>"
+        f"<span class='dp-badge' style='{role_style}'>{html.escape(workflow_role_label(step))}</span>"
         f"Step {step['index']} &mdash; {html.escape(label)}"
         f"</div>"
     )

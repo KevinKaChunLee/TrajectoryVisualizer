@@ -12,13 +12,46 @@ _FILE_INTERACTION_COLORS = {
     "read": "#3b82f6",  # blue
     "write": "#10b981",  # green
     "search": "#f59e0b",  # orange
+    "skill": "#eab308",  # gold
 }
 
 _FILE_INTERACTION_SYMBOLS = {
     "read": "circle",
-    "write": "diamond",
+    "write": "square",
     "search": "triangle-up",
+    "skill": "star",
 }
+
+_FILE_INTERACTION_LEGEND = {
+    "read": "read (circle)",
+    "write": "write (square)",
+    "search": "search (triangle)",
+    "skill": "skill (star)",
+}
+
+
+def _add_shape_legend(fig: go.Figure, types_present: set[str]) -> None:
+    """Legend entries that spell out marker shape (circle/square/triangle/star)."""
+    for itype, color in _FILE_INTERACTION_COLORS.items():
+        if itype not in types_present:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                name=_FILE_INTERACTION_LEGEND[itype],
+                marker=dict(
+                    color=color,
+                    size=12 if itype == "skill" else 10,
+                    symbol=_FILE_INTERACTION_SYMBOLS[itype],
+                ),
+                hoverinfo="skip",
+                legendgroup="shape",
+                legendrank=2000,
+            )
+        )
+
 
 _COMPACTION_KIND_LABEL = {
     "compaction_part": "compacted",
@@ -149,8 +182,9 @@ def build_file_interaction_chart(
     x=step index, y=shortened file path (categorical). Color is interaction
     type for single-agent runs, and timeline agent (same palette as the
     swimlane) when more than one agent touched files. Marker shape is always
-    read/write/search. Target files are highlighted with a distinct marker
-    border. Hover still shows the full path.
+    read (circle) / write (square) / search (triangle) / skill (star); the
+    legend spells those out. Target files are highlighted with a distinct
+    marker border. Hover still shows the full path.
     """
     import os
 
@@ -206,6 +240,7 @@ def build_file_interaction_chart(
         hover = [f"{name}<br>Step {i['step']}: {i['tool']} ({i['type']})<br>{i['path']}" for i in group]
         border_colors = ["#dc2626" if t else color for t in is_target]
         border_widths = [2 if t else 0 for t in is_target]
+        sizes = [12 if i["type"] == "skill" else 10 for i in group]
         if symbol is None:
             symbol = [_FILE_INTERACTION_SYMBOLS.get(i["type"], "circle") for i in group]
         fig.add_trace(
@@ -216,7 +251,7 @@ def build_file_interaction_chart(
                 name=name,
                 marker=dict(
                     color=color,
-                    size=10,
+                    size=sizes,
                     symbol=symbol,
                     line=dict(color=border_colors, width=border_widths),
                 ),
@@ -249,10 +284,14 @@ def build_file_interaction_chart(
             if group:
                 _add_group(
                     group,
-                    name=itype,
+                    name=_FILE_INTERACTION_LEGEND.get(itype, itype),
                     color=color,
                     symbol=_FILE_INTERACTION_SYMBOLS.get(itype, "circle"),
                 )
+
+    types_present = {i["type"] for i in interactions}
+    if has_agents:
+        _add_shape_legend(fig, types_present)
 
     unique_files = len(file_order)
     chart_height = file_interaction_chart_height(unique_files)
@@ -525,6 +564,9 @@ def build_context_pressure_chart(
     agent_key: str | None = None,
     raw: dict | None = None,
     dark: bool = False,
+    window_limit: int | float | str | None = None,
+    series: dict | None = None,
+    highlight_step: int | None = None,
 ) -> go.Figure:
     """Context-window occupancy over global step index, with compaction markers.
 
@@ -534,9 +576,12 @@ def build_context_pressure_chart(
     cache under an occupancy line and, when a window limit is known, adds
     70%/90% bands.
     """
-    from ..diagnostics import context_pressure_series
+    from ..context_usage import context_pressure_series
 
-    series = context_pressure_series(steps, agent_key=agent_key, raw=raw)
+    if series is None:
+        series = context_pressure_series(
+            steps, agent_key=agent_key, raw=raw, window_limit=window_limit,
+        )
     agents = series.get("agents") or []
     events = series.get("events") or []
     window_limit = series.get("window_limit")
@@ -664,6 +709,7 @@ def build_context_pressure_chart(
         y_max=y_max,
         marker_color=_COMPACTION_MARKER_COLOR if single else None,
     )
+    _add_snapshot_marker(fig, agents, highlight_step)
 
     if isinstance(window_limit, (int, float)) and window_limit > 0:
         fig.add_hline(
@@ -705,6 +751,42 @@ def build_context_pressure_chart(
     return fig
 
 
+def _add_snapshot_marker(
+    fig: go.Figure,
+    agents: list[dict],
+    highlight_step: int | None,
+) -> None:
+    """Open circle on the selected occupancy turn (pre-compaction snapshot)."""
+    if highlight_step is None:
+        return
+    for agent in agents:
+        for point in agent.get("points") or []:
+            if int(point.get("step") or 0) != highlight_step:
+                continue
+            occ = int(point.get("occupancy") or 0)
+            fig.add_trace(
+                go.Scatter(
+                    x=[highlight_step],
+                    y=[occ],
+                    mode="markers",
+                    name="Selected window",
+                    marker=dict(
+                        size=16,
+                        symbol="circle-open",
+                        color=_OCCUPANCY_LINE_COLOR,
+                        line=dict(width=3, color=_OCCUPANCY_LINE_COLOR),
+                    ),
+                    hovertext=(
+                        f"Selected window<br>Step {highlight_step}"
+                        f"<br>Occupancy: {occ:,}"
+                    ),
+                    hoverinfo="text",
+                    showlegend=True,
+                )
+            )
+            return
+
+
 def _add_compaction_markers(
     fig: go.Figure,
     events: list[dict],
@@ -717,7 +799,7 @@ def _add_compaction_markers(
     """Per-agent compaction diamonds and drop stems — not full-height vlines."""
     if not events:
         return
-    from ..diagnostics import coalesce_compaction_events
+    from ..context_usage import coalesce_compaction_events
 
     labels = {a.get("agent_id", ""): a.get("label") or "main" for a in agents}
     by_agent: dict[str, list[dict]] = {}

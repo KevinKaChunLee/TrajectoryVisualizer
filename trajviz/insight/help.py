@@ -12,8 +12,8 @@ HELP_TEXT: dict[str, str] = {
     "tool_success": "Percentage of tool calls that completed without errors. 100% means no tool failures.",
     # Section subtitles
     "section_performance": "Token consumption, step timing, and overall resource usage patterns.",
-    "section_efficiency": "Context growth over time and compression events.",
+    "section_context_utilization": "How loaded tokens break down. Empty categories are omitted. Window limit defaults to 256k (or the inferred model size) and can be changed. Select one agent to inspect the window before a compaction. Harness system definitions (not included in log) is billed overhead this export did not record.",
     "section_tools": "Tool usage frequency, Skill-tool calls by agent, outcome timeline, and behavioral diagnostics.",
     "section_agents": "Multi-agent breakdown, spawning relationships, and per-agent performance.",
-    "section_diagnostics": "File targeting, errors, and context-window pressure — occupancy of each agent's window over steps, with compaction drops.",
+    "section_diagnostics": "File targeting, errors, and root-cause attribution. The file timeline legend maps marker shape: circle = read, square = write, triangle = search, star = skill.",
 }

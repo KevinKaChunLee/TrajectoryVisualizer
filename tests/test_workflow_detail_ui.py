@@ -134,6 +134,77 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("<td>Throughput</td><td>0 tok/s</td>", html)
         self.assertIn("<td>Cache Ratio</td><td>n/a</td>", html)
 
+    def test_subagent_task_prompt_is_not_badged_as_user(self):
+        from trajviz.insight.rendering import (
+            format_step_detail,
+            render_toc_sidebar,
+            render_workflow_html,
+            workflow_role,
+            workflow_role_label,
+        )
+
+        human = self._metric_step(
+            index=0,
+            role="user",
+            is_sub_agent=False,
+            parts=[{"type": "text", "text": "please explore"}],
+            text_preview="please explore",
+        )
+        spawn = self._metric_step(
+            index=1,
+            role="user",
+            is_sub_agent=True,
+            agent="explore",
+            session_id="ses_child",
+            parts=[{"type": "text", "text": "Explore the repo"}],
+            text_preview="Explore the repo",
+        )
+        compact = self._metric_step(
+            index=2,
+            role="user",
+            is_sub_agent=True,
+            agent="explore",
+            parts=[{"type": "compaction", "summary": "prior work"}],
+            text_preview="",
+        )
+        synthetic = self._metric_step(
+            index=3,
+            role="user",
+            is_sub_agent=True,
+            agent="explore",
+            parts=[{
+                "type": "text",
+                "text": "Continue if you have next steps",
+                "synthetic": True,
+            }],
+            text_preview="Continue if you have next steps",
+        )
+
+        self.assertEqual(workflow_role(human), "user")
+        self.assertEqual(workflow_role(spawn), "task")
+        self.assertEqual(workflow_role(compact), "compaction")
+        self.assertEqual(workflow_role(synthetic), "system")
+        self.assertEqual(workflow_role_label(spawn), "Task")
+
+        cards = render_workflow_html([human, spawn, compact, synthetic])
+        self.assertIn(">User</span>", cards)
+        self.assertIn(">Task</span>", cards)
+        self.assertIn(">Compaction</span>", cards)
+        self.assertIn(">System</span>", cards)
+        spawn_card = cards[cards.index('id="wf-card-1"'):cards.index('id="wf-card-2"')]
+        self.assertNotIn(">User</span>", spawn_card)
+        self.assertIn(">Task</span>", spawn_card)
+
+        toc = render_toc_sidebar([spawn])
+        self.assertIn(">Task</span>", toc)
+        self.assertNotIn(">User</span>", toc)
+
+        detail = format_step_detail(spawn)
+        self.assertIn(">Task</span>", detail)
+        self.assertIn("<td>Role</td>", detail)
+        self.assertIn("Task", detail)
+        self.assertNotIn(">User</span>", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

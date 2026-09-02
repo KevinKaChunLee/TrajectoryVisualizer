@@ -71,3 +71,14 @@ def parse_skill_name(tool_name: str, tool_input: object) -> str | None:
     if isinstance(tool_input, str) and tool_input.strip():
         return tool_input.strip()
     return "(unnamed skill)"
+
+
+# Tools that spawn a child agent / sub-session. Mixed casings are the literal
+# names emitted by Claude Code (Task), OpenCode (task / Agent), DSH
+# (subagent / subagent_fork), and Codex (spawn_agent).
+SPAWN_TOOL_NAMES: frozenset[str] = frozenset({
+    "Agent", "agent",
+    "Task", "task",
+    "subagent", "subagent_fork",
+    "spawn_agent",
+})
