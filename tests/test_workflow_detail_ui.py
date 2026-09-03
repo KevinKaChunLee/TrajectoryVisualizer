@@ -27,18 +27,21 @@ class WorkflowDetailUiTests(unittest.TestCase):
         step.update(overrides)
         return step
 
+    def test_selecting_workflow_card_resets_detail_panel_scroll(self):
+        from trajviz.insight.ui import workflow_tab
+
+        source = inspect.getsource(workflow_tab)
+        self.assertIn("detailPanel.scrollTop = 0", source)
+
     def test_duration_chart_click_jumps_to_workflow(self):
         from trajviz.insight import insight as insight_mod
-        import inspect
+        from trajviz.insight.ui import overview_tab
 
         source = inspect.getsource(insight_mod.build_ui)
         self.assertIn("tvBindDurationJump", source)
         self.assertIn("plotly_click", source)
         self.assertIn("tvGotoWorkflowStep", source)
-        self.assertIn('elem_id="duration-chart"', inspect.getsource(
-            __import__("trajviz.insight.ui.overview_tab", fromlist=["layout"]).layout
-        ))
-
+        self.assertIn('elem_id="duration-chart"', inspect.getsource(overview_tab.layout))
 
     def test_detail_tabs_stay_visible_inside_scrollable_detail_panel(self):
         styles = Path("trajviz/insight/styles.py").read_text()
@@ -234,12 +237,14 @@ class WorkflowDetailUiTests(unittest.TestCase):
             error_count=1,
             text_preview="script failed",
         )
-        bg_s, border_s, label_s = _card_style(system)
-        bg_t, border_t, label_t = _card_style(tool)
+        bg_s, border_s, label_s, kind_s = _card_style(system)
+        bg_t, border_t, label_t, kind_t = _card_style(tool)
         self.assertEqual(label_s, "System Error")
+        self.assertEqual(kind_s, "system")
         self.assertEqual(border_s, "var(--wf-border-system-error)")
         self.assertEqual(bg_s, "var(--wf-bg-system-error)")
         self.assertEqual(label_t, "Tool Error")
+        self.assertEqual(kind_t, "tool")
         self.assertEqual(border_t, "var(--wf-border-error)")
 
         html = render_workflow_html([system, tool])

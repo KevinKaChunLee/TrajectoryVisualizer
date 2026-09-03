@@ -80,8 +80,8 @@ def build_ui() -> gr.Blocks:
                     btn.setAttribute('aria-label', 'AI Trajectory Analysis');
                     btn.setAttribute('title', 'AI Trajectory Analysis');
                 }
-                if (!window.__tvFileTimelineBound) {
-                    window.__tvFileTimelineBound = true;
+                if (!window.__tvChartUiBound) {
+                    window.__tvChartUiBound = true;
                     const ROW = 28, CHROME = 120, MIN = 340;
                     window.tvExpandFileTimeline = function () {
                         document.querySelectorAll('.resizable-chart').forEach((root) => {
@@ -111,22 +111,6 @@ def build_ui() -> gr.Blocks:
                             }
                         });
                     };
-                    let timer = null;
-                    const schedule = () => {
-                        if (timer) clearTimeout(timer);
-                        timer = setTimeout(window.tvExpandFileTimeline, 60);
-                    };
-                    new MutationObserver(schedule).observe(document.documentElement, {
-                        childList: true,
-                        subtree: true,
-                        attributes: true,
-                        attributeFilter: ['style', 'class', 'hidden'],
-                    });
-                    window.addEventListener('resize', schedule);
-                    [0, 80, 250, 600].forEach((ms) => setTimeout(window.tvExpandFileTimeline, ms));
-                }
-                if (!window.__tvDurationJumpBound) {
-                    window.__tvDurationJumpBound = true;
                     window.tvGotoWorkflowStep = function (idx) {
                         const tabs = document.querySelectorAll('button[role=tab]');
                         for (let ti = 0; ti < tabs.length; ti++) {
@@ -156,23 +140,28 @@ def build_ui() -> gr.Blocks:
                                 if (!pt) return;
                                 let idx = pt.customdata;
                                 if (Array.isArray(idx)) idx = idx[0];
-                                if (idx === undefined || idx === null) idx = pt.x;
                                 const n = Number(idx);
                                 if (!Number.isFinite(n)) return;
                                 window.tvGotoWorkflowStep(Math.trunc(n));
                             });
                         });
                     };
-                    let jumpTimer = null;
-                    const scheduleJump = () => {
-                        if (jumpTimer) clearTimeout(jumpTimer);
-                        jumpTimer = setTimeout(window.tvBindDurationJump, 80);
+                    let timer = null;
+                    const schedule = () => {
+                        if (timer) clearTimeout(timer);
+                        timer = setTimeout(() => {
+                            window.tvExpandFileTimeline();
+                            window.tvBindDurationJump();
+                        }, 60);
                     };
-                    new MutationObserver(scheduleJump).observe(document.documentElement, {
+                    new MutationObserver(schedule).observe(document.documentElement, {
                         childList: true,
                         subtree: true,
+                        attributes: true,
+                        attributeFilter: ['style', 'class', 'hidden'],
                     });
-                    [0, 100, 300, 700].forEach((ms) => setTimeout(window.tvBindDurationJump, ms));
+                    window.addEventListener('resize', schedule);
+                    [0, 80, 250, 600].forEach((ms) => setTimeout(schedule, ms));
                 }
                 return [false];
             }""",

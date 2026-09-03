@@ -167,11 +167,6 @@ def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | No
     return fig
 
 
-def _duration_error_kind(step: dict) -> str | None:
-    """Classify a step for the duration chart legend (see ``step_error_kind``)."""
-    return step_error_kind(step)
-
-
 def build_duration_chart(
     steps: list[dict],
     phases: list[dict] | None = None,
@@ -195,7 +190,8 @@ def build_duration_chart(
     real_durations = [s["duration"] for s in steps if s["duration"] is not None]
     avg_d = sum(real_durations) / len(real_durations) if real_durations else 0
 
-    kinds = [_duration_error_kind(s) for s in steps]
+    kinds = [step_error_kind(s) for s in steps]
+    step_ids = [int(s.get("index", i)) for i, s in enumerate(steps)]
     normal_x = [i for i, k in enumerate(kinds) if k is None]
     normal_y = [durations[i] for i in normal_x]
     system_x = [i for i, k in enumerate(kinds) if k == "system"]
@@ -203,20 +199,17 @@ def build_duration_chart(
     tool_x = [i for i, k in enumerate(kinds) if k == "tool"]
     tool_y = [durations[i] for i in tool_x]
 
-    def _step_ids(xs: list[int]) -> list[int]:
-        return [int(steps[i].get("index", i)) for i in xs]
-
     # Detect outliers — will be added as scatter labels per legend group
     outlier_set = {idx for idx, _, _ in _detect_outliers(durations)}
 
-    bar_width = 0.8  # consistent width for both traces
+    bar_width = 0.8
 
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=normal_x,
             y=normal_y,
-            customdata=_step_ids(normal_x),
+            customdata=[step_ids[i] for i in normal_x],
             name="Normal",
             legendgroup="Normal",
             marker_color="#3b82f6",
@@ -229,7 +222,7 @@ def build_duration_chart(
             go.Bar(
                 x=system_x,
                 y=system_y,
-                customdata=_step_ids(system_x),
+                customdata=[step_ids[i] for i in system_x],
                 name="System Error",
                 legendgroup="System Error",
                 marker_color=DURATION_ERROR_COLORS["system"],
@@ -242,7 +235,7 @@ def build_duration_chart(
             go.Bar(
                 x=tool_x,
                 y=tool_y,
-                customdata=_step_ids(tool_x),
+                customdata=[step_ids[i] for i in tool_x],
                 name="Tool Error",
                 legendgroup="Tool Error",
                 marker_color=DURATION_ERROR_COLORS["tool"],
@@ -296,11 +289,7 @@ def build_duration_chart(
         barmode="overlay",
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5, itemclick="toggleothers"),
     )
-    fig.update_layout(
-        margin=dict(t=70),  # extra top margin for spike labels
-        meta={"tv_jump_workflow": True},
-        clickmode="event",
-    )
+    fig.update_layout(margin=dict(t=70), clickmode="event")
     fig.update_xaxes(range=[-0.5, len(steps) - 0.5])
 
     # Context compression markers (red vertical lines)

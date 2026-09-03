@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from trajviz.tool_vocab import SYSTEM_TOOL_NAMES
 
-_FAILURE_STATUSES = frozenset({"error", "failed", "failure", "cancelled", "timeout"})
+from .diagnostics import _ERROR_STATUSES
+
+_FAILURE_STATUSES = frozenset(_ERROR_STATUSES)
+
+StepErrorKind = Literal["system", "tool"]
 
 
 def tool_call_failed(tc: dict) -> bool:
@@ -18,24 +24,23 @@ def tool_call_failed(tc: dict) -> bool:
     return bool(tc.get("error") or tc.get("error_type"))
 
 
-def is_system_tool_name(name: object) -> bool:
-    return isinstance(name, str) and name in SYSTEM_TOOL_NAMES
+def step_error_kind(step: dict) -> StepErrorKind | None:
+    """Classify a step as system (scaffold) or tool (agentic) failure.
 
-
-def step_error_kind(step: dict) -> str | None:
-    """Return ``\"system\"``, ``\"tool\"``, or ``None`` for a step.
-
-    System errors (amber): failures of scaffold primitives (Grep, Read, Write,
-    …) or a provider abort with ``finish == \"error\"``.
-
-    Tool errors (red): failures of Bash (user scripts), Skill, Task, MCP, and
-    other agentic / workflow-defined tools. When a step has both, tool wins so
-    workflow failures stay visible.
+    System: Grep/Read/Write-style primitives, or ``finish == "error"``.
+    Tool: Bash, Skill, Task, MCP, custom. Tool wins when both apply.
+    See ``SYSTEM_TOOL_NAMES`` for the scaffold set.
     """
-    failed = [tc for tc in step.get("tool_calls") or [] if tool_call_failed(tc)]
-    if failed:
-        if any(not is_system_tool_name(tc.get("tool_name")) for tc in failed):
+    saw_system = False
+    for tc in step.get("tool_calls") or []:
+        if not tool_call_failed(tc):
+            continue
+        name = tc.get("tool_name")
+        if isinstance(name, str) and name in SYSTEM_TOOL_NAMES:
+            saw_system = True
+        else:
             return "tool"
+    if saw_system:
         return "system"
 
     finish = step.get("finish") or ""
