@@ -80,8 +80,8 @@ def build_ui() -> gr.Blocks:
                     btn.setAttribute('aria-label', 'AI Trajectory Analysis');
                     btn.setAttribute('title', 'AI Trajectory Analysis');
                 }
-                if (!window.__tvFileTimelineBound) {
-                    window.__tvFileTimelineBound = true;
+                if (!window.__tvChartUiBound) {
+                    window.__tvChartUiBound = true;
                     const ROW = 28, CHROME = 120, MIN = 340;
                     window.tvExpandFileTimeline = function () {
                         document.querySelectorAll('.resizable-chart').forEach((root) => {
@@ -111,10 +111,48 @@ def build_ui() -> gr.Blocks:
                             }
                         });
                     };
+                    window.tvGotoWorkflowStep = function (idx) {
+                        const tabs = document.querySelectorAll('button[role=tab]');
+                        for (let ti = 0; ti < tabs.length; ti++) {
+                            if (tabs[ti].textContent.trim() === 'Workflow') {
+                                tabs[ti].click();
+                                break;
+                            }
+                        }
+                        setTimeout(function () {
+                            const c = document.getElementById('wf-card-' + idx);
+                            if (c) {
+                                c.scrollIntoView({behavior: 'smooth', block: 'center'});
+                                c.click();
+                            }
+                        }, 200);
+                    };
+                    window.tvBindDurationJump = function () {
+                        const root = document.getElementById('duration-chart');
+                        if (!root) return;
+                        const plots = root.querySelectorAll('.js-plotly-plot');
+                        plots.forEach((gd) => {
+                            if (gd.__tvJumpBound || typeof gd.on !== 'function') return;
+                            gd.__tvJumpBound = true;
+                            gd.style.cursor = 'pointer';
+                            gd.on('plotly_click', function (data) {
+                                const pt = data && data.points && data.points[0];
+                                if (!pt) return;
+                                let idx = pt.customdata;
+                                if (Array.isArray(idx)) idx = idx[0];
+                                const n = Number(idx);
+                                if (!Number.isFinite(n)) return;
+                                window.tvGotoWorkflowStep(Math.trunc(n));
+                            });
+                        });
+                    };
                     let timer = null;
                     const schedule = () => {
                         if (timer) clearTimeout(timer);
-                        timer = setTimeout(window.tvExpandFileTimeline, 60);
+                        timer = setTimeout(() => {
+                            window.tvExpandFileTimeline();
+                            window.tvBindDurationJump();
+                        }, 60);
                     };
                     new MutationObserver(schedule).observe(document.documentElement, {
                         childList: true,
@@ -123,7 +161,7 @@ def build_ui() -> gr.Blocks:
                         attributeFilter: ['style', 'class', 'hidden'],
                     });
                     window.addEventListener('resize', schedule);
-                    [0, 80, 250, 600].forEach((ms) => setTimeout(window.tvExpandFileTimeline, ms));
+                    [0, 80, 250, 600].forEach((ms) => setTimeout(schedule, ms));
                 }
                 return [false];
             }""",

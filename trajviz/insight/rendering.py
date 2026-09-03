@@ -11,6 +11,7 @@ from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextL
 
 from .charts import bind_timeline_agents
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
+from .step_errors import step_error_kind
 from .styles import WORKFLOW_CSS
 
 
@@ -68,26 +69,35 @@ def workflow_role_label(step: dict) -> str:
     return role.title() if role else ""
 
 
-def _card_style(step: dict) -> tuple[str, str, str]:
-    """Return (bg_color, border_color, label) for a step card.
+def _card_style(step: dict) -> tuple[str, str, str, str | None]:
+    """Return (bg_color, border_color, label, error_kind) for a step card.
 
     Colors are CSS variable references so they adapt to the active theme.
+    ``error_kind`` is ``\"system\"``, ``\"tool\"``, or ``None``.
     """
     stored = step.get("role", "")
     stored_s = stored if isinstance(stored, str) else str(stored or "")
-    if step["error_count"] > 0:
-        return "var(--wf-bg-error)", "var(--wf-border-error)", "Error"
+    err_kind = step_error_kind(step)
+    if err_kind == "tool":
+        return "var(--wf-bg-error)", "var(--wf-border-error)", "Tool Error", err_kind
+    if err_kind == "system":
+        return (
+            "var(--wf-bg-system-error)",
+            "var(--wf-border-system-error)",
+            "System Error",
+            err_kind,
+        )
     if step.get("finish") == "stop" or step.get("finish") == "end_turn":
-        return "var(--wf-bg-final)", "var(--wf-border-final)", "Final"
+        return "var(--wf-bg-final)", "var(--wf-border-final)", "Final", None
     if step["tool_call_count"] > 0:
-        return "var(--wf-bg-tool)", "var(--wf-border-tool)", "Tool Calls"
+        return "var(--wf-bg-tool)", "var(--wf-border-tool)", "Tool Calls", None
     if step["has_reasoning"] and stored_s == "assistant":
-        return "var(--wf-bg-reasoning)", "var(--wf-border-reasoning)", "Reasoning"
+        return "var(--wf-bg-reasoning)", "var(--wf-border-reasoning)", "Reasoning", None
     role = workflow_role(step)
     bg, border, label = _ROLE_COLORS.get(
         role, ("var(--wf-bg-default)", "var(--wf-border-default)", role.title()),
     )
-    return bg, border, label
+    return bg, border, label, None
 
 
 _CODE_FENCE_RE = re.compile(
@@ -323,7 +333,7 @@ def render_workflow_html(steps: list[dict]) -> str:
 
     cards_html = []
     for i, step in enumerate(steps):
-        bg, border, label = _card_style(step)
+        bg, border, label, err_kind = _card_style(step)
         dur = f"{step['duration']}s" if step["duration"] is not None else "\u2014"
         tok = f"{step['tokens']['total']:,}"
         preview = _md_to_html_preview(step["text_preview"]) if step["text_preview"] else "\u2014"
@@ -340,7 +350,17 @@ def render_workflow_html(steps: list[dict]) -> str:
         icon_str = " \u00b7 ".join(sorted(set(part_icons))) if part_icons else ""
 
         tc_info = f'<span>{step["tool_call_count"]} tool(s)</span>' if step["tool_call_count"] else ''
-        err_info = f'<span style="color:var(--wf-border-error)">{step["error_count"]} err</span>' if step["error_count"] else ''
+        if err_kind == "tool":
+            err_info = (
+                f'<span style="color:var(--wf-border-error)">'
+                f'{step["error_count"]} tool err</span>'
+            )
+        elif err_kind == "system":
+            err_info = (
+                '<span style="color:var(--wf-border-system-error)">system err</span>'
+            )
+        else:
+            err_info = ''
 
         # Agent badge with per-agent color (same identity as swimlane / tool chart)
         agent_badge = ''
@@ -409,7 +429,7 @@ def _fmt_timestamp(ms):
 
 def _format_step_header(step: dict) -> str:
     """Build the styled HTML header banner and metadata table for a step detail panel."""
-    bg, border, label = _card_style(step)
+    bg, border, label, _err_kind = _card_style(step)
     role = workflow_role(step)
     role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
 
@@ -877,9 +897,15 @@ def format_step_detail(step: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _diag_jump_onclick(idx: int) -> str:
-    """JS onclick to switch to Workflow tab and scroll to a step card."""
+    """JS onclick to switch to Workflow tab and scroll to a step card.
+
+    Prefers ``window.tvGotoWorkflowStep`` (bound on app load for duration-chart
+    clicks) so overview badges and Plotly jumps share one path.
+    """
     return (
         f"(function(){{"
+        f"if(typeof window.tvGotoWorkflowStep==='function'){{"
+        f"window.tvGotoWorkflowStep({idx});return;}}"
         f"{_JS_GOTO_WORKFLOW}"
         f"setTimeout(function(){{"
         f"var c=document.getElementById('wf-card-{idx}');"

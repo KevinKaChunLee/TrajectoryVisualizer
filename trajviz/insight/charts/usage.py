@@ -13,12 +13,13 @@ from ..parser import infer_non_cache_input
 from ..palette import (
     AGENT_COLORS,
     CHART_ACCENT,
-    ROLE_COLORS,
+    DURATION_ERROR_COLORS,
     SESSION_COLORS,
     TOKEN_COLORS,
 )
 from trajviz.tool_vocab import parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
+from ..step_errors import step_error_kind
 
 
 def _add_token_bar_traces(
@@ -174,8 +175,8 @@ def build_duration_chart(
 ) -> go.Figure:
     """Bar chart of step durations with average line.
 
-    Error steps are highlighted in red; all others use a uniform blue.
-    Optional context compression markers.
+    System errors (scaffold tools) and tool errors (agentic/custom) are
+    separate legend series. Optional context compression markers.
     """
     if not steps:
         fig = _empty_figure(380)
@@ -189,45 +190,68 @@ def build_duration_chart(
     real_durations = [s["duration"] for s in steps if s["duration"] is not None]
     avg_d = sum(real_durations) / len(real_durations) if real_durations else 0
 
-    # Split into normal and error traces for legend
-    normal_x = [i for i, s in enumerate(steps) if s["error_count"] == 0]
+    kinds = [step_error_kind(s) for s in steps]
+    step_ids = [int(s.get("index", i)) for i, s in enumerate(steps)]
+    normal_x = [i for i, k in enumerate(kinds) if k is None]
     normal_y = [durations[i] for i in normal_x]
-    error_x = [i for i, s in enumerate(steps) if s["error_count"] > 0]
-    error_y = [durations[i] for i in error_x]
+    system_x = [i for i, k in enumerate(kinds) if k == "system"]
+    system_y = [durations[i] for i in system_x]
+    tool_x = [i for i, k in enumerate(kinds) if k == "tool"]
+    tool_y = [durations[i] for i in tool_x]
 
     # Detect outliers — will be added as scatter labels per legend group
     outlier_set = {idx for idx, _, _ in _detect_outliers(durations)}
 
-    bar_width = 0.8  # consistent width for both traces
+    bar_width = 0.8
 
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=normal_x,
             y=normal_y,
+            customdata=[step_ids[i] for i in normal_x],
             name="Normal",
             legendgroup="Normal",
             marker_color="#3b82f6",
             width=bar_width,
-            hovertemplate="Step %{x}<br>%{y:.1f}s<extra></extra>",
+            hovertemplate="Step %{customdata}<br>%{y:.1f}s<extra></extra>",
         )
     )
-    if error_x:
+    if system_x:
         fig.add_trace(
             go.Bar(
-                x=error_x,
-                y=error_y,
-                name="Error",
-                legendgroup="Error",
-                marker_color=ROLE_COLORS["error"],
+                x=system_x,
+                y=system_y,
+                customdata=[step_ids[i] for i in system_x],
+                name="System Error",
+                legendgroup="System Error",
+                marker_color=DURATION_ERROR_COLORS["system"],
                 width=bar_width,
-                hovertemplate="Step %{x}<br>%{y:.1f}s (error)<extra></extra>",
+                hovertemplate="Step %{customdata}<br>%{y:.1f}s (system error)<extra></extra>",
+            )
+        )
+    if tool_x:
+        fig.add_trace(
+            go.Bar(
+                x=tool_x,
+                y=tool_y,
+                customdata=[step_ids[i] for i in tool_x],
+                name="Tool Error",
+                legendgroup="Tool Error",
+                marker_color=DURATION_ERROR_COLORS["tool"],
+                width=bar_width,
+                hovertemplate="Step %{customdata}<br>%{y:.1f}s (tool error)<extra></extra>",
             )
         )
 
     # Spike labels as scatter traces — grouped with their bar trace so they
     # show/hide together when the legend is toggled.
-    for group, gx, gy in [("Normal", normal_x, normal_y), ("Error", error_x, error_y)]:
+    series = [
+        ("Normal", normal_x, normal_y),
+        ("System Error", system_x, system_y),
+        ("Tool Error", tool_x, tool_y),
+    ]
+    for group, gx, gy in series:
         spike_x = [gx[j] for j in range(len(gx)) if gx[j] in outlier_set]
         spike_y = [gy[j] for j in range(len(gx)) if gx[j] in outlier_set]
         spike_text = [f"{v:.1f}s" for v in spike_y]
@@ -265,7 +289,7 @@ def build_duration_chart(
         barmode="overlay",
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5, itemclick="toggleothers"),
     )
-    fig.update_layout(margin=dict(t=70))  # extra top margin for spike labels
+    fig.update_layout(margin=dict(t=70), clickmode="event")
     fig.update_xaxes(range=[-0.5, len(steps) - 0.5])
 
     # Context compression markers (red vertical lines)
