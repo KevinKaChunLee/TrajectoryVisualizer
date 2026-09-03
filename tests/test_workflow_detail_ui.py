@@ -216,24 +216,23 @@ class WorkflowDetailUiTests(unittest.TestCase):
 
         system = self._metric_step(
             index=5,
-            finish="error",
+            tool_calls=[{
+                "tool_name": "Grep",
+                "status": "error",
+                "metadata": {},
+            }],
+            error_count=1,
+            text_preview="pattern failed",
+        )
+        tool = self._metric_step(
+            index=6,
             tool_calls=[{
                 "tool_name": "Bash",
                 "status": "error",
                 "metadata": {},
             }],
             error_count=1,
-            text_preview="command not found",
-        )
-        tool = self._metric_step(
-            index=6,
-            tool_calls=[{
-                "tool_name": "skill",
-                "status": "error",
-                "metadata": {},
-            }],
-            error_count=1,
-            text_preview="skill failed",
+            text_preview="script failed",
         )
         bg_s, border_s, label_s = _card_style(system)
         bg_t, border_t, label_t = _card_style(tool)

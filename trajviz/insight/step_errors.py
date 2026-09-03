@@ -25,12 +25,12 @@ def is_system_tool_name(name: object) -> bool:
 def step_error_kind(step: dict) -> str | None:
     """Return ``\"system\"``, ``\"tool\"``, or ``None`` for a step.
 
-    System errors (amber): failures of scaffold primitives (Bash, Grep, Read,
-    Write, …) or a provider abort with ``finish == \"error\"``.
+    System errors (amber): failures of scaffold primitives (Grep, Read, Write,
+    …) or a provider abort with ``finish == \"error\"``.
 
-    Tool errors (red): failures of agentic / workflow-defined tools (Skill,
-    Task, MCP, custom). When a step has both, tool wins so workflow failures
-    stay visible.
+    Tool errors (red): failures of Bash (user scripts), Skill, Task, MCP, and
+    other agentic / workflow-defined tools. When a step has both, tool wins so
+    workflow failures stay visible.
     """
     failed = [tc for tc in step.get("tool_calls") or [] if tool_call_failed(tc)]
     if failed:

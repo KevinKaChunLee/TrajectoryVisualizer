@@ -32,13 +32,10 @@ def _step(
 
 class DurationErrorKindTests(unittest.TestCase):
     def test_shared_helper_matches_chart_alias(self):
-        step = _step(tool_calls=[_tc("Bash")])
+        step = _step(tool_calls=[_tc("Grep")])
         self.assertEqual(step_error_kind(step), _duration_error_kind(step))
-    def test_bash_grep_failures_are_system(self):
-        self.assertEqual(
-            _duration_error_kind(_step(tool_calls=[_tc("Bash")])),
-            "system",
-        )
+
+    def test_scaffold_search_and_read_failures_are_system(self):
         self.assertEqual(
             _duration_error_kind(_step(tool_calls=[_tc("Grep")])),
             "system",
@@ -46,6 +43,20 @@ class DurationErrorKindTests(unittest.TestCase):
         self.assertEqual(
             _duration_error_kind(_step(tool_calls=[_tc("Read")])),
             "system",
+        )
+
+    def test_bash_failures_are_tool(self):
+        self.assertEqual(
+            _duration_error_kind(_step(tool_calls=[_tc("Bash")])),
+            "tool",
+        )
+        self.assertEqual(
+            _duration_error_kind(_step(tool_calls=[_tc("bash")])),
+            "tool",
+        )
+        self.assertEqual(
+            _duration_error_kind(_step(tool_calls=[_tc("BashCommand")])),
+            "tool",
         )
 
     def test_agentic_workflow_failures_are_tool(self):
@@ -69,7 +80,7 @@ class DurationErrorKindTests(unittest.TestCase):
     def test_mixed_failures_prefer_tool(self):
         self.assertEqual(
             _duration_error_kind(
-                _step(tool_calls=[_tc("Bash"), _tc("skill")]),
+                _step(tool_calls=[_tc("Grep"), _tc("skill")]),
             ),
             "tool",
         )
@@ -82,7 +93,7 @@ class DurationErrorKindTests(unittest.TestCase):
 
     def test_normal_when_neither(self):
         self.assertIsNone(
-            _duration_error_kind(_step(finish="stop", tool_calls=[_tc("Bash", status="success")])),
+            _duration_error_kind(_step(finish="stop", tool_calls=[_tc("Grep", status="success")])),
         )
 
 
@@ -90,8 +101,8 @@ class DurationChartSeriesTests(unittest.TestCase):
     def test_splits_system_and_tool_into_separate_traces(self):
         steps = [
             _step(duration=1.0),
-            _step(duration=2.0, tool_calls=[_tc("Bash")]),
-            _step(duration=3.0, tool_calls=[_tc("skill")]),
+            _step(duration=2.0, tool_calls=[_tc("Grep")]),
+            _step(duration=3.0, tool_calls=[_tc("Bash")]),
         ]
         fig = build_duration_chart(steps)
         names = [t.name for t in fig.data if getattr(t, "name", None)]
@@ -117,7 +128,7 @@ class DurationChartSeriesTests(unittest.TestCase):
         self.assertTrue((fig.layout.meta or {}).get("tv_jump_workflow"))
 
     def test_omits_empty_error_series(self):
-        fig = build_duration_chart([_step(duration=1.0, tool_calls=[_tc("Bash")])])
+        fig = build_duration_chart([_step(duration=1.0, tool_calls=[_tc("Grep")])])
         names = [t.name for t in fig.data if getattr(t, "name", None)]
         self.assertEqual(names, ["Normal", "System Error"])
 
