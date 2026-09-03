@@ -13,7 +13,7 @@ HELP_TEXT: dict[str, str] = {
     # Section subtitles
     "section_performance": "Token consumption, step timing, and overall resource usage patterns.",
     "section_context_utilization": "How loaded tokens break down. Empty categories are omitted. Window limit defaults to 256k (or the inferred model size) and can be changed. Select one agent to inspect the window before a compaction. Harness system definitions (not included in log) is billed overhead this export did not record.",
-    "section_tools": "Tool usage frequency, Skill-tool calls by agent, outcome timeline, and behavioral diagnostics.",
+    "section_tools": "Tool usage frequency, Skill-tool calls by agent, outcome timeline (by agent when multi-agent), and behavioral diagnostics.",
     "section_agents": "Multi-agent breakdown, spawning relationships, and per-agent performance.",
     "section_diagnostics": "File targeting, errors, and root-cause attribution. The file timeline legend maps marker shape: circle = read, square = write, triangle = search, star = skill.",
 }
