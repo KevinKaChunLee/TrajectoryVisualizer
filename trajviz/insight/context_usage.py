@@ -513,7 +513,15 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
                 int(host.get("index", 0)),
             )
             host_idx = int(host.get("index", host_pos))
-            events.append(_event(host, "tool_prune", agent_id, position=host_pos))
+            prune_event = _event(host, "tool_prune", agent_id, position=host_pos)
+            # A prune that does not reduce occupancy (dropped == 0) means
+            # either the prune happened after the last logged step so we
+            # cannot observe its effect, or the next turn's input grew
+            # enough to mask it.  In both cases the event is noise.
+            # dropped is None when before/after are unavailable — keep those.
+            if prune_event.get("dropped") == 0:
+                continue
+            events.append(prune_event)
             explicit_steps.add(host_idx)
 
     occ_seq: dict[str, list[tuple[int, int, dict]]] = defaultdict(list)
@@ -529,6 +537,15 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
 
     explicit_at = {(e["agent"], e["step"]) for e in events}
     for agent_id, points in occ_seq.items():
+        # Without cache_read, occupancy equals per-turn fresh input, not
+        # cumulative context-window size.  Input naturally swings between
+        # turns (a large tool output followed by a short reply), so an
+        # occupancy drop is just normal variance, not compaction.
+        if not any(
+            step_context_occupancy(step)["cache_read"] > 0
+            for _idx, _occ, step in points
+        ):
+            continue
         for i in range(1, len(points)):
             prev_idx, prev_occ, prev_step = points[i - 1]
             idx, occ, step = points[i]

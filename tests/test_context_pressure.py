@@ -227,7 +227,21 @@ class CompactionDetectionTests(unittest.TestCase):
         self.assertEqual(len(prunes), 1)
         self.assertEqual(prunes[0]["step"], 2)
 
-    def test_no_occupancy_drop_immediately_after_summary(self):
+    def test_prune_after_last_step_with_no_drop_is_filtered(self):
+        """A prune whose timestamp falls after the last logged step produces
+        dropped=0 (we cannot observe its effect).  This is noise, not a
+        compaction event."""
+        steps = [
+            _step(0, session_id="s", tokens=_tokens(total=8_000, inp=8_000),
+                  tool_calls=[{"tool_name": "read", "time_compacted": 9_000}]),
+            _step(1, session_id="s", tokens=_tokens(total=8_500, inp=8_500)),
+            _step(2, session_id="s", tokens=_tokens(total=8_700, inp=8_700)),
+        ]
+        steps[0]["time_created_ms"] = 1_000
+        steps[1]["time_created_ms"] = 2_000
+        steps[2]["time_created_ms"] = 3_000
+        prunes = [e for e in detect_compaction_events(steps) if e["kind"] == "tool_prune"]
+        self.assertEqual(len(prunes), 0)
         sid = "ses"
         steps = [
             _step(0, session_id=sid, tokens=_tokens(total=10_000, inp=10_000)),
@@ -244,8 +258,8 @@ class CompactionDetectionTests(unittest.TestCase):
 
     def test_occupancy_drop_same_agent(self):
         steps = [
-            _step(0, tokens=_tokens(total=10_000, inp=10_000)),
-            _step(1, tokens=_tokens(total=2_000, inp=2_000)),
+            _step(0, tokens=_tokens(total=10_000, inp=10_000, cache_read=8_000)),
+            _step(1, tokens=_tokens(total=2_000, inp=2_000, cache_read=1_000)),
         ]
         events = detect_compaction_events(steps)
         drops = [e for e in events if e["kind"] == "occupancy_drop"]
@@ -257,9 +271,24 @@ class CompactionDetectionTests(unittest.TestCase):
 
     def test_one_step_occupancy_dip_that_recovers_is_not_compaction(self):
         steps = [
-            _step(0, tokens=_tokens(total=10_000, inp=10_000)),
-            _step(1, tokens=_tokens(total=6_000, inp=6_000)),
-            _step(2, tokens=_tokens(total=9_500, inp=9_500)),
+            _step(0, tokens=_tokens(total=10_000, inp=10_000, cache_read=8_000)),
+            _step(1, tokens=_tokens(total=6_000, inp=6_000, cache_read=4_000)),
+            _step(2, tokens=_tokens(total=9_500, inp=9_500, cache_read=7_500)),
+        ]
+        events = detect_compaction_events(steps)
+        self.assertFalse(any(e["kind"] == "occupancy_drop" for e in events))
+
+    def test_no_occupancy_drop_without_cache_read(self):
+        """OpenCode without cache reports per-turn fresh input, not cumulative
+        context.  Input naturally swings between turns (large tool output then
+        a short reply), so occupancy_drop must not fire."""
+        steps = [
+            _step(0, tokens=_tokens(total=9949, inp=9870)),
+            _step(1, tokens=_tokens(total=256, inp=229)),
+            _step(2, tokens=_tokens(total=3767, inp=3796)),
+            _step(3, tokens=_tokens(total=288, inp=183)),
+            _step(4, tokens=_tokens(total=12944, inp=13001)),
+            _step(5, tokens=_tokens(total=241, inp=262)),
         ]
         events = detect_compaction_events(steps)
         self.assertFalse(any(e["kind"] == "occupancy_drop" for e in events))
@@ -438,17 +467,17 @@ class ChartBuilderTests(unittest.TestCase):
     def test_overlay_uses_distinct_colors_and_per_agent_compaction(self):
         steps = [
             _step(0, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=10_000, inp=10_000)),
+                  tokens=_tokens(total=10_000, inp=10_000, cache_read=8_000)),
             _step(1, agent="explore", session_id="ses_a",
-                  tokens=_tokens(total=4_000, inp=4_000)),
+                  tokens=_tokens(total=4_000, inp=4_000, cache_read=3_000)),
             _step(2, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=2_000, inp=2_000)),
+                  tokens=_tokens(total=2_000, inp=2_000, cache_read=1_000)),
             _step(3, agent="plan", session_id="ses_plan",
-                  tokens=_tokens(total=2_100, inp=2_100)),
+                  tokens=_tokens(total=2_100, inp=2_100, cache_read=1_100)),
             _step(4, role="user", agent="explore", session_id="ses_a",
                   parts=[{"type": "compaction", "summary": "prior work"}]),
             _step(5, agent="explore", session_id="ses_a", summary=True,
-                  tokens=_tokens(total=800, inp=800)),
+                  tokens=_tokens(total=800, inp=800, cache_read=600)),
         ]
         fig = build_context_pressure_chart(steps, agent_key=PRESSURE_ALL_AGENTS)
         occupancy_colors = [
