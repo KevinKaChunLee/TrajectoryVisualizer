@@ -82,3 +82,13 @@ SPAWN_TOOL_NAMES: frozenset[str] = frozenset({
     "subagent", "subagent_fork",
     "spawn_agent",
 })
+
+# Scaffold/harness primitives (shell, search, file I/O). Failures of these are
+# "system" errors on the Step Duration chart; Skill/Task/MCP/custom tools are not.
+SYSTEM_TOOL_NAMES: frozenset[str] = frozenset({
+    "Bash", "bash", "BashCommand",
+    "Grep", "grep", "Glob", "glob", "find",
+    "Read", "read",
+    "WebFetch", "WebSearch", "ToolSearch",
+    "LS", "ls", "ListDir", "list_dir",
+}) | WRITE_TOOL_NAMES

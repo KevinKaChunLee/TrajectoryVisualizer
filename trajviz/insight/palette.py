@@ -45,6 +45,12 @@ ROLE_COLORS = {
     "default": "#6b7280",     # grey
 }
 
+# Step Duration chart: scaffold primitives vs agentic/custom tool failures.
+DURATION_ERROR_COLORS = {
+    "system": "#d97706",  # amber — Bash / Grep / Read / Write / …
+    "tool": "#dc2626",    # red — Skill / Task / MCP / workflow tools
+}
+
 # Tool outcome colors.
 TOOL_OUTCOME_COLORS = {
     "success": "#059669",     # green

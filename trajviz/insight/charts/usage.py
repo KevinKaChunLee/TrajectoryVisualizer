@@ -13,12 +13,14 @@ from ..parser import infer_non_cache_input
 from ..palette import (
     AGENT_COLORS,
     CHART_ACCENT,
-    ROLE_COLORS,
+    DURATION_ERROR_COLORS,
     SESSION_COLORS,
     TOKEN_COLORS,
 )
-from trajviz.tool_vocab import parse_skill_name
+from trajviz.tool_vocab import SYSTEM_TOOL_NAMES, parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
+
+_FAILURE_STATUSES = frozenset({"error", "failed", "failure", "cancelled", "timeout"})
 
 
 def _add_token_bar_traces(
@@ -166,6 +168,46 @@ def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | No
     return fig
 
 
+def _tool_call_failed(tc: dict) -> bool:
+    """True when a tool call clearly failed (status or non-zero exit)."""
+    status = str(tc.get("status") or "").lower()
+    if status in _FAILURE_STATUSES:
+        return True
+    meta = tc.get("metadata")
+    if isinstance(meta, dict) and meta.get("exit") not in (None, 0):
+        return True
+    return bool(tc.get("error") or tc.get("error_type"))
+
+
+def _is_system_tool_name(name: object) -> bool:
+    return isinstance(name, str) and name in SYSTEM_TOOL_NAMES
+
+
+def _duration_error_kind(step: dict) -> str | None:
+    """Classify a step for the duration chart legend.
+
+    System errors (amber): failures of scaffold primitives (Bash, Grep, Read,
+    Write, …) or a provider abort with ``finish == "error"``.
+
+    Tool errors (red): failures of agentic / workflow-defined tools (Skill,
+    Task, MCP, custom). When a step has both, tool wins so workflow failures
+    stay visible.
+    """
+    failed = [tc for tc in step.get("tool_calls") or [] if _tool_call_failed(tc)]
+    if failed:
+        if any(not _is_system_tool_name(tc.get("tool_name")) for tc in failed):
+            return "tool"
+        return "system"
+
+    finish = step.get("finish") or ""
+    if isinstance(finish, str) and finish.strip().lower() == "error":
+        return "system"
+    # Fallback when tool_calls were not attached but the step was flagged.
+    if (step.get("error_count") or 0) > 0:
+        return "tool"
+    return None
+
+
 def build_duration_chart(
     steps: list[dict],
     phases: list[dict] | None = None,
@@ -174,8 +216,8 @@ def build_duration_chart(
 ) -> go.Figure:
     """Bar chart of step durations with average line.
 
-    Error steps are highlighted in red; all others use a uniform blue.
-    Optional context compression markers.
+    System errors (scaffold tools) and tool errors (agentic/custom) are
+    separate legend series. Optional context compression markers.
     """
     if not steps:
         fig = _empty_figure(380)
@@ -189,11 +231,13 @@ def build_duration_chart(
     real_durations = [s["duration"] for s in steps if s["duration"] is not None]
     avg_d = sum(real_durations) / len(real_durations) if real_durations else 0
 
-    # Split into normal and error traces for legend
-    normal_x = [i for i, s in enumerate(steps) if s["error_count"] == 0]
+    kinds = [_duration_error_kind(s) for s in steps]
+    normal_x = [i for i, k in enumerate(kinds) if k is None]
     normal_y = [durations[i] for i in normal_x]
-    error_x = [i for i, s in enumerate(steps) if s["error_count"] > 0]
-    error_y = [durations[i] for i in error_x]
+    system_x = [i for i, k in enumerate(kinds) if k == "system"]
+    system_y = [durations[i] for i in system_x]
+    tool_x = [i for i, k in enumerate(kinds) if k == "tool"]
+    tool_y = [durations[i] for i in tool_x]
 
     # Detect outliers — will be added as scatter labels per legend group
     outlier_set = {idx for idx, _, _ in _detect_outliers(durations)}
@@ -212,22 +256,39 @@ def build_duration_chart(
             hovertemplate="Step %{x}<br>%{y:.1f}s<extra></extra>",
         )
     )
-    if error_x:
+    if system_x:
         fig.add_trace(
             go.Bar(
-                x=error_x,
-                y=error_y,
-                name="Error",
-                legendgroup="Error",
-                marker_color=ROLE_COLORS["error"],
+                x=system_x,
+                y=system_y,
+                name="System Error",
+                legendgroup="System Error",
+                marker_color=DURATION_ERROR_COLORS["system"],
                 width=bar_width,
-                hovertemplate="Step %{x}<br>%{y:.1f}s (error)<extra></extra>",
+                hovertemplate="Step %{x}<br>%{y:.1f}s (system error)<extra></extra>",
+            )
+        )
+    if tool_x:
+        fig.add_trace(
+            go.Bar(
+                x=tool_x,
+                y=tool_y,
+                name="Tool Error",
+                legendgroup="Tool Error",
+                marker_color=DURATION_ERROR_COLORS["tool"],
+                width=bar_width,
+                hovertemplate="Step %{x}<br>%{y:.1f}s (tool error)<extra></extra>",
             )
         )
 
     # Spike labels as scatter traces — grouped with their bar trace so they
     # show/hide together when the legend is toggled.
-    for group, gx, gy in [("Normal", normal_x, normal_y), ("Error", error_x, error_y)]:
+    series = [
+        ("Normal", normal_x, normal_y),
+        ("System Error", system_x, system_y),
+        ("Tool Error", tool_x, tool_y),
+    ]
+    for group, gx, gy in series:
         spike_x = [gx[j] for j in range(len(gx)) if gx[j] in outlier_set]
         spike_y = [gy[j] for j in range(len(gx)) if gx[j] in outlier_set]
         spike_text = [f"{v:.1f}s" for v in spike_y]
