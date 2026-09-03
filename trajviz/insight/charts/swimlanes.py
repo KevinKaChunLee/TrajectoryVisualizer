@@ -209,61 +209,125 @@ def build_run_group_agent_timeline(
 
 
 def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Figure:
-    """Scatter plot showing tool call outcomes (success/failure) across steps."""
+    """Scatter plot of tool call outcomes across steps.
+
+    With multiple agents, markers are colored by agent and shaped by outcome
+    (circle = success, x = failure), matching the file-timeline-by-agent pattern.
+    With a single agent, color encodes outcome instead.
+    """
     if not steps:
         fig = _empty_figure(340)
         _apply_dark(fig, dark)
         return fig
 
-    success_x, success_y = [], []
-    failure_x, failure_y = [], []
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
 
+    # (step_idx, tool_name, agent_id, ok)
+    points: list[tuple[int, str, str, bool]] = []
     for s in steps:
-        for tc in s["tool_calls"]:
+        if not isinstance(s, dict):
+            continue
+        idx = s.get("index")
+        if idx is None:
+            continue
+        agent = agent_id_of(s)
+        for tc in s.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
             tool_name = tc.get("tool_name") or "(unnamed)"
             if len(tool_name) > 30:
                 tool_name = tool_name[:27] + "..."
-            has_error = tc.get("error") or tc.get("status") == "error"
-            if has_error:
-                failure_x.append(s["index"])
-                failure_y.append(tool_name)
-            else:
-                success_x.append(s["index"])
-                success_y.append(tool_name)
+            ok = not (tc.get("error") or tc.get("status") == "error")
+            points.append((int(idx), tool_name, agent, ok))
 
-    if not success_x and not failure_x:
+    if not points:
         fig = _empty_figure(340, "No tool calls recorded in this trajectory.")
         _apply_dark(fig, dark)
         return fig
 
+    has_agents = len(color_map) > 1
     fig = go.Figure()
-    if success_x:
-        fig.add_trace(
-            go.Scatter(
-                x=success_x,
-                y=success_y,
-                mode="markers",
-                name="Success",
-                marker=dict(color=TOOL_OUTCOME_COLORS["success"], size=8, symbol="circle"),
-                hovertemplate="Step %{x}<br>%{y}<br>Success<extra></extra>",
-            )
-        )
-    if failure_x:
-        fig.add_trace(
-            go.Scatter(
-                x=failure_x,
-                y=failure_y,
-                mode="markers",
-                name="Failure",
-                marker=dict(color=TOOL_OUTCOME_COLORS["failure"], size=8, symbol="x"),
-                hovertemplate="Step %{x}<br>%{y}<br>Failure<extra></extra>",
-            )
-        )
 
-    all_tools = sorted(set(success_y + failure_y))
+    if has_agents:
+        agent_order = sorted(color_map.keys(), key=lambda a: color_map[a])
+        seen = set(agent_order)
+        for _idx, _name, aid, _ok in points:
+            if aid not in seen:
+                seen.add(aid)
+                agent_order.append(aid)
+
+        for i, agent_id in enumerate(agent_order):
+            group = [p for p in points if p[2] == agent_id]
+            if not group:
+                continue
+            color_idx = color_map.get(agent_id, len(color_map) + i)
+            color = SESSION_COLORS[color_idx % len(SESSION_COLORS)]
+            label = _legend_label(agent_id, labels)
+            fig.add_trace(
+                go.Scatter(
+                    x=[p[0] for p in group],
+                    y=[p[1] for p in group],
+                    mode="markers",
+                    name=label,
+                    marker=dict(
+                        color=color,
+                        size=8,
+                        symbol=["circle" if p[3] else "x" for p in group],
+                    ),
+                    customdata=["Success" if p[3] else "Failure" for p in group],
+                    hovertemplate=(
+                        f"{label}<br>Step %{{x}}<br>%{{y}}<br>%{{customdata}}<extra></extra>"
+                    ),
+                )
+            )
+        for name, color, symbol in (
+            ("Success (circle)", TOOL_OUTCOME_COLORS["success"], "circle"),
+            ("Failure (x)", TOOL_OUTCOME_COLORS["failure"], "x"),
+        ):
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="markers",
+                    name=name,
+                    marker=dict(color=color, size=10, symbol=symbol),
+                    hoverinfo="skip",
+                    legendgroup="outcome-shape",
+                    legendrank=2000,
+                )
+            )
+        title = "Tool Outcome Timeline by Agent"
+    else:
+        success = [p for p in points if p[3]]
+        failure = [p for p in points if not p[3]]
+        if success:
+            fig.add_trace(
+                go.Scatter(
+                    x=[p[0] for p in success],
+                    y=[p[1] for p in success],
+                    mode="markers",
+                    name="Success",
+                    marker=dict(color=TOOL_OUTCOME_COLORS["success"], size=8, symbol="circle"),
+                    hovertemplate="Step %{x}<br>%{y}<br>Success<extra></extra>",
+                )
+            )
+        if failure:
+            fig.add_trace(
+                go.Scatter(
+                    x=[p[0] for p in failure],
+                    y=[p[1] for p in failure],
+                    mode="markers",
+                    name="Failure",
+                    marker=dict(color=TOOL_OUTCOME_COLORS["failure"], size=8, symbol="x"),
+                    hovertemplate="Step %{x}<br>%{y}<br>Failure<extra></extra>",
+                )
+            )
+        title = "Tool Outcome Timeline"
+
+    all_tools = sorted({p[1] for p in points})
     _apply_chart_layout(
         fig,
-        "Tool Outcome Timeline",
+        title,
         xaxis="Step",
         height=max(300, 30 * len(all_tools)),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
