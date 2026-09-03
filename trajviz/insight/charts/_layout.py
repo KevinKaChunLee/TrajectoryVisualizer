@@ -72,3 +72,27 @@ def _add_legend_hint(fig: go.Figure) -> None:
         font=dict(size=9, color="#9ca3af"),
         xanchor="right",
     )
+
+
+def _add_dummy_marker_legend(
+    fig: go.Figure,
+    entries: list[tuple[str, str, str]],
+    *,
+    legendgroup: str,
+    legendrank: int = 2000,
+    size: int = 10,
+) -> None:
+    """Add non-data legend rows ``(name, color, symbol)`` for shape keys."""
+    for name, color, symbol in entries:
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                name=name,
+                marker=dict(color=color, size=size, symbol=symbol),
+                hoverinfo="skip",
+                legendgroup=legendgroup,
+                legendrank=legendrank,
+            )
+        )

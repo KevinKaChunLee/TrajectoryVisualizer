@@ -25,13 +25,6 @@ def _step(index: int, *, agent: str = "", tools: list[tuple[str, str]] | None = 
     }
 
 
-def _symbols(trace) -> list:
-    sym = trace.marker.symbol
-    if isinstance(sym, (list, tuple)):
-        return list(sym)
-    return [sym]
-
-
 class ToolOutcomeTimelineTests(unittest.TestCase):
     def test_single_agent_uses_outcome_colors(self):
         fig = build_tool_outcome_timeline([
@@ -55,12 +48,29 @@ class ToolOutcomeTimelineTests(unittest.TestCase):
             t for t in fig.data
             if t.name and t.name not in ("Success (circle)", "Failure (x)")
         ]
-        self.assertGreaterEqual(len(named), 2)
-        agent_colors = {t.marker.color for t in named}
-        self.assertTrue(agent_colors & set(SESSION_COLORS))
-        shape_names = [t.name for t in fig.data if t.name in ("Success (circle)", "Failure (x)")]
-        self.assertEqual(shape_names, ["Success (circle)", "Failure (x)"])
-        self.assertTrue(any("x" in _symbols(t) for t in named))
+        self.assertEqual({t.name for t in named}, {"main", "explore"})
+        self.assertEqual(
+            {t.marker.color for t in named},
+            {SESSION_COLORS[0], SESSION_COLORS[1]},
+        )
+        self.assertEqual(
+            [t.name for t in fig.data if t.name in ("Success (circle)", "Failure (x)")],
+            ["Success (circle)", "Failure (x)"],
+        )
+        explore = next(t for t in named if t.name == "explore")
+        symbols = list(explore.marker.symbol) if isinstance(explore.marker.symbol, (list, tuple)) else [explore.marker.symbol]
+        self.assertIn("x", symbols)
+
+    def test_only_agents_with_tools_count_as_multi(self):
+        # Second agent exists in the trajectory but has no tool calls.
+        steps = [
+            _step(0, tools=[("Read", "success"), ("Bash", "error")]),
+            _step(1, agent="explore", tools=[]),
+        ]
+        fig = build_tool_outcome_timeline(steps)
+        self.assertEqual(fig.layout.title.text, "Tool Outcome Timeline")
+        names = [t.name for t in fig.data]
+        self.assertEqual(names, ["Success", "Failure"])
 
     def test_empty_trajectory(self):
         fig = build_tool_outcome_timeline([])

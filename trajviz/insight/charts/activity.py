@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
+from ._layout import _add_dummy_marker_legend, _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
 from ..palette import CHART_ACCENT, SESSION_COLORS, TOKEN_COLORS
@@ -32,25 +32,16 @@ _FILE_INTERACTION_LEGEND = {
 
 def _add_shape_legend(fig: go.Figure, types_present: set[str]) -> None:
     """Legend entries that spell out marker shape (circle/square/triangle/star)."""
-    for itype, color in _FILE_INTERACTION_COLORS.items():
-        if itype not in types_present:
-            continue
-        fig.add_trace(
-            go.Scatter(
-                x=[None],
-                y=[None],
-                mode="markers",
-                name=_FILE_INTERACTION_LEGEND[itype],
-                marker=dict(
-                    color=color,
-                    size=12 if itype == "skill" else 10,
-                    symbol=_FILE_INTERACTION_SYMBOLS[itype],
-                ),
-                hoverinfo="skip",
-                legendgroup="shape",
-                legendrank=2000,
-            )
-        )
+    _add_dummy_marker_legend(
+        fig,
+        [
+            (_FILE_INTERACTION_LEGEND[itype], color, _FILE_INTERACTION_SYMBOLS[itype])
+            for itype, color in _FILE_INTERACTION_COLORS.items()
+            if itype in types_present
+        ],
+        legendgroup="shape",
+        size=10,
+    )
 
 
 _COMPACTION_KIND_LABEL = {

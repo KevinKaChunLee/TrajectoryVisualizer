@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from ._layout import _apply_chart_layout, _apply_dark, _empty_figure
+from ._layout import _add_dummy_marker_legend, _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
 from ..palette import SESSION_COLORS, TOOL_OUTCOME_COLORS
@@ -209,12 +209,7 @@ def build_run_group_agent_timeline(
 
 
 def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Figure:
-    """Scatter plot of tool call outcomes across steps.
-
-    With multiple agents, markers are colored by agent and shaped by outcome
-    (circle = success, x = failure), matching the file-timeline-by-agent pattern.
-    With a single agent, color encodes outcome instead.
-    """
+    """Scatter of tool outcomes: by agent (color) + success/fail (shape) when multi-agent."""
     if not steps:
         fig = _empty_figure(340)
         _apply_dark(fig, dark)
@@ -222,15 +217,14 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
 
     color_map, labels, agent_id_of = bind_timeline_agents(steps)
 
-    # (step_idx, tool_name, agent_id, ok)
-    points: list[tuple[int, str, str, bool]] = []
+    by_agent: dict[str, list[tuple[int, str, bool]]] = defaultdict(list)
+    tool_names: set[str] = set()
+    saw_ok = saw_fail = False
     for s in steps:
         if not isinstance(s, dict):
             continue
-        idx = s.get("index")
-        if idx is None:
-            continue
         agent = agent_id_of(s)
+        idx = int(s.get("index") if s.get("index") is not None else 0)
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
                 continue
@@ -238,30 +232,25 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
             if len(tool_name) > 30:
                 tool_name = tool_name[:27] + "..."
             ok = not (tc.get("error") or tc.get("status") == "error")
-            points.append((int(idx), tool_name, agent, ok))
+            by_agent[agent].append((idx, tool_name, ok))
+            tool_names.add(tool_name)
+            if ok:
+                saw_ok = True
+            else:
+                saw_fail = True
 
-    if not points:
+    if not by_agent:
         fig = _empty_figure(340, "No tool calls recorded in this trajectory.")
         _apply_dark(fig, dark)
         return fig
 
-    has_agents = len(color_map) > 1
+    has_agents = len(by_agent) > 1
     fig = go.Figure()
 
     if has_agents:
-        agent_order = sorted(color_map.keys(), key=lambda a: color_map[a])
-        seen = set(agent_order)
-        for _idx, _name, aid, _ok in points:
-            if aid not in seen:
-                seen.add(aid)
-                agent_order.append(aid)
-
-        for i, agent_id in enumerate(agent_order):
-            group = [p for p in points if p[2] == agent_id]
-            if not group:
-                continue
-            color_idx = color_map.get(agent_id, len(color_map) + i)
-            color = SESSION_COLORS[color_idx % len(SESSION_COLORS)]
+        for agent_id in sorted(by_agent.keys(), key=lambda a: color_map.get(a, 10**9)):
+            group = by_agent[agent_id]
+            color = SESSION_COLORS[color_map.get(agent_id, 0) % len(SESSION_COLORS)]
             label = _legend_label(agent_id, labels)
             fig.add_trace(
                 go.Scatter(
@@ -272,64 +261,51 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
                     marker=dict(
                         color=color,
                         size=8,
-                        symbol=["circle" if p[3] else "x" for p in group],
+                        symbol=["circle" if p[2] else "x" for p in group],
                     ),
-                    customdata=["Success" if p[3] else "Failure" for p in group],
+                    customdata=["Success" if p[2] else "Failure" for p in group],
                     hovertemplate=(
                         f"{label}<br>Step %{{x}}<br>%{{y}}<br>%{{customdata}}<extra></extra>"
                     ),
                 )
             )
-        for name, color, symbol in (
-            ("Success (circle)", TOOL_OUTCOME_COLORS["success"], "circle"),
-            ("Failure (x)", TOOL_OUTCOME_COLORS["failure"], "x"),
-        ):
-            fig.add_trace(
-                go.Scatter(
-                    x=[None],
-                    y=[None],
-                    mode="markers",
-                    name=name,
-                    marker=dict(color=color, size=10, symbol=symbol),
-                    hoverinfo="skip",
-                    legendgroup="outcome-shape",
-                    legendrank=2000,
-                )
+        shape_entries = []
+        if saw_ok:
+            shape_entries.append(
+                ("Success (circle)", TOOL_OUTCOME_COLORS["success"], "circle")
             )
+        if saw_fail:
+            shape_entries.append(
+                ("Failure (x)", TOOL_OUTCOME_COLORS["failure"], "x")
+            )
+        _add_dummy_marker_legend(fig, shape_entries, legendgroup="outcome-shape")
         title = "Tool Outcome Timeline by Agent"
     else:
-        success = [p for p in points if p[3]]
-        failure = [p for p in points if not p[3]]
-        if success:
+        group = next(iter(by_agent.values()))
+        for ok, name, color, symbol in (
+            (True, "Success", TOOL_OUTCOME_COLORS["success"], "circle"),
+            (False, "Failure", TOOL_OUTCOME_COLORS["failure"], "x"),
+        ):
+            subset = [p for p in group if p[2] is ok]
+            if not subset:
+                continue
             fig.add_trace(
                 go.Scatter(
-                    x=[p[0] for p in success],
-                    y=[p[1] for p in success],
+                    x=[p[0] for p in subset],
+                    y=[p[1] for p in subset],
                     mode="markers",
-                    name="Success",
-                    marker=dict(color=TOOL_OUTCOME_COLORS["success"], size=8, symbol="circle"),
-                    hovertemplate="Step %{x}<br>%{y}<br>Success<extra></extra>",
-                )
-            )
-        if failure:
-            fig.add_trace(
-                go.Scatter(
-                    x=[p[0] for p in failure],
-                    y=[p[1] for p in failure],
-                    mode="markers",
-                    name="Failure",
-                    marker=dict(color=TOOL_OUTCOME_COLORS["failure"], size=8, symbol="x"),
-                    hovertemplate="Step %{x}<br>%{y}<br>Failure<extra></extra>",
+                    name=name,
+                    marker=dict(color=color, size=8, symbol=symbol),
+                    hovertemplate=f"Step %{{x}}<br>%{{y}}<br>{name}<extra></extra>",
                 )
             )
         title = "Tool Outcome Timeline"
 
-    all_tools = sorted({p[1] for p in points})
     _apply_chart_layout(
         fig,
         title,
         xaxis="Step",
-        height=max(300, 30 * len(all_tools)),
+        height=max(300, 30 * len(tool_names)),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
     _apply_dark(fig, dark)
