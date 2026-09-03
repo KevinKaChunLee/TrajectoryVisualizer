@@ -111,7 +111,11 @@ def layout() -> OverviewRefs:
                     metrics_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
-                        duration_chart = gr.Plot(show_label=False, label="Step Duration")
+                        duration_chart = gr.Plot(
+                            show_label=False,
+                            label="Step Duration",
+                            elem_id="duration-chart",
+                        )
 
                 with gr.Column(visible=False) as efficiency_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_context_utilization'])}</div>")

@@ -50,6 +50,8 @@ APP_CSS = """
     --wf-border-assistant: #92400e;
     --wf-bg-error: #fee2e2;
     --wf-border-error: #dc2626;
+    --wf-bg-system-error: #ffedd5;
+    --wf-border-system-error: #d97706;
     --wf-bg-final: #d1fae5;
     --wf-border-final: #059669;
     --wf-bg-tool: #fef3c7;
@@ -926,6 +928,8 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
         --wf-border-assistant: #fbbf24;
         --wf-bg-error: rgba(220,38,38,0.12);
         --wf-border-error: #f87171;
+        --wf-bg-system-error: rgba(217,119,6,0.12);
+        --wf-border-system-error: #fbbf24;
         --wf-bg-final: rgba(5,150,105,0.12);
         --wf-border-final: #34d399;
         --wf-bg-tool: rgba(217,119,6,0.1);

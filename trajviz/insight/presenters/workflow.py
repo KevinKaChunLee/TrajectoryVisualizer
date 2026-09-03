@@ -12,6 +12,7 @@ from ..rendering import (
     render_workflow_html,
     workflow_role,
 )
+from ..step_errors import step_error_kind
 
 DETAIL_PLACEHOLDER = (
     "<div id='wf-detail-content'>"
@@ -47,7 +48,7 @@ def _workflow_step_labels(step: dict) -> set[str]:
         labels.add("Assistant")
     if step.get("tool_call_count", 0) > 0:
         labels.add("Tool Calls")
-    if step.get("error_count", 0) > 0:
+    if step_error_kind(step) is not None:
         labels.add("Errors")
     if step.get("has_reasoning"):
         labels.add("Reasoning")

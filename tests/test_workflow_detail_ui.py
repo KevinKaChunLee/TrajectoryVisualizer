@@ -27,12 +27,18 @@ class WorkflowDetailUiTests(unittest.TestCase):
         step.update(overrides)
         return step
 
-    def test_selecting_workflow_card_resets_detail_panel_scroll(self):
-        from trajviz.insight.ui import workflow_tab
+    def test_duration_chart_click_jumps_to_workflow(self):
+        from trajviz.insight import insight as insight_mod
+        import inspect
 
-        source = inspect.getsource(workflow_tab)
+        source = inspect.getsource(insight_mod.build_ui)
+        self.assertIn("tvBindDurationJump", source)
+        self.assertIn("plotly_click", source)
+        self.assertIn("tvGotoWorkflowStep", source)
+        self.assertIn('elem_id="duration-chart"', inspect.getsource(
+            __import__("trajviz.insight.ui.overview_tab", fromlist=["layout"]).layout
+        ))
 
-        self.assertIn("detailPanel.scrollTop = 0", source)
 
     def test_detail_tabs_stay_visible_inside_scrollable_detail_panel(self):
         styles = Path("trajviz/insight/styles.py").read_text()
@@ -204,6 +210,44 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("<td>Role</td>", detail)
         self.assertIn("Task", detail)
         self.assertNotIn(">User</span>", detail)
+
+    def test_system_error_cards_use_amber_not_red(self):
+        from trajviz.insight.rendering import _card_style, render_workflow_html
+
+        system = self._metric_step(
+            index=5,
+            finish="error",
+            tool_calls=[{
+                "tool_name": "Bash",
+                "status": "error",
+                "metadata": {},
+            }],
+            error_count=1,
+            text_preview="command not found",
+        )
+        tool = self._metric_step(
+            index=6,
+            tool_calls=[{
+                "tool_name": "skill",
+                "status": "error",
+                "metadata": {},
+            }],
+            error_count=1,
+            text_preview="skill failed",
+        )
+        bg_s, border_s, label_s = _card_style(system)
+        bg_t, border_t, label_t = _card_style(tool)
+        self.assertEqual(label_s, "System Error")
+        self.assertEqual(border_s, "var(--wf-border-system-error)")
+        self.assertEqual(bg_s, "var(--wf-bg-system-error)")
+        self.assertEqual(label_t, "Tool Error")
+        self.assertEqual(border_t, "var(--wf-border-error)")
+
+        html = render_workflow_html([system, tool])
+        self.assertIn("System Error", html)
+        self.assertIn("Tool Error", html)
+        self.assertIn("var(--wf-border-system-error)", html)
+        self.assertIn("var(--wf-bg-system-error)", html)
 
 
 if __name__ == "__main__":

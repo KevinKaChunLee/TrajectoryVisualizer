@@ -115,6 +115,19 @@ class WorkflowFilteringTests(unittest.TestCase):
             [0],
         )
 
+    def test_errors_feature_includes_provider_abort(self):
+        from trajviz.insight.presenters import filter_workflow_steps
+
+        steps = [
+            _step(0, role="assistant", text="ok"),
+            _step(1, role="assistant", text="api down"),
+        ]
+        steps[1]["finish"] = "error"
+        self.assertEqual(
+            filter_workflow_steps(steps, ["Assistant", "Errors"]),
+            [1],
+        )
+
     def test_features_are_combined_with_or_inside_selected_roles(self):
         from trajviz.insight.presenters import filter_workflow_steps
 

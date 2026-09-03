@@ -11,6 +11,7 @@ from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextL
 
 from .charts import bind_timeline_agents
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
+from .step_errors import step_error_kind
 from .styles import WORKFLOW_CSS
 
 
@@ -75,8 +76,15 @@ def _card_style(step: dict) -> tuple[str, str, str]:
     """
     stored = step.get("role", "")
     stored_s = stored if isinstance(stored, str) else str(stored or "")
-    if step["error_count"] > 0:
-        return "var(--wf-bg-error)", "var(--wf-border-error)", "Error"
+    err_kind = step_error_kind(step)
+    if err_kind == "tool":
+        return "var(--wf-bg-error)", "var(--wf-border-error)", "Tool Error"
+    if err_kind == "system":
+        return (
+            "var(--wf-bg-system-error)",
+            "var(--wf-border-system-error)",
+            "System Error",
+        )
     if step.get("finish") == "stop" or step.get("finish") == "end_turn":
         return "var(--wf-bg-final)", "var(--wf-border-final)", "Final"
     if step["tool_call_count"] > 0:
@@ -340,7 +348,18 @@ def render_workflow_html(steps: list[dict]) -> str:
         icon_str = " \u00b7 ".join(sorted(set(part_icons))) if part_icons else ""
 
         tc_info = f'<span>{step["tool_call_count"]} tool(s)</span>' if step["tool_call_count"] else ''
-        err_info = f'<span style="color:var(--wf-border-error)">{step["error_count"]} err</span>' if step["error_count"] else ''
+        err_kind = step_error_kind(step)
+        if err_kind == "tool":
+            err_info = (
+                f'<span style="color:var(--wf-border-error)">'
+                f'{step["error_count"]} tool err</span>'
+            )
+        elif err_kind == "system":
+            err_info = (
+                '<span style="color:var(--wf-border-system-error)">system err</span>'
+            )
+        else:
+            err_info = ''
 
         # Agent badge with per-agent color (same identity as swimlane / tool chart)
         agent_badge = ''

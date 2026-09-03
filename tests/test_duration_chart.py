@@ -6,6 +6,7 @@ import unittest
 
 from trajviz.insight.charts.usage import _duration_error_kind, build_duration_chart
 from trajviz.insight.palette import DURATION_ERROR_COLORS
+from trajviz.insight.step_errors import step_error_kind
 
 
 def _tc(name: str, *, status: str = "error", exit_code: int | None = None) -> dict:
@@ -30,6 +31,9 @@ def _step(
 
 
 class DurationErrorKindTests(unittest.TestCase):
+    def test_shared_helper_matches_chart_alias(self):
+        step = _step(tool_calls=[_tc("Bash")])
+        self.assertEqual(step_error_kind(step), _duration_error_kind(step))
     def test_bash_grep_failures_are_system(self):
         self.assertEqual(
             _duration_error_kind(_step(tool_calls=[_tc("Bash")])),
@@ -107,6 +111,10 @@ class DurationChartSeriesTests(unittest.TestCase):
         )
         self.assertEqual(DURATION_ERROR_COLORS["system"], "#d97706")
         self.assertEqual(DURATION_ERROR_COLORS["tool"], "#dc2626")
+        self.assertEqual(list(by_name["Normal"].customdata), [0])
+        self.assertEqual(list(by_name["System Error"].customdata), [1])
+        self.assertEqual(list(by_name["Tool Error"].customdata), [2])
+        self.assertTrue((fig.layout.meta or {}).get("tv_jump_workflow"))
 
     def test_omits_empty_error_series(self):
         fig = build_duration_chart([_step(duration=1.0, tool_calls=[_tc("Bash")])])

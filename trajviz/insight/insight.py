@@ -125,6 +125,55 @@ def build_ui() -> gr.Blocks:
                     window.addEventListener('resize', schedule);
                     [0, 80, 250, 600].forEach((ms) => setTimeout(window.tvExpandFileTimeline, ms));
                 }
+                if (!window.__tvDurationJumpBound) {
+                    window.__tvDurationJumpBound = true;
+                    window.tvGotoWorkflowStep = function (idx) {
+                        const tabs = document.querySelectorAll('button[role=tab]');
+                        for (let ti = 0; ti < tabs.length; ti++) {
+                            if (tabs[ti].textContent.trim() === 'Workflow') {
+                                tabs[ti].click();
+                                break;
+                            }
+                        }
+                        setTimeout(function () {
+                            const c = document.getElementById('wf-card-' + idx);
+                            if (c) {
+                                c.scrollIntoView({behavior: 'smooth', block: 'center'});
+                                c.click();
+                            }
+                        }, 200);
+                    };
+                    window.tvBindDurationJump = function () {
+                        const root = document.getElementById('duration-chart');
+                        if (!root) return;
+                        const plots = root.querySelectorAll('.js-plotly-plot');
+                        plots.forEach((gd) => {
+                            if (gd.__tvJumpBound || typeof gd.on !== 'function') return;
+                            gd.__tvJumpBound = true;
+                            gd.style.cursor = 'pointer';
+                            gd.on('plotly_click', function (data) {
+                                const pt = data && data.points && data.points[0];
+                                if (!pt) return;
+                                let idx = pt.customdata;
+                                if (Array.isArray(idx)) idx = idx[0];
+                                if (idx === undefined || idx === null) idx = pt.x;
+                                const n = Number(idx);
+                                if (!Number.isFinite(n)) return;
+                                window.tvGotoWorkflowStep(Math.trunc(n));
+                            });
+                        });
+                    };
+                    let jumpTimer = null;
+                    const scheduleJump = () => {
+                        if (jumpTimer) clearTimeout(jumpTimer);
+                        jumpTimer = setTimeout(window.tvBindDurationJump, 80);
+                    };
+                    new MutationObserver(scheduleJump).observe(document.documentElement, {
+                        childList: true,
+                        subtree: true,
+                    });
+                    [0, 100, 300, 700].forEach((ms) => setTimeout(window.tvBindDurationJump, ms));
+                }
                 return [false];
             }""",
         )

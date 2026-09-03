@@ -17,10 +17,9 @@ from ..palette import (
     SESSION_COLORS,
     TOKEN_COLORS,
 )
-from trajviz.tool_vocab import SYSTEM_TOOL_NAMES, parse_skill_name
+from trajviz.tool_vocab import parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
-
-_FAILURE_STATUSES = frozenset({"error", "failed", "failure", "cancelled", "timeout"})
+from ..step_errors import step_error_kind
 
 
 def _add_token_bar_traces(
@@ -168,44 +167,9 @@ def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | No
     return fig
 
 
-def _tool_call_failed(tc: dict) -> bool:
-    """True when a tool call clearly failed (status or non-zero exit)."""
-    status = str(tc.get("status") or "").lower()
-    if status in _FAILURE_STATUSES:
-        return True
-    meta = tc.get("metadata")
-    if isinstance(meta, dict) and meta.get("exit") not in (None, 0):
-        return True
-    return bool(tc.get("error") or tc.get("error_type"))
-
-
-def _is_system_tool_name(name: object) -> bool:
-    return isinstance(name, str) and name in SYSTEM_TOOL_NAMES
-
-
 def _duration_error_kind(step: dict) -> str | None:
-    """Classify a step for the duration chart legend.
-
-    System errors (amber): failures of scaffold primitives (Bash, Grep, Read,
-    Write, …) or a provider abort with ``finish == "error"``.
-
-    Tool errors (red): failures of agentic / workflow-defined tools (Skill,
-    Task, MCP, custom). When a step has both, tool wins so workflow failures
-    stay visible.
-    """
-    failed = [tc for tc in step.get("tool_calls") or [] if _tool_call_failed(tc)]
-    if failed:
-        if any(not _is_system_tool_name(tc.get("tool_name")) for tc in failed):
-            return "tool"
-        return "system"
-
-    finish = step.get("finish") or ""
-    if isinstance(finish, str) and finish.strip().lower() == "error":
-        return "system"
-    # Fallback when tool_calls were not attached but the step was flagged.
-    if (step.get("error_count") or 0) > 0:
-        return "tool"
-    return None
+    """Classify a step for the duration chart legend (see ``step_error_kind``)."""
+    return step_error_kind(step)
 
 
 def build_duration_chart(
@@ -239,6 +203,9 @@ def build_duration_chart(
     tool_x = [i for i, k in enumerate(kinds) if k == "tool"]
     tool_y = [durations[i] for i in tool_x]
 
+    def _step_ids(xs: list[int]) -> list[int]:
+        return [int(steps[i].get("index", i)) for i in xs]
+
     # Detect outliers — will be added as scatter labels per legend group
     outlier_set = {idx for idx, _, _ in _detect_outliers(durations)}
 
@@ -249,11 +216,12 @@ def build_duration_chart(
         go.Bar(
             x=normal_x,
             y=normal_y,
+            customdata=_step_ids(normal_x),
             name="Normal",
             legendgroup="Normal",
             marker_color="#3b82f6",
             width=bar_width,
-            hovertemplate="Step %{x}<br>%{y:.1f}s<extra></extra>",
+            hovertemplate="Step %{customdata}<br>%{y:.1f}s<extra></extra>",
         )
     )
     if system_x:
@@ -261,11 +229,12 @@ def build_duration_chart(
             go.Bar(
                 x=system_x,
                 y=system_y,
+                customdata=_step_ids(system_x),
                 name="System Error",
                 legendgroup="System Error",
                 marker_color=DURATION_ERROR_COLORS["system"],
                 width=bar_width,
-                hovertemplate="Step %{x}<br>%{y:.1f}s (system error)<extra></extra>",
+                hovertemplate="Step %{customdata}<br>%{y:.1f}s (system error)<extra></extra>",
             )
         )
     if tool_x:
@@ -273,11 +242,12 @@ def build_duration_chart(
             go.Bar(
                 x=tool_x,
                 y=tool_y,
+                customdata=_step_ids(tool_x),
                 name="Tool Error",
                 legendgroup="Tool Error",
                 marker_color=DURATION_ERROR_COLORS["tool"],
                 width=bar_width,
-                hovertemplate="Step %{x}<br>%{y:.1f}s (tool error)<extra></extra>",
+                hovertemplate="Step %{customdata}<br>%{y:.1f}s (tool error)<extra></extra>",
             )
         )
 
@@ -326,7 +296,11 @@ def build_duration_chart(
         barmode="overlay",
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5, itemclick="toggleothers"),
     )
-    fig.update_layout(margin=dict(t=70))  # extra top margin for spike labels
+    fig.update_layout(
+        margin=dict(t=70),  # extra top margin for spike labels
+        meta={"tv_jump_workflow": True},
+        clickmode="event",
+    )
     fig.update_xaxes(range=[-0.5, len(steps) - 0.5])
 
     # Context compression markers (red vertical lines)
