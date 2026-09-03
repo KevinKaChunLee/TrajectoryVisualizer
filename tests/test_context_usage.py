@@ -136,6 +136,45 @@ class BucketTests(unittest.TestCase):
         self.assertEqual(buckets["tool_outputs"], 0)
         self.assertEqual(buckets["conversation"], 0)
 
+    def test_mcp_call_claude_code_format(self):
+        steps = [
+            _step(1, tokens=_tokens(inp=200), tool_calls=[{
+                "tool_name": "mcp__github__list_issues",
+                "input": {"repo": "foo/bar"},
+                "output": _chars(30),
+            }]),
+        ]
+        buckets = context_usage_breakdown(steps)["buckets"]
+        self.assertGreater(buckets["mcp"], 0)
+        self.assertEqual(buckets["conversation"], 0)
+        self.assertEqual(buckets["tool_outputs"], 0)
+
+    def test_mcp_call_opencode_format(self):
+        steps = [
+            _step(1, tokens=_tokens(inp=200), tool_calls=[{
+                "tool_name": "kernel-test-runner_run_test",
+                "input": {"test_file": "test.py"},
+                "output": _chars(50),
+            }]),
+        ]
+        buckets = context_usage_breakdown(steps)["buckets"]
+        self.assertGreater(buckets["mcp"], 0)
+        self.assertEqual(buckets["conversation"], 0)
+        self.assertEqual(buckets["tool_outputs"], 0)
+
+    def test_non_mcp_tool_still_conversation(self):
+        steps = [
+            _step(1, tokens=_tokens(inp=200), tool_calls=[{
+                "tool_name": "bash",
+                "input": {"command": "ls -la"},
+                "output": _chars(20),
+            }]),
+        ]
+        buckets = context_usage_breakdown(steps)["buckets"]
+        self.assertEqual(buckets["mcp"], 0)
+        self.assertGreater(buckets["conversation"], 0)
+        self.assertEqual(buckets["tool_outputs"], 20)
+
     def test_spawn_input_is_subagents(self):
         self.assertIn("Task", SPAWN_TOOL_NAMES)
         prompt = _chars(30)

@@ -13,7 +13,7 @@ import html
 import json
 from typing import Any
 
-from trajviz.tool_vocab import SPAWN_TOOL_NAMES, parse_skill_name
+from trajviz.tool_vocab import SPAWN_TOOL_NAMES, is_mcp_tool, parse_skill_name
 
 from .metrics import effective_agent, tagged_subagent_display_label
 from .parser import infer_non_cache_input, spawned_child_session_id
@@ -967,6 +967,8 @@ def _accumulate_step(step: dict, buckets: dict[str, int], *, summarized_only: bo
         elif _is_spawn_call(tool_call):
             buckets["subagents"] += estimate_tokens(inp)
             buckets["tool_outputs"] += estimate_tokens(out)
+        elif is_mcp_tool(name):
+            buckets["mcp"] += estimate_tokens(inp) + estimate_tokens(out)
         else:
             buckets["conversation"] += estimate_tokens(inp)
             buckets["tool_outputs"] += estimate_tokens(out)

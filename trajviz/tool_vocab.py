@@ -93,3 +93,24 @@ SYSTEM_TOOL_NAMES: frozenset[str] = frozenset({
     "WebFetch", "WebSearch", "ToolSearch",
     "LS", "ls", "ListDir", "list_dir",
 }) | WRITE_TOOL_NAMES
+
+
+def is_mcp_tool(tool_name: str) -> bool:
+    """Return True when *tool_name* follows an MCP naming convention.
+
+    Two conventions are recognised:
+
+    * **Claude Code** - ``mcp__<server>__<tool>`` (double-underscore prefix
+      and separator).
+    * **OpenCode / CodeArts** - ``<hyphenated-server>_<tool>`` (the server
+      name contains a hyphen, e.g. ``kernel-test-runner_run_test``).
+
+    No built-in scaffold tool (Read, Bash, Edit, Glob) contains a hyphen
+    or a double underscore, so both heuristics are false-positive free.
+    """
+    name = tool_name or ""
+    if name.startswith("mcp__"):
+        return True
+    if "__" in name:
+        return True
+    return "-" in name
