@@ -59,6 +59,8 @@ PRESSURE_MAIN_AGENT = "__main__"
 # Occupancy is a compaction candidate when it falls below this fraction of the
 # previous non-zero same-agent occupancy.
 _OCCUPANCY_DROP_RATIO = 0.7
+# Tools pruned in one OpenCode pass share timestamps within this window.
+_PRUNE_WAVE_GAP_MS = 30_000
 
 # High-confidence model-id prefixes. Unknown models fall back to
 # ``DEFAULT_CONTEXT_WINDOW_LIMIT`` (editable in the UI).
@@ -366,6 +368,60 @@ def _splice_compaction_into_points(
     return deduped
 
 
+def _compacted_timestamp_ms(value: object) -> int | None:
+    """Epoch-ms from a tool ``time.compacted`` stamp, or None if missing."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    ts = int(value)
+    if ts <= 0:
+        return None
+    # Unix seconds (2001–2286) vs already-ms OpenCode ``Date.now()``.
+    if 1_000_000_000 <= ts < 10_000_000_000:
+        ts *= 1000
+    return ts
+
+
+def _cluster_timestamps(timestamps: list[int], gap_ms: int = _PRUNE_WAVE_GAP_MS) -> list[int]:
+    """Earliest timestamp of each prune wave (one OpenCode prune pass)."""
+    if not timestamps:
+        return []
+    ordered = sorted(set(timestamps))
+    clusters: list[list[int]] = [[ordered[0]]]
+    for ts in ordered[1:]:
+        if ts - clusters[-1][-1] <= gap_ms:
+            clusters[-1].append(ts)
+        else:
+            clusters.append([ts])
+    return [cluster[0] for cluster in clusters]
+
+
+def _occupancy_step_at_or_after(
+    steps: list[dict],
+    agent_id: str,
+    ts_ms: int,
+    fallback: dict,
+) -> dict:
+    """First same-window occupancy turn at or after *ts_ms*.
+
+    OpenCode stamps ``time.compacted`` when old tool outputs are pruned, not
+    when those tools originally ran. The smaller window is first billed on the
+    next occupancy turn after that stamp.
+    """
+    last_before: dict | None = None
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if _pressure_agent(step) != agent_id or not _is_occupancy_step(step):
+            continue
+        created = step.get("time_created_ms")
+        if not isinstance(created, (int, float)):
+            continue
+        if int(created) >= ts_ms:
+            return step
+        last_before = step
+    return last_before or fallback
+
+
 def detect_compaction_events(steps: list[dict]) -> list[dict]:
     """Detect compaction / prune / occupancy-drop events per agent.
 
@@ -373,8 +429,12 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
     when the drop is *per session* and *persists* on the next turn — a
     one-step dip that recovers is cache jitter, not compaction.
     """
+    from collections import defaultdict
+
     events: list[dict] = []
     explicit_steps: set[int] = set()
+    prune_stamps: dict[str, list[int]] = defaultdict(list)
+    prune_fallback: dict[tuple[str, int], dict] = {}
 
     def _event(step: dict, kind: str, agent_id: str, *, position: int | None = None, **extra) -> dict:
         idx = int(step.get("index", 0))
@@ -430,14 +490,31 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
         for tc in step.get("tool_calls") or []:
             if not isinstance(tc, dict):
                 continue
-            compacted = tc.get("time_compacted")
-            if compacted is None:
+            ts = _compacted_timestamp_ms(tc.get("time_compacted"))
+            if ts is None:
                 continue
-            events.append(_event(step, "tool_prune", agent_id, position=i))
-            explicit_steps.add(idx)
-            break
+            prune_stamps[agent_id].append(ts)
+            prune_fallback.setdefault((agent_id, ts), step)
 
-    from collections import defaultdict
+    for agent_id, stamps in prune_stamps.items():
+        for wave_ts in _cluster_timestamps(stamps):
+            fallback = None
+            for (aid, ts), step in prune_fallback.items():
+                if aid != agent_id:
+                    continue
+                if abs(ts - wave_ts) <= _PRUNE_WAVE_GAP_MS:
+                    fallback = step
+                    break
+            if fallback is None:
+                continue
+            host = _occupancy_step_at_or_after(steps, agent_id, wave_ts, fallback)
+            host_pos = next(
+                (i for i, step in enumerate(steps) if step is host),
+                int(host.get("index", 0)),
+            )
+            host_idx = int(host.get("index", host_pos))
+            events.append(_event(host, "tool_prune", agent_id, position=host_pos))
+            explicit_steps.add(host_idx)
 
     occ_seq: dict[str, list[tuple[int, int, dict]]] = defaultdict(list)
     for step in steps:
@@ -453,11 +530,20 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
     explicit_at = {(e["agent"], e["step"]) for e in events}
     for agent_id, points in occ_seq.items():
         for i in range(1, len(points)):
-            _prev_idx, prev_occ, _prev_step = points[i - 1]
+            prev_idx, prev_occ, prev_step = points[i - 1]
             idx, occ, step = points[i]
             if occ >= prev_occ * _OCCUPANCY_DROP_RATIO:
                 continue
             if idx in explicit_steps or (agent_id, idx) in explicit_at:
+                continue
+            # A stored compaction already reset this window; the next occupancy
+            # turns are the new baseline, not a second prune/compaction.
+            if any(
+                eagent == agent_id and prev_idx < estep < idx
+                for eagent, estep in explicit_at
+            ):
+                continue
+            if _is_summary_turn(prev_step):
                 continue
             # Adjacent explicit compaction (part on the previous user turn, etc.)
             if any(abs(idx - estep) <= 1 and eagent == agent_id

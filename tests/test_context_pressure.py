@@ -193,6 +193,55 @@ class CompactionDetectionTests(unittest.TestCase):
         kinds = [e["kind"] for e in detect_compaction_events(steps)]
         self.assertEqual(kinds, ["tool_prune"])
 
+    def test_prune_uses_compacted_time_not_the_original_tool_step(self):
+        """OpenCode stamps time.compacted when outputs are pruned, later."""
+        steps = [
+            _step(0, session_id="s", tokens=_tokens(total=8_000, inp=8_000),
+                  tool_calls=[{"tool_name": "read", "time_compacted": 5_000}]),
+            _step(1, session_id="s", tokens=_tokens(total=8_500, inp=8_500)),
+            _step(2, session_id="s", tokens=_tokens(total=3_000, inp=3_000)),
+        ]
+        steps[0]["time_created_ms"] = 1_000
+        steps[1]["time_created_ms"] = 2_000
+        steps[2]["time_created_ms"] = 6_000
+        prunes = [e for e in detect_compaction_events(steps) if e["kind"] == "tool_prune"]
+        self.assertEqual(len(prunes), 1)
+        self.assertEqual(prunes[0]["step"], 2)
+        self.assertEqual(prunes[0]["occupancy_after"], 3_000)
+
+    def test_one_prune_wave_from_many_compacted_tools(self):
+        steps = [
+            _step(0, session_id="s", tokens=_tokens(total=8_000, inp=8_000),
+                  tool_calls=[
+                      {"tool_name": "read", "time_compacted": 5_000},
+                      {"tool_name": "bash", "time_compacted": 5_010},
+                  ]),
+            _step(1, session_id="s", tokens=_tokens(total=9_000, inp=9_000),
+                  tool_calls=[{"tool_name": "grep", "time_compacted": 5_020}]),
+            _step(2, session_id="s", tokens=_tokens(total=3_000, inp=3_000)),
+        ]
+        steps[0]["time_created_ms"] = 1_000
+        steps[1]["time_created_ms"] = 2_000
+        steps[2]["time_created_ms"] = 6_000
+        prunes = [e for e in detect_compaction_events(steps) if e["kind"] == "tool_prune"]
+        self.assertEqual(len(prunes), 1)
+        self.assertEqual(prunes[0]["step"], 2)
+
+    def test_no_occupancy_drop_immediately_after_summary(self):
+        sid = "ses"
+        steps = [
+            _step(0, session_id=sid, tokens=_tokens(total=10_000, inp=10_000)),
+            _step(1, role="user", session_id=sid,
+                  parts=[{"type": "compaction", "summary": "prior"}]),
+            _step(2, session_id=sid, agent="compaction", summary=True,
+                  tokens=_tokens(total=2_000, inp=2_000)),
+            _step(3, session_id=sid, tokens=_tokens(total=1_300, inp=1_300)),
+            _step(4, session_id=sid, tokens=_tokens(total=1_500, inp=1_500)),
+        ]
+        kinds = [e["kind"] for e in detect_compaction_events(steps)]
+        self.assertNotIn("occupancy_drop", kinds)
+        self.assertIn("compaction_part", kinds)
+
     def test_occupancy_drop_same_agent(self):
         steps = [
             _step(0, tokens=_tokens(total=10_000, inp=10_000)),
