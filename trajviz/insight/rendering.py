@@ -952,8 +952,11 @@ def build_root_cause_html(clusters: list[dict]) -> str:
 
 # Label-based Workflow-tab jump: robust to tab insertions/reordering
 # (positional tabs[i] indexing broke when the Attribution tab shifted the order).
-_JS_GOTO_WORKFLOW = ("var tabs=document.querySelectorAll('button[role=tab]');"
-    "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}")
+_JS_GOTO_WORKFLOW = (
+    "if(typeof window.tvClickMainTab==='function'){window.tvClickMainTab('Workflow');}"
+    "else{var tabs=document.querySelectorAll('button[role=tab]');"
+    "for(var ti=0;ti<tabs.length;ti++){if(tabs[ti].textContent.trim()==='Workflow'){tabs[ti].click();break;}}}"
+)
 
 
 

@@ -115,32 +115,20 @@ def build_ui() -> gr.Blocks:
                         const tabs = document.querySelectorAll('button[role=tab]');
                         for (let ti = 0; ti < tabs.length; ti++) {
                             if (tabs[ti].textContent.trim() === label) {
-                                window.__tvHistoryNav = true;
-                                try {
-                                    tabs[ti].click();
-                                } finally {
-                                    window.__tvHistoryNav = false;
-                                }
-                                return tabs[ti];
+                                tabs[ti].click();
+                                return;
                             }
                         }
-                        return null;
                     };
                     window.tvActiveMainTab = function () {
                         const tabs = document.querySelectorAll('button[role=tab]');
                         for (let ti = 0; ti < tabs.length; ti++) {
-                            const t = tabs[ti];
-                            const selected = t.getAttribute('aria-selected');
-                            if (selected === 'true' || selected === true) {
-                                return t.textContent.trim();
-                            }
-                            if (t.classList.contains('selected') || t.getAttribute('data-selected') === 'true') {
-                                return t.textContent.trim();
+                            if (tabs[ti].getAttribute('aria-selected') === 'true') {
+                                return tabs[ti].textContent.trim();
                             }
                         }
                         return '';
                     };
-                    /* Remember the tab we left so Back can restore Overview (etc.). */
                     window.tvPushTabReturnPoint = function (tabLabel) {
                         if (!tabLabel || tabLabel === 'Workflow') return;
                         const cur = history.state || {};
@@ -157,15 +145,17 @@ def build_ui() -> gr.Blocks:
                         if (!card) return;
                         opts = opts || {};
                         const flash = opts.flash !== false;
-                        const pushHistory = opts.pushHistory !== false;
                         document.querySelectorAll('.wf-card.wf-flash').forEach((el) => {
                             el.classList.remove('wf-flash');
                         });
                         card.scrollIntoView({behavior: 'smooth', block: 'center'});
-                        /* selectCard reads __tvSelectOpts when invoked via click. */
-                        window.__tvSelectOpts = { pushHistory: pushHistory };
-                        card.click();
-                        window.__tvSelectOpts = null;
+                        if (typeof window.tvSelectWorkflowCard === 'function') {
+                            window.tvSelectWorkflowCard(card, {
+                                pushHistory: opts.pushHistory !== false,
+                            });
+                        } else {
+                            card.click();
+                        }
                         if (!flash) return;
                         card.classList.add('wf-flash');
                         if (card.__tvFlashTimer) clearTimeout(card.__tvFlashTimer);
@@ -176,21 +166,19 @@ def build_ui() -> gr.Blocks:
                     };
                     window.tvGotoWorkflowStep = function (idx, opts) {
                         opts = opts || {};
-                        const fromHistory = !!opts.fromHistory;
-                        if (!fromHistory) {
-                            const active = window.tvActiveMainTab();
-                            if (active && active !== 'Workflow') {
-                                window.tvPushTabReturnPoint(active);
-                            }
+                        const restore = !!opts.restore;
+                        /* Tab return points come from the capture-phase Workflow
+                           tab listener (including programmatic clicks). */
+                        if (window.tvActiveMainTab() !== 'Workflow') {
+                            window.tvClickMainTab('Workflow');
                         }
-                        window.tvClickMainTab('Workflow');
                         let attempts = 0;
                         const tryFocus = function () {
                             const c = document.getElementById('wf-card-' + idx);
                             if (c) {
                                 window.tvFocusWorkflowCard(c, {
-                                    flash: !fromHistory,
-                                    pushHistory: !fromHistory,
+                                    flash: !restore,
+                                    pushHistory: !restore,
                                 });
                                 return;
                             }
@@ -198,35 +186,26 @@ def build_ui() -> gr.Blocks:
                                 setTimeout(tryFocus, 80);
                             }
                         };
-                        setTimeout(tryFocus, fromHistory ? 80 : 200);
+                        setTimeout(tryFocus, 100);
                     };
-                    if (!window.__tvPopstateBound) {
-                        window.__tvPopstateBound = true;
+                    if (!window.__tvHistoryBound) {
+                        window.__tvHistoryBound = true;
                         window.addEventListener('popstate', function () {
                             const state = history.state || {};
                             if (state.tvTab && state.tvTab !== 'Workflow') {
                                 window.tvClickMainTab(state.tvTab);
                                 return;
                             }
-                            const m = String(window.location.hash || '').match(/^#step-(\\d+)$/);
+                            const m = window.location.hash.match(/^#step-(\\d+)$/);
                             if (m) {
-                                window.tvGotoWorkflowStep(Number(m[1]), { fromHistory: true });
+                                window.tvGotoWorkflowStep(Number(m[1]), { restore: true });
                             }
                         });
-                    };
-                    if (!window.__tvTabHistoryBound) {
-                        window.__tvTabHistoryBound = true;
                         /* Capture phase: read the prior tab before Gradio switches. */
                         document.addEventListener('click', function (e) {
                             const tab = e.target && e.target.closest && e.target.closest('button[role=tab]');
-                            if (!tab) return;
-                            const next = tab.textContent.trim();
-                            if (next !== 'Workflow') return;
-                            if (window.__tvHistoryNav) return;
-                            const prev = window.tvActiveMainTab();
-                            if (prev && prev !== 'Workflow') {
-                                window.tvPushTabReturnPoint(prev);
-                            }
+                            if (!tab || tab.textContent.trim() !== 'Workflow') return;
+                            window.tvPushTabReturnPoint(window.tvActiveMainTab());
                         }, true);
                     };
                     window.tvBindChartWorkflowJumps = function () {

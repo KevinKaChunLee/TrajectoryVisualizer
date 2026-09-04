@@ -189,19 +189,14 @@ WORKFLOW_JS = """
                                 });
                                 card.classList.add('wf-active');
                                 var idx = card.dataset.stepIdx;
-                                /* URL history: push on real navigation so Back works;
-                                   replace on load/restore so we don't spam the stack. */
+                                /* Push on user navigation so Back works; replace on load/restore. */
                                 if (idx != null) {
                                     window.__wfSelectedStep = idx;
                                     var targetHash = '#step-' + idx;
-                                    var histState = { tvTab: 'Workflow', step: String(idx) };
-                                    if (window.location.hash !== targetHash) {
-                                        if (pushHistory) {
-                                            history.pushState(histState, '', targetHash);
-                                        } else {
-                                            history.replaceState(histState, '', targetHash);
-                                        }
-                                    } else if (!history.state || history.state.step !== String(idx)) {
+                                    var histState = { tvTab: 'Workflow' };
+                                    if (pushHistory && window.location.hash !== targetHash) {
+                                        history.pushState(histState, '', targetHash);
+                                    } else {
                                         history.replaceState(histState, '', targetHash);
                                     }
                                 }
@@ -217,9 +212,9 @@ WORKFLOW_JS = """
                                     }
                                 } catch(ex) { console.error('wf-click:', ex); }
                             }
+                            window.tvSelectWorkflowCard = selectCard;
                             element.addEventListener('click', function(e) {
-                                var card = e.target.closest('.wf-card');
-                                selectCard(card, window.__tvSelectOpts || {});
+                                selectCard(e.target.closest('.wf-card'));
                             });
 
                             /* Keyboard navigation: j/k for next/prev step */
