@@ -141,7 +141,6 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
             tool_input = state.get("input", p.get("input", p.get("arguments", {})))
             tool_output = state.get("output", p.get("output", ""))
             compacted_at = safe_get(state, "time", "compacted", default=None)
-            part_time = p.get("time", {}) if isinstance(p.get("time"), dict) else {}
             tc = {
                 "type": "tool_call", "tool_name": tool_name,
                 "tool_id": p.get("tool_id", p.get("callID", p.get("id", ""))), "status": status,
@@ -150,10 +149,8 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
                 "output": tool_output,
                 "error": p.get("error") or state.get("error") or None,
                 "error_type": p.get("error_type"),
-                # Part wall-clock (OpenCode): created → updated covers queue + run.
-                "time_created": part_time.get("created"),
-                "time_updated": part_time.get("updated"),
-                # Execution window (OpenCode state.time / other formats).
+                "time_created": safe_get(p, "time", "created", default=None),
+                "time_updated": safe_get(p, "time", "updated", default=None),
                 "time_start": safe_get(state, "time", "start", default=None),
                 "time_end": safe_get(state, "time", "end", default=None),
                 "time_compacted": compacted_at,

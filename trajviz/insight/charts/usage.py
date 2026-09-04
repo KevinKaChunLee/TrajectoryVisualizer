@@ -478,13 +478,10 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
                         color=color,
                         line=dict(width=1, color="rgba(255,255,255,0.9)"),
                     ),
-                    # customdata[0]=step for workflow jump; [1]=segment secs
-                    # (%{x} with base is the bar end = cumulative, not chunk length).
-                    customdata=[[step_idx, secs]],
+                    customdata=[step_idx],
                     hovertemplate=(
-                        f"{tool_name}<br>Step %{{customdata[0]}}"
-                        f"<br>%{{customdata[1]:.1f}}s"
-                        f"{hover_extra}<extra></extra>"
+                        f"{tool_name}<br>Step %{{customdata}}"
+                        f"<br>{secs:.1f}s{hover_extra}<extra></extra>"
                     ),
                 )
             )

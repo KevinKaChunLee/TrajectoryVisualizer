@@ -10,7 +10,6 @@ from trajviz.insight.parser import parse_steps
 
 class ToolCallDurationMsTests(unittest.TestCase):
     def test_prefers_part_created_updated_over_state_start_end(self):
-        # OpenCode: state.time is pure exec; part.time is issue → result.
         tc = {
             "time_created": 1_000,
             "time_updated": 1_500,
