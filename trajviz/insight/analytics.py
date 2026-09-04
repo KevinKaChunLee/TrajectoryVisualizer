@@ -12,9 +12,7 @@ def compute_step_analytics(steps: list[dict]) -> list[dict]:
     for i, step in enumerate(steps):
         duration_s = step["duration"]
 
-        # Tool time: sum of non-spawn tool durations (may still overcount
-        # parallel calls within a step). Spawn/delegation wait is omitted —
-        # that wall-clock belongs to the child agent.
+        # Non-spawn tool time (may still overcount parallel calls within a step).
         tool_time_ms = 0
         for tc in step["tool_calls"]:
             v = tool_call_stats_duration_ms(tc)

@@ -17,9 +17,13 @@ from ..palette import (
     SESSION_COLORS,
     TOKEN_COLORS,
 )
-from trajviz.tool_vocab import SPAWN_TOOL_NAMES, parse_skill_name
+from trajviz.tool_vocab import parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
-from ..metrics import spawn_wait_seconds, step_duration_excluding_spawn, tool_call_duration_ms
+from ..metrics import (
+    spawn_wait_seconds,
+    step_duration_excluding_spawn,
+    tool_call_stats_duration_ms,
+)
 from ..patterns import tool_chart_name
 from ..step_errors import step_error_kind
 
@@ -429,9 +433,7 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
             if not isinstance(tc, dict):
                 continue
             raw_name = tc.get("tool_name") or ""
-            if raw_name in SPAWN_TOOL_NAMES:
-                continue
-            ms = tool_call_duration_ms(tc)
+            ms = tool_call_stats_duration_ms(tc)
             if ms is None:
                 continue
             name = tool_chart_name(tc)

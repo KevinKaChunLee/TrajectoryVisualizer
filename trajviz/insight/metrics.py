@@ -223,7 +223,6 @@ def tool_call_duration_ms(tc: dict) -> float | None:
 
 
 def is_spawn_tool_call(tc: dict) -> bool:
-    """True when *tc* is a spawn/delegation tool (``task``, ``Agent``, …)."""
     return (tc.get("tool_name") or "") in SPAWN_TOOL_NAMES
 
 
@@ -246,9 +245,7 @@ def spawn_wait_seconds(step: dict) -> float:
     """
     wait = 0.0
     for tc in step.get("tool_calls") or []:
-        if not isinstance(tc, dict):
-            continue
-        if (tc.get("tool_name") or "") not in SPAWN_TOOL_NAMES:
+        if not isinstance(tc, dict) or not is_spawn_tool_call(tc):
             continue
         ms = tool_call_duration_ms(tc)
         if ms is not None:
@@ -551,13 +548,11 @@ def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw)
     }
 
 
-def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows,
-                        wall_clock: float | None = None):
+def _compute_tool_stats(steps, total_tokens_total, message_rows, wait_denom: float):
     """Tool frequency, success rate, duration, and load metrics.
 
-    Tool-time aggregates omit spawn/delegation tools (child wall-clock). Wait %
-    uses session wall-clock when available so parallel main+subagent step sums
-    do not inflate the denominator.
+    Timed aggregates omit spawn/delegation tools. ``wait_denom`` should be
+    session wall-clock (not summed step durations) when subagents overlap.
     """
     tool_count = 0
     tool_breakdown: dict[str, int] = {}
@@ -590,10 +585,7 @@ def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows,
     assistant_rows = [r for r in message_rows if r.get("role") == "assistant"]
     tool_time_total = sum(r["tool_time_sum"] for r in message_rows)
     avg_td = statistics.mean(tool_durations) if tool_durations else 0
-    if isinstance(wall_clock, (int, float)) and not isinstance(wall_clock, bool) and wall_clock > 0:
-        wait_denom = float(wall_clock)
-    else:
-        wait_denom = float(total_duration) if total_duration else 0.0
+    denom = float(wait_denom) if wait_denom > 0 else 0.0
     return {
         "tool_call_count": tool_count,
         "tool_breakdown": tool_breakdown,
@@ -603,15 +595,15 @@ def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows,
         "tool_success_rate": round(tool_success / tool_count * 100, 1) if tool_count else 0,
         "tokens_per_tool": round(total_tokens_total / tool_count) if tool_count else 0,
         "tool_time_total": round(tool_time_total, 2),
-        "tool_wait_share": round(tool_time_total / wait_denom * 100, 1) if wait_denom else 0,
+        "tool_wait_share": round(tool_time_total / denom * 100, 1) if denom else 0,
         "avg_tool_duration": round(avg_td, 3),
         "p95_tool_duration": round(_percentile(tool_durations, 0.95), 3) if tool_durations else 0,
         "max_tool_duration": round(max(tool_durations), 3) if tool_durations else 0,
         "multi_tool_steps": sum(1 for r in assistant_rows if r["tool_calls"] >= 2),
         "no_tool_assistant_steps": sum(1 for r in assistant_rows if r["tool_calls"] == 0),
         "patch_steps": sum(1 for r in assistant_rows if r["patch_parts"] > 0),
-        "tool_calls_per_min": round(tool_count / (wait_denom / 60), 2) if wait_denom > 0 else None,
-        "tool_time_fraction": round(tool_time_total / wait_denom, 4) if wait_denom > 0 else None,
+        "tool_calls_per_min": round(tool_count / (denom / 60), 2) if denom > 0 else None,
+        "tool_time_fraction": round(tool_time_total / denom, 4) if denom > 0 else None,
         "tool_system_failure_rate": round(tool_fail / tool_count, 4) if tool_count > 0 else None,
     }
 
@@ -732,10 +724,7 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
         "max_duration": round(max(durations), 2) if durations else 0,
         "wall_clock": wall_clock,
         **_compute_token_stats(total_tokens, total_duration, steps, message_rows, raw),
-        **_compute_tool_stats(
-            steps, total_tokens["total"], total_duration, message_rows,
-            wall_clock=wall_clock if isinstance(wall_clock, (int, float)) else None,
-        ),
+        **_compute_tool_stats(steps, total_tokens["total"], message_rows, float(wall_clock)),
         **_compute_efficiency_stats(steps, message_rows, raw),
         **_compute_command_metrics(steps),
         **_compute_timing_metrics(steps),
