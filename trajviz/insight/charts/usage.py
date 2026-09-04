@@ -17,7 +17,7 @@ from ..palette import (
     SESSION_COLORS,
     TOKEN_COLORS,
 )
-from trajviz.tool_vocab import parse_skill_name
+from trajviz.tool_vocab import SPAWN_TOOL_NAMES, parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
 from ..metrics import tool_call_duration_ms
 from ..patterns import tool_chart_name
@@ -392,6 +392,10 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
 
     Each segment is one tool invocation. Hover shows the step index where it
     ran (and the agent label when multiple agents are present).
+
+    Spawn/delegation tools (``task``, ``Agent``, …) are omitted: their duration
+    is wall-clock for the whole child agent, which swamps real tool timings and
+    double-counts work already shown via the child's own calls.
     """
     color_map, labels, agent_id_of = bind_timeline_agents(steps)
     has_agents = len(color_map) > 1
@@ -405,6 +409,9 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
         step_idx = int(s.get("index", i))
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
+                continue
+            raw_name = tc.get("tool_name") or ""
+            if raw_name in SPAWN_TOOL_NAMES:
                 continue
             ms = tool_call_duration_ms(tc)
             if ms is None:
