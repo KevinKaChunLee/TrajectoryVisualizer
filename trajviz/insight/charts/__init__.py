@@ -4,7 +4,6 @@ from . import _layout  # noqa: F401  — pandas before plotly; see _layout.py
 from ._timeline import bind_timeline_agents, build_agent_color_map
 from .activity import (
     build_context_pressure_chart,
-    build_error_classification_chart,
     build_file_interaction_chart,
     build_plan_timeline_chart,
 )
@@ -28,6 +27,7 @@ from .usage import (
     build_skill_agent_chart,
     build_token_chart,
     build_tool_chart,
+    build_tool_duration_chart,
 )
 
 __all__ = [
@@ -37,7 +37,6 @@ __all__ = [
     "build_agent_token_chart",
     "build_context_pressure_chart",
     "build_duration_chart",
-    "build_error_classification_chart",
     "build_file_interaction_chart",
     "build_label_action_count_chart",
     "build_label_action_duration_chart",
@@ -51,5 +50,6 @@ __all__ = [
     "build_skill_agent_chart",
     "build_token_chart",
     "build_tool_chart",
+    "build_tool_duration_chart",
     "build_tool_outcome_timeline",
 ]

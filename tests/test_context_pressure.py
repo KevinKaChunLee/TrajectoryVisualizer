@@ -348,7 +348,7 @@ class WindowLimitTests(unittest.TestCase):
         steps = [_step(0, model_id="claude-sonnet-4-5", tokens=_tokens(total=10, inp=10))]
         self.assertEqual(infer_context_window_limit(steps), 200_000)
 
-    def test_unknown_model_falls_back_to_256k(self):
+    def test_unknown_model_falls_back_to_default_window(self):
         steps = [_step(0, model_id="mystery-model", tokens=_tokens(total=10, inp=10))]
         self.assertIsNone(infer_context_window_limit(steps))
         self.assertEqual(resolve_context_window_limit(steps), DEFAULT_CONTEXT_WINDOW_LIMIT)

@@ -49,6 +49,7 @@ class OverviewRefs:
     duration_chart: gr.Plot
     behavior_md: gr.Markdown
     tool_chart: gr.Plot
+    tool_duration_chart: gr.Plot
     skill_chart: gr.Plot
     tool_outcome_chart: gr.Plot
     agent_summary_html: gr.HTML
@@ -62,7 +63,6 @@ class OverviewRefs:
     diag_usage_snapshot: gr.Dropdown
     diag_pressure_chart: gr.Plot
     diag_rootcause_html: gr.HTML
-    error_class_chart: gr.Plot
     plan_timeline_chart: gr.Plot
     hotspots_md: gr.Markdown
     per_message_md: gr.Markdown
@@ -79,9 +79,9 @@ class OverviewRefs:
 
 OVERVIEW_SECTION_NAMES = [
     "Performance",
-    "Context Utilization",
     "Tools",
     "Agents",
+    "Context Utilization",
     "Diagnostics",
     "Deep Dive",
     "Labels",
@@ -108,7 +108,6 @@ def layout() -> OverviewRefs:
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>")
-                    metrics_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
                         duration_chart = gr.Plot(
@@ -116,6 +115,7 @@ def layout() -> OverviewRefs:
                             label="Step Duration",
                             elem_id="duration-chart",
                         )
+                    metrics_md = gr.Markdown("")
 
                 with gr.Column(visible=False) as efficiency_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_context_utilization'])}</div>")
@@ -156,18 +156,29 @@ def layout() -> OverviewRefs:
                     behavior_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
                         tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
-                        skill_chart = gr.Plot(show_label=False, label="Skill Calls by Agent")
+                        tool_duration_chart = gr.Plot(
+                            show_label=False,
+                            label="Tool Call Duration",
+                            elem_id="tool-duration-chart",
+                        )
                     with gr.Row(equal_height=True):
-                        tool_outcome_chart = gr.Plot(show_label=False, label="Tool Outcome Timeline")
+                        tool_outcome_chart = gr.Plot(
+                            show_label=False,
+                            label="Tool Outcome Timeline",
+                            elem_id="tool-outcome-chart",
+                        )
+                    with gr.Row(equal_height=True):
+                        skill_chart = gr.Plot(show_label=False, label="Skill Calls by Agent")
+                        gr.Column(scale=1)
 
                 with gr.Column(visible=False) as agents_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
                     agent_summary_html = gr.HTML("")
                     with gr.Row(equal_height=True):
+                        agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
+                    with gr.Row(equal_height=True):
                         agent_token_chart = gr.Plot(show_label=False, label="Token Breakdown by Agent")
                         gr.Column(scale=1)
-                    with gr.Row(equal_height=True):
-                        agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
 
                 with gr.Column(visible=False) as diagnostics_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>")
@@ -179,9 +190,7 @@ def layout() -> OverviewRefs:
                         elem_classes=["resizable-chart"],
                     )
                     diag_rootcause_html = gr.HTML("")
-                    with gr.Row(equal_height=True):
-                        error_class_chart = gr.Plot(show_label=False, label="Tool Error Classification")
-                        plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
+                    plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
 
                 with gr.Column(visible=False) as deep_dive_section:
                     hotspots_md = gr.Markdown("")
@@ -218,6 +227,7 @@ def layout() -> OverviewRefs:
         duration_chart=duration_chart,
         behavior_md=behavior_md,
         tool_chart=tool_chart,
+        tool_duration_chart=tool_duration_chart,
         skill_chart=skill_chart,
         tool_outcome_chart=tool_outcome_chart,
         agent_summary_html=agent_summary_html,
@@ -231,7 +241,6 @@ def layout() -> OverviewRefs:
         diag_usage_snapshot=diag_usage_snapshot,
         diag_pressure_chart=diag_pressure_chart,
         diag_rootcause_html=diag_rootcause_html,
-        error_class_chart=error_class_chart,
         plan_timeline_chart=plan_timeline_chart,
         hotspots_md=hotspots_md,
         per_message_md=per_message_md,
@@ -257,6 +266,7 @@ def load_slots(refs: OverviewRefs) -> dict:
         "duration_chart": refs.duration_chart,
         "behavior_md": refs.behavior_md,
         "tool_chart": refs.tool_chart,
+        "tool_duration_chart": refs.tool_duration_chart,
         "skill_chart": refs.skill_chart,
         "tool_outcome_chart": refs.tool_outcome_chart,
         "agent_summary_html": refs.agent_summary_html,
@@ -270,7 +280,6 @@ def load_slots(refs: OverviewRefs) -> dict:
         "diag_pressure_chart": refs.diag_pressure_chart,
         "diag_file_chart": refs.diag_file_chart,
         "diag_rootcause_html": refs.diag_rootcause_html,
-        "error_class_chart": refs.error_class_chart,
         "plan_timeline_chart": refs.plan_timeline_chart,
         "hotspots_md": refs.hotspots_md,
         "per_message_md": refs.per_message_md,
@@ -290,6 +299,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "duration_chart": fig,
             "behavior_md": "",
             "tool_chart": fig,
+            "tool_duration_chart": fig,
             "skill_chart": fig,
             "tool_outcome_chart": fig,
             "agent_summary_html": "",
@@ -311,7 +321,6 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "diag_pressure_chart": fig,
             "diag_file_chart": fig,
             "diag_rootcause_html": "",
-            "error_class_chart": fig,
             "plan_timeline_chart": fig,
             "hotspots_md": "",
             "per_message_md": "",
@@ -328,6 +337,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "duration_chart": ch["dur_fig"],
         "behavior_md": ov["behavior_text"],
         "tool_chart": ch["tl_fig"],
+        "tool_duration_chart": ch["tool_dur_fig"],
         "skill_chart": ch["skill_fig"],
         "tool_outcome_chart": ch["tool_outcome_fig"],
         "agent_summary_html": ch["agent_cards_html"],
@@ -345,7 +355,6 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "diag_pressure_chart": dg["diag_pressure_chart"],
         "diag_file_chart": dg["diag_file_chart"],
         "diag_rootcause_html": dg["diag_rootcause_html"],
-        "error_class_chart": ch["error_class_fig"],
         "plan_timeline_chart": ch["plan_timeline_fig"],
         "hotspots_md": ov["hotspots_text"],
         "per_message_md": ov["per_message_text"],
@@ -372,9 +381,9 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
     overview_section_names = OVERVIEW_SECTION_NAMES
     overview_sections = (
         refs.performance_section,
-        refs.efficiency_section,
         refs.tools_section,
         refs.agents_section,
+        refs.efficiency_section,
         refs.diagnostics_section,
         refs.deep_dive_section,
         refs.labels_section,

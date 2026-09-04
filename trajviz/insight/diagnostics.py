@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from trajviz.tool_vocab import (WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
-                                parse_skill_name as _parse_skill_name,
-                                write_target_path as _write_target_path)
+from trajviz.tool_vocab import (
+    BASH_TOOL_NAMES,
+    WRITE_TOOL_NAMES as _WRITE_TOOL_SET,
+    parse_skill_name as _parse_skill_name,
+    write_target_path as _write_target_path,
+)
 
 import os
 import re
@@ -122,7 +125,7 @@ def extract_file_interactions(steps: list[dict]) -> list[dict]:
                         found_paths.append((str(pattern), itype))
 
             # Bash — heuristic path extraction
-            elif tool_name in ("Bash", "bash", "BashCommand"):
+            elif tool_name in BASH_TOOL_NAMES:
                 command = inp.get("command", "")
                 if command:
                     for p in _extract_bash_paths(command):

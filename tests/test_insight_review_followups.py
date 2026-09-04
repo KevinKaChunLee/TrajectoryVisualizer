@@ -126,6 +126,44 @@ class WrappedShellSearchTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(patterns._is_search_call(_bash_call(command)))
 
+    def test_primary_shell_command_peels_wrappers(self):
+        cases = {
+            "git status": "git",
+            "FOO=1 BAR=2 npm test": "npm",
+            "sudo -u kevin pytest -q": "pytest",
+            "env LANG=C /usr/bin/python script.py": "script.py",
+            "timeout 30 make build": "make",
+            "bash -lc 'cd src && cargo test'": "cargo",
+            "cd src && rg needle .": "rg",
+            "cd only": "cd",
+            "echo hello | grep hi": "echo",
+        }
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                self.assertEqual(patterns.primary_shell_command(command), expected)
+
+    def test_primary_shell_command_names_python_scripts(self):
+        cases = {
+            "python3 tools/run_eval.py --fast": "run_eval.py",
+            "python path/to/train.py": "train.py",
+            "python3.12 -u scripts/foo.py arg": "foo.py",
+            "python -m pytest -q": "pytest",
+            "python3 -m http.server 8000": "http.server",
+            "pypy3 -O bench.py": "bench.py",
+            "python -c 'print(1)'": "python",
+            "python3": "python3",
+            "cd src && python3 ../bin/check.py": "check.py",
+        }
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                self.assertEqual(patterns.primary_shell_command(command), expected)
+
+    def test_primary_shell_command_empty_or_malformed(self):
+        self.assertIsNone(patterns.primary_shell_command(""))
+        self.assertIsNone(patterns.primary_shell_command("   "))
+        # Unclosed quote: fall back to first token rather than raising.
+        self.assertEqual(patterns.primary_shell_command("rg 'unterminated"), "rg")
+
     def test_lowercase_bash_tool_name_is_recognized(self):
         self.assertTrue(patterns._is_search_call(
             _bash_call("FOO=1 ripgrep needle .", tool_name="bash")

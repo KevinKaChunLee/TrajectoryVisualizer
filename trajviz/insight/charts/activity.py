@@ -5,7 +5,7 @@ from __future__ import annotations
 from ._layout import _add_dummy_marker_legend, _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
-from ..palette import CHART_ACCENT, SESSION_COLORS, TOKEN_COLORS
+from ..palette import SESSION_COLORS, TOKEN_COLORS
 from ._timeline import _legend_label, bind_timeline_agents
 
 _FILE_INTERACTION_COLORS = {
@@ -461,85 +461,6 @@ def build_plan_timeline_chart(
     # Tighter bar gap so individual items don't visually balloon when the
     # surrounding container is wide (e.g., right column of a 2-col layout).
     fig.update_layout(bargap=0.25)
-    _apply_dark(fig, dark)
-    return fig
-
-
-def build_error_classification_chart(
-    steps: list[dict],
-    dark: bool = False,
-) -> go.Figure:
-    """Horizontal bar chart of error types classified from tool output."""
-    from collections import Counter
-
-    from ..loaders import _classify_tool_error
-
-    error_types: Counter = Counter()
-    error_steps: dict[str, list[int]] = {}
-
-    for i, s in enumerate(steps):
-        for tc in s.get("tool_calls", []):
-            etype = tc.get("error_type")
-            # Fallback for formats that don't pre-classify (OpenCode, Claude Code):
-            # run the shared loader error-pattern matcher against the
-            # raw error message so we still get a non-empty chart.
-            if not etype:
-                err_text = tc.get("error") or ""
-                if err_text:
-                    etype = _classify_tool_error(err_text) or "tool_error"
-            if etype:
-                error_types[etype] += 1
-                error_steps.setdefault(etype, []).append(s.get("index", i))
-
-    if not error_types:
-        fig = _empty_figure(250, "No classified tool errors")
-        _apply_dark(fig, dark)
-        return fig
-
-    _LABELS = {
-        "platform_error": "Platform Error",
-        "permission_error": "Permission / Policy",
-        "missing_file": "Missing File",
-        "bad_input": "Bad Input",
-        "tool_error": "Other Tool Error",
-    }
-    _COLORS = {
-        "platform_error": "#dc2626",
-        "permission_error": "#d97706",
-        "missing_file": "#6366f1",
-        "bad_input": "#0891b2",
-        "tool_error": "#6b7280",
-    }
-
-    sorted_types = sorted(error_types.keys(), key=lambda t: error_types[t])
-    labels = [_LABELS.get(t, t) for t in sorted_types]
-    counts = [error_types[t] for t in sorted_types]
-    colors = [_COLORS.get(t, CHART_ACCENT) for t in sorted_types]
-    hover = [
-        f"{_LABELS.get(t, t)}: {error_types[t]}<br>Steps: {', '.join(str(s) for s in error_steps.get(t, [])[:10])}"
-        for t in sorted_types
-    ]
-
-    fig = go.Figure(
-        go.Bar(
-            y=labels,
-            x=counts,
-            orientation="h",
-            marker_color=colors,
-            showlegend=False,
-            text=[str(c) for c in counts],
-            textposition="outside",
-            hovertext=hover,
-            hoverinfo="text",
-        )
-    )
-    _apply_chart_layout(
-        fig,
-        "Tool Error Classification",
-        xaxis="Count",
-        height=max(200, 40 * len(sorted_types)),
-        margin=dict(l=max(140, max((len(lbl) for lbl in labels), default=10) * 7 + 20), r=60, t=50, b=40),
-    )
     _apply_dark(fig, dark)
     return fig
 

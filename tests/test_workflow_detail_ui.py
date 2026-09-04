@@ -38,10 +38,14 @@ class WorkflowDetailUiTests(unittest.TestCase):
         from trajviz.insight.ui import overview_tab
 
         source = inspect.getsource(insight_mod.build_ui)
-        self.assertIn("tvBindDurationJump", source)
+        self.assertIn("tvBindChartWorkflowJumps", source)
         self.assertIn("plotly_click", source)
         self.assertIn("tvGotoWorkflowStep", source)
         self.assertIn('elem_id="duration-chart"', inspect.getsource(overview_tab.layout))
+        self.assertIn('elem_id="tool-outcome-chart"', inspect.getsource(overview_tab.layout))
+        self.assertIn('elem_id="tool-duration-chart"', inspect.getsource(overview_tab.layout))
+        self.assertIn("tool-outcome-chart", source)
+        self.assertIn("tool-duration-chart", source)
 
     def test_detail_tabs_stay_visible_inside_scrollable_detail_panel(self):
         styles = Path("trajviz/insight/styles.py").read_text()

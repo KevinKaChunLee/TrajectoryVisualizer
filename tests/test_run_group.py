@@ -668,6 +668,39 @@ class TimelineIdentityTests(unittest.TestCase):
         self.assertEqual(explore.x[idx["Grep"]], 1)
         self.assertEqual(explore.x[idx["Read"]], 0)
 
+    def test_tool_chart_splits_bash_into_shell_commands(self):
+        def step(index: int, command: str) -> dict:
+            s = _opencode_step(index, agent="build", session_id="ses_root")
+            s["tool_calls"] = [{
+                "tool_name": "Bash",
+                "input": {"command": command},
+                "status": "completed",
+            }]
+            s["tool_call_count"] = 1
+            return s
+
+        steps = [
+            step(0, "git status"),
+            step(1, "FOO=1 npm test"),
+            step(2, "sudo pytest -q"),
+            step(3, "git status"),
+            step(4, "python3 tools/run_eval.py"),
+            step(5, "python -m pytest"),
+            _opencode_step(6, agent="build", session_id="ses_root", tool="Read"),
+        ]
+        fig = build_tool_chart(steps)
+        self.assertEqual(len(fig.data), 1)
+        labels = list(fig.data[0].y)
+        counts = {label: fig.data[0].x[i] for i, label in enumerate(labels)}
+        self.assertEqual(counts["git"], 2)
+        self.assertEqual(counts["npm"], 1)
+        self.assertEqual(counts["pytest"], 2)  # sudo pytest + python -m pytest
+        self.assertEqual(counts["run_eval.py"], 1)
+        self.assertEqual(counts["Read"], 1)
+        self.assertNotIn("Bash", labels)
+        self.assertNotIn("python3", labels)
+        self.assertNotIn("python", labels)
+
     def test_workflow_badges_use_timeline_labels(self):
         steps = [
             _opencode_step(0, agent="plan", session_id="ses_root"),

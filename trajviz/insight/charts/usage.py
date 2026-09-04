@@ -6,7 +6,7 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Callable
 
-from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
+from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure, _truncate_chart_label
 import plotly.graph_objects as go
 
 from ..parser import infer_non_cache_input
@@ -19,6 +19,8 @@ from ..palette import (
 )
 from trajviz.tool_vocab import parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
+from ..metrics import tool_call_duration_ms
+from ..patterns import tool_chart_name
 from ..step_errors import step_error_kind
 
 
@@ -323,7 +325,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
                 continue
-            name = tc.get("tool_name") or "(unnamed)"
+            name = tool_chart_name(tc)
             agent_tool[agent][name] += 1
             all_tools[name] += 1
 
@@ -333,7 +335,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         return fig
 
     sorted_tools = sorted(all_tools.keys(), key=lambda t: all_tools[t])
-    display_names = [n if len(n) <= 30 else n[:27] + "..." for n in sorted_tools]
+    display_names = [_truncate_chart_label(n) for n in sorted_tools]
 
     fig = go.Figure()
     if has_agents:
@@ -371,18 +373,130 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         )
 
     max_label = max(len(n) for n in display_names)
-    _apply_chart_layout(
+    _apply_tool_hbar_layout(
         fig,
         "Tool Call Frequency" + (" by Agent" if has_agents else ""),
         xaxis="Count",
-        height=max(250, 50 * len(sorted_tools)),
+        n_tools=len(sorted_tools),
+        max_label=max_label,
         barmode="stack" if has_agents else "relative",
-        margin=dict(l=max(140, max_label * 7 + 20), r=60, t=50, b=40),
     )
     if has_agents:
         fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
     _apply_dark(fig, dark)
     return fig
+
+
+def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figure:
+    """Horizontal bars of tool duration, stacked by individual timed calls.
+
+    Each segment is one tool invocation. Hover shows the step index where it
+    ran (and the agent label when multiple agents are present).
+    """
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
+    has_agents = len(color_map) > 1
+
+    calls_by_tool: dict[str, list[tuple[int, float, str]]] = defaultdict(list)
+    total_secs: dict[str, float] = defaultdict(float)
+    for i, s in enumerate(steps):
+        if not isinstance(s, dict):
+            continue
+        agent = agent_id_of(s)
+        step_idx = int(s.get("index", i))
+        for tc in s.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            ms = tool_call_duration_ms(tc)
+            if ms is None:
+                continue
+            name = tool_chart_name(tc)
+            secs = ms / 1000.0
+            calls_by_tool[name].append((step_idx, secs, agent))
+            total_secs[name] += secs
+
+    if not total_secs:
+        fig = _empty_figure(300, "No tool-call timing recorded in this trajectory.")
+        _apply_dark(fig, dark)
+        return fig
+
+    sorted_tools = sorted(total_secs.keys(), key=lambda t: total_secs[t])
+    display_names = [_truncate_chart_label(n) for n in sorted_tools]
+
+    fig = go.Figure()
+    legend_seen: set[str] = set()
+    for tool_name, y_label in zip(sorted_tools, display_names, strict=True):
+        base = 0.0
+        for step_idx, secs, agent_id in calls_by_tool[tool_name]:
+            if has_agents:
+                color = SESSION_COLORS[color_map.get(agent_id, 0) % len(SESSION_COLORS)]
+                agent_label = _legend_label(agent_id, labels)
+                show_legend = agent_id not in legend_seen
+                if show_legend:
+                    legend_seen.add(agent_id)
+                hover_extra = f"<br>{agent_label}"
+            else:
+                color = CHART_ACCENT
+                agent_label = ""
+                show_legend = False
+                hover_extra = ""
+
+            fig.add_trace(
+                go.Bar(
+                    y=[y_label],
+                    x=[secs],
+                    base=[base],
+                    orientation="h",
+                    name=agent_label,
+                    legendgroup=agent_id if has_agents else None,
+                    showlegend=show_legend,
+                    marker=dict(
+                        color=color,
+                        line=dict(width=1, color="rgba(255,255,255,0.9)"),
+                    ),
+                    customdata=[step_idx],
+                    hovertemplate=(
+                        f"{tool_name}<br>Step %{{customdata}}<br>%{{x:.1f}}s"
+                        f"{hover_extra}<extra></extra>"
+                    ),
+                )
+            )
+            base += secs
+
+    max_label = max(len(n) for n in display_names)
+    _apply_tool_hbar_layout(
+        fig,
+        "Tool Call Duration" + (" by Agent" if has_agents else ""),
+        xaxis="Duration (s)",
+        n_tools=len(sorted_tools),
+        max_label=max_label,
+        barmode="overlay",
+    )
+    fig.update_layout(clickmode="event")
+    fig.update_yaxes(categoryorder="array", categoryarray=display_names)
+    if has_agents:
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+    _apply_dark(fig, dark)
+    return fig
+
+
+def _apply_tool_hbar_layout(
+    fig: go.Figure,
+    title: str,
+    *,
+    xaxis: str,
+    n_tools: int,
+    max_label: int,
+    barmode: str,
+) -> None:
+    """Shared layout for horizontal tool frequency / duration bars."""
+    _apply_chart_layout(
+        fig,
+        title,
+        xaxis=xaxis,
+        height=max(250, 50 * n_tools),
+        barmode=barmode,
+        margin=dict(l=max(140, max_label * 7 + 20), r=60, t=50, b=40),
+    )
 
 
 def _hex_rgba(hex_color: str, alpha: float) -> str:

@@ -12,12 +12,12 @@ from ..charts import (
     build_agent_token_chart,
     build_context_pressure_chart,
     build_duration_chart,
-    build_error_classification_chart,
     build_file_interaction_chart,
     build_plan_timeline_chart,
     build_skill_agent_chart,
     build_token_chart,
     build_tool_chart,
+    build_tool_duration_chart,
     build_tool_outcome_timeline,
 )
 from ..context_usage import PRESSURE_ALL_AGENTS
@@ -299,13 +299,13 @@ def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
         "tok_fig": build_token_chart(steps, dark=dark, format=trajectory_format),
         "dur_fig": build_duration_chart(steps, dark=dark),
         "tl_fig": build_tool_chart(steps, dark=dark),
+        "tool_dur_fig": build_tool_duration_chart(steps, dark=dark),
         "skill_fig": build_skill_agent_chart(steps, dark=dark),
         "tool_outcome_fig": build_tool_outcome_timeline(steps, dark=dark),
         "agent_cards_html": render_agent_summary_cards(agent_summaries),
         "agent_tok_fig": build_agent_token_chart(agent_summaries, dark=dark),
         "swimlane_fig": build_agent_swimlane_chart(steps, dark=dark),
         "plan_timeline_fig": build_plan_timeline_chart(session.plan_history, session.plan_metrics, dark=dark),
-        "error_class_fig": build_error_classification_chart(steps, dark=dark),
     }
 
 

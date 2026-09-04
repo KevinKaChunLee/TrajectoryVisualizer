@@ -68,7 +68,7 @@ _MODEL_CONTEXT_LIMITS: tuple[tuple[str, int], ...] = (
     ("claude", 200_000),
     ("gpt-4o", 128_000),
 )
-DEFAULT_CONTEXT_WINDOW_LIMIT = 256_000
+DEFAULT_CONTEXT_WINDOW_LIMIT = 128_000
 
 
 def pressure_agent_key(agent_id: str) -> str:
@@ -235,7 +235,7 @@ def resolve_context_window_limit(
     *,
     override: object = None,
 ) -> int:
-    """Window size for occupancy %: user override, else inferred, else 256k."""
+    """Window size for occupancy %: user override, else inferred, else 128k."""
     coerced = coerce_window_limit(override)
     if coerced:
         return coerced
@@ -988,7 +988,7 @@ def context_usage_breakdown(
     occupancy point unless *snapshot_step* selects a live occupancy turn
     (typically the point right before a compaction). Percentages of *window*
     use the resolved window limit (user override, inferred model/metadata, or
-    256k).
+    128k).
     """
     empty_buckets = {key: 0 for key, _label, _color in USAGE_CATEGORIES}
     empty = {

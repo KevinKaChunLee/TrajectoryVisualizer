@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from bisect import bisect_right
 from collections import Counter
 
 from trajviz.insight.parser import spawned_child_session_id
+from trajviz.tool_vocab import BASH_TOOL_NAMES, WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -25,10 +27,9 @@ _PLAN_TOOL_NAMES = {
 }
 _READ_TOOL_NAMES = {"Read", "read", "WebFetch"}
 _SEARCH_TOOL_NAMES = {
-    "Bash", "bash", "Grep", "Glob", "grep", "glob", "find", "ToolSearch", "WebSearch",
+    *BASH_TOOL_NAMES,
+    "Grep", "Glob", "grep", "glob", "find", "ToolSearch", "WebSearch",
 }
-# Single source of truth for write-tool names: trajviz.tool_vocab.
-from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES  # noqa: E402
 _VALIDATION_COMMAND_PATTERNS = (
     "pytest", "python -m pytest", "unittest", "tox", "nox", "go test",
     "cargo test", "npm test", "pnpm test", "yarn test", "jest", "vitest",
@@ -677,6 +678,11 @@ _WRAPPER_OPTIONS_WITH_VALUES = {
         "--max-chars",
     },
 }
+# python / python3 / python3.12 / pypy3 — chart labels should name the script/module.
+_PYTHON_INTERPRETER_RE = re.compile(r"^(?:python|pypy)\d*(?:\.\d+)*$")
+_PYTHON_VALUE_OPTIONS = frozenset({
+    "-W", "-X", "-Q", "--check-hash-based-pycs",
+})
 
 
 def _shell_segments(command: str) -> list[list[str]]:
@@ -798,6 +804,143 @@ def _segment_runs_search(tokens: list[str], nesting: int = 0) -> bool:
     return False
 
 
+def primary_shell_command(command: str, *, _nesting: int = 0) -> str | None:
+    """Return the primary executable basename for a shell command string.
+
+    Peels common wrappers (``env``, ``sudo``, ``timeout``, ``sh -c``, …) and
+    skips leading directory-change segments (``cd`` / ``pushd`` / ``popd``)
+    so ``cd src && git status`` reports ``git``. Returns ``None`` when nothing
+    useful can be recovered.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return None
+
+    segments = _shell_segments(command)
+    if not segments:
+        # Malformed quoting — fall back to the converge-style first token.
+        for tok in command.strip().split():
+            if _is_shell_assignment(tok):
+                continue
+            return _shell_name(tok) or None
+        return None
+
+    for segment in segments:
+        name = _primary_from_segment(segment, _nesting)
+        if name is None:
+            continue
+        # Agents often prefix real work with ``cd … && …``; attribute the call
+        # to the following command when the lead segment is only navigation.
+        if name in ("cd", "pushd", "popd") and len(segments) > 1:
+            continue
+        return name
+    return None
+
+
+def tool_chart_name(tc: dict) -> str:
+    """Chart label for a tool call; expand Bash into the shell command/script."""
+    name = tc.get("tool_name") or "(unnamed)"
+    if name not in BASH_TOOL_NAMES:
+        return name
+    inp = tc.get("input")
+    if not isinstance(inp, dict):
+        return name
+    command = inp.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return name
+    return primary_shell_command(command) or name
+
+
+def _primary_from_segment(tokens: list[str], nesting: int = 0) -> str | None:
+    """Resolve the executable at the head of one shell segment."""
+    index = 0
+    for _ in range(12):
+        while index < len(tokens) and _is_shell_assignment(tokens[index]):
+            index += 1
+        if index >= len(tokens):
+            return None
+
+        command_name = _shell_name(tokens[index])
+        if not command_name:
+            return None
+
+        if command_name == "command":
+            index += 1
+            if index < len(tokens) and tokens[index] in ("-v", "-V"):
+                return "command"
+            index = _skip_wrapper_options(tokens, index, "command")
+            continue
+
+        if command_name in ("env", "sudo", "time", "nice", "nohup", "xargs"):
+            index = _skip_wrapper_options(tokens, index + 1, command_name)
+            continue
+
+        if command_name == "timeout":
+            index = _skip_wrapper_options(tokens, index + 1, command_name)
+            index += 1
+            continue
+
+        if command_name == "busybox":
+            index += 1
+            continue
+
+        if command_name in ("bash", "dash", "ksh", "sh", "zsh"):
+            option_index = index + 1
+            while option_index < len(tokens) and tokens[option_index].startswith("-"):
+                flags = tokens[option_index].lstrip("-")
+                if "c" in flags and option_index + 1 < len(tokens):
+                    if nesting >= 3:
+                        return command_name
+                    return primary_shell_command(
+                        tokens[option_index + 1], _nesting=nesting + 1
+                    )
+                option_index += 1
+            return command_name
+
+        if command_name in ("if", "then", "elif", "while", "until", "do", "!"):
+            index += 1
+            continue
+
+        if _PYTHON_INTERPRETER_RE.fullmatch(command_name):
+            return _python_invocation_label(tokens, index, command_name)
+
+        return command_name
+    return None
+
+
+def _python_invocation_label(tokens: list[str], index: int, interpreter: str) -> str:
+    """Label a python/pypy invocation by script basename or ``-m`` module.
+
+    ``python -c …`` and bare interpreters keep the interpreter name — there is
+    no stable script identity to chart.
+    """
+    i = index + 1
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "--":
+            i += 1
+            break
+        if token == "-m" and i + 1 < len(tokens):
+            return tokens[i + 1]
+        if token == "-c":
+            return interpreter
+        if token.startswith("-") and token != "-":
+            if token in _PYTHON_VALUE_OPTIONS and i + 1 < len(tokens):
+                i += 2
+                continue
+            if token.startswith("--") and "=" in token:
+                i += 1
+                continue
+            i += 1
+            continue
+        break
+
+    if i >= len(tokens):
+        return interpreter
+    script = tokens[i]
+    base = script.replace("\\", "/").rsplit("/", 1)[-1]
+    return base or interpreter
+
+
 def _is_search_call(tc: dict) -> bool:
     """A tool call counts as a search only if it actually searches.
 
@@ -808,7 +951,7 @@ def _is_search_call(tc: dict) -> bool:
     name = tc.get("tool_name")
     if name not in _SEARCH_TOOL_NAMES:
         return False
-    if name in ("Bash", "bash"):
+    if name in BASH_TOOL_NAMES:
         inp = tc.get("input", {})
         cmd = inp.get("command", "") if isinstance(inp, dict) else ""
         if not isinstance(cmd, str) or not cmd.strip():
@@ -930,7 +1073,7 @@ def detect_tool_selection_antipatterns(steps: list[dict]) -> list[dict]:
         for tc in s.get("tool_calls", []):
             # OpenCode emits lowercase tool names — match both spellings,
             # like _is_search_call above.
-            if tc.get("tool_name") not in ("Bash", "bash"):
+            if tc.get("tool_name") not in BASH_TOOL_NAMES:
                 continue
             inp = tc.get("input", {})
             cmd = inp.get("command", "") if isinstance(inp, dict) else ""
