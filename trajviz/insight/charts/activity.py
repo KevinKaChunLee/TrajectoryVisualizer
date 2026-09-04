@@ -5,7 +5,7 @@ from __future__ import annotations
 from ._layout import _add_dummy_marker_legend, _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
-from ..palette import CHART_ACCENT, SESSION_COLORS, TOKEN_COLORS
+from ..palette import SESSION_COLORS, TOKEN_COLORS
 from ._timeline import _legend_label, bind_timeline_agents
 
 _FILE_INTERACTION_COLORS = {

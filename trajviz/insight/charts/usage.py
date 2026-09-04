@@ -424,7 +424,7 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
 
     fig = go.Figure()
     legend_seen: set[str] = set()
-    for tool_name, y_label in zip(sorted_tools, display_names):
+    for tool_name, y_label in zip(sorted_tools, display_names, strict=True):
         base = 0.0
         for step_idx, secs, agent_id in calls_by_tool[tool_name]:
             if has_agents:
