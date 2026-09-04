@@ -149,6 +149,8 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
                 "output": tool_output,
                 "error": p.get("error") or state.get("error") or None,
                 "error_type": p.get("error_type"),
+                "time_created": safe_get(p, "time", "created", default=None),
+                "time_updated": safe_get(p, "time", "updated", default=None),
                 "time_start": safe_get(state, "time", "start", default=None),
                 "time_end": safe_get(state, "time", "end", default=None),
                 "time_compacted": compacted_at,

@@ -407,8 +407,9 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
 def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figure:
     """Horizontal bars of tool duration, stacked by individual timed calls.
 
-    Each segment is one tool invocation. Hover shows the step index where it
-    ran (and the agent label when multiple agents are present).
+    Each segment is one tool invocation. Hover shows that segment's duration
+    and the step index where it ran (plus the agent label when multiple agents
+    are present).
 
     Spawn/delegation tools (``task``, ``Agent``, …) are omitted: their duration
     is wall-clock for the whole child agent, which swamps real tool timings and
@@ -479,8 +480,8 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
                     ),
                     customdata=[step_idx],
                     hovertemplate=(
-                        f"{tool_name}<br>Step %{{customdata}}<br>%{{x:.1f}}s"
-                        f"{hover_extra}<extra></extra>"
+                        f"{tool_name}<br>Step %{{customdata}}"
+                        f"<br>{secs:.1f}s{hover_extra}<extra></extra>"
                     ),
                 )
             )

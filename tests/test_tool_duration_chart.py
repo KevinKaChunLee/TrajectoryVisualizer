@@ -75,6 +75,9 @@ class ToolDurationChartTests(unittest.TestCase):
         self.assertEqual(steps, {0, 3})
         for trace in fig.data:
             self.assertIn("Step %{customdata}", trace.hovertemplate)
+            # Bake segment secs into the template — %{x} with base is cumulative end.
+            self.assertRegex(trace.hovertemplate, r"<br>\d+\.\d+s")
+            self.assertNotIn("%{x", trace.hovertemplate)
 
     def test_missing_index_falls_back_to_enumerate(self):
         steps = [
