@@ -128,7 +128,7 @@ def build_ui() -> gr.Blocks:
                         }, 200);
                     };
                     window.tvBindChartWorkflowJumps = function () {
-                        ['duration-chart', 'tool-outcome-chart'].forEach((id) => {
+                        ['duration-chart', 'tool-outcome-chart', 'tool-duration-chart'].forEach((id) => {
                             const root = document.getElementById(id);
                             if (!root) return;
                             const plots = root.querySelectorAll('.js-plotly-plot');

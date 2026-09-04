@@ -28,6 +28,7 @@ from .usage import (
     build_skill_agent_chart,
     build_token_chart,
     build_tool_chart,
+    build_tool_duration_chart,
 )
 
 __all__ = [
@@ -51,5 +52,6 @@ __all__ = [
     "build_skill_agent_chart",
     "build_token_chart",
     "build_tool_chart",
+    "build_tool_duration_chart",
     "build_tool_outcome_timeline",
 ]

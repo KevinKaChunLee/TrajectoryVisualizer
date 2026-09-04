@@ -49,6 +49,7 @@ class OverviewRefs:
     duration_chart: gr.Plot
     behavior_md: gr.Markdown
     tool_chart: gr.Plot
+    tool_duration_chart: gr.Plot
     skill_chart: gr.Plot
     tool_outcome_chart: gr.Plot
     agent_summary_html: gr.HTML
@@ -156,7 +157,14 @@ def layout() -> OverviewRefs:
                     behavior_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
                         tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
+                        tool_duration_chart = gr.Plot(
+                            show_label=False,
+                            label="Tool Call Duration",
+                            elem_id="tool-duration-chart",
+                        )
+                    with gr.Row(equal_height=True):
                         skill_chart = gr.Plot(show_label=False, label="Skill Calls by Agent")
+                        gr.Column(scale=1)
                     with gr.Row(equal_height=True):
                         tool_outcome_chart = gr.Plot(
                             show_label=False,
@@ -222,6 +230,7 @@ def layout() -> OverviewRefs:
         duration_chart=duration_chart,
         behavior_md=behavior_md,
         tool_chart=tool_chart,
+        tool_duration_chart=tool_duration_chart,
         skill_chart=skill_chart,
         tool_outcome_chart=tool_outcome_chart,
         agent_summary_html=agent_summary_html,
@@ -261,6 +270,7 @@ def load_slots(refs: OverviewRefs) -> dict:
         "duration_chart": refs.duration_chart,
         "behavior_md": refs.behavior_md,
         "tool_chart": refs.tool_chart,
+        "tool_duration_chart": refs.tool_duration_chart,
         "skill_chart": refs.skill_chart,
         "tool_outcome_chart": refs.tool_outcome_chart,
         "agent_summary_html": refs.agent_summary_html,
@@ -294,6 +304,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "duration_chart": fig,
             "behavior_md": "",
             "tool_chart": fig,
+            "tool_duration_chart": fig,
             "skill_chart": fig,
             "tool_outcome_chart": fig,
             "agent_summary_html": "",
@@ -332,6 +343,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "duration_chart": ch["dur_fig"],
         "behavior_md": ov["behavior_text"],
         "tool_chart": ch["tl_fig"],
+        "tool_duration_chart": ch["tool_dur_fig"],
         "skill_chart": ch["skill_fig"],
         "tool_outcome_chart": ch["tool_outcome_fig"],
         "agent_summary_html": ch["agent_cards_html"],

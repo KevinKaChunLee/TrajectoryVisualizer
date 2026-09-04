@@ -83,21 +83,29 @@ def _truncate_chart_label(name: str, limit: int = 30) -> str:
 
 def _add_dummy_marker_legend(
     fig: go.Figure,
-    entries: list[tuple[str, str, str]],
+    entries: list[tuple],
     *,
     legendgroup: str,
     legendrank: int = 2000,
     size: int = 10,
 ) -> None:
-    """Add non-data legend rows ``(name, color, symbol)`` for shape keys."""
-    for name, color, symbol in entries:
+    """Add non-data legend rows for shape keys.
+
+    Each entry is ``(name, color, symbol)`` or
+    ``(name, color, symbol, line_dict)``.
+    """
+    for entry in entries:
+        name, color, symbol = entry[0], entry[1], entry[2]
+        marker: dict = {"color": color, "size": size, "symbol": symbol}
+        if len(entry) > 3 and entry[3]:
+            marker["line"] = entry[3]
         fig.add_trace(
             go.Scatter(
                 x=[None],
                 y=[None],
                 mode="markers",
                 name=name,
-                marker=dict(color=color, size=size, symbol=symbol),
+                marker=marker,
                 hoverinfo="skip",
                 legendgroup=legendgroup,
                 legendrank=legendrank,

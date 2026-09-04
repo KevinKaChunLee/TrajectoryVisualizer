@@ -108,6 +108,25 @@ class ToolOutcomeTimelineTests(unittest.TestCase):
         explore = next(t for t in named if t.name == "explore")
         symbols = list(explore.marker.symbol) if isinstance(explore.marker.symbol, (list, tuple)) else [explore.marker.symbol]
         self.assertIn("x", symbols)
+        widths = list(explore.marker.line.width)
+        colors = list(explore.marker.line.color)
+        self.assertEqual(widths, [0, 2])  # Grep success, Bash failure
+        self.assertEqual(colors[0], "rgba(0,0,0,0)")
+        self.assertEqual(colors[1], TOOL_OUTCOME_COLORS["failure"])
+
+    def test_single_agent_failure_has_red_border(self):
+        fig = build_tool_outcome_timeline([
+            _step(0, tools=[("Read", "success"), ("Bash", "error")]),
+        ])
+        by_name = {t.name: t for t in fig.data}
+        self.assertEqual(by_name["Failure"].marker.line.width, 2)
+        self.assertEqual(by_name["Failure"].marker.line.color, TOOL_OUTCOME_COLORS["failure"])
+        success_line = by_name["Success"].marker.line
+        self.assertTrue(
+            success_line is None
+            or success_line.width in (None, 0)
+            or success_line.color in (None, "rgba(0,0,0,0)")
+        )
 
     def test_only_agents_with_tools_count_as_multi(self):
         # Second agent exists in the trajectory but has no tool calls.

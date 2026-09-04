@@ -65,6 +65,7 @@ def build_report_html(
         ("Step duration", ch["dur_fig"]),
         ("Context-window pressure", dg["diag_pressure_chart"]),
         ("Tool-call frequency", ch["tl_fig"]),
+        ("Tool-call duration", ch["tool_dur_fig"]),
         ("Skill calls by agent", ch["skill_fig"]),
         ("Tool outcome timeline", ch["tool_outcome_fig"]),
         ("Tokens by agent", ch["agent_tok_fig"]),
