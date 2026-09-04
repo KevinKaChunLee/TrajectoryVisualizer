@@ -432,7 +432,6 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
                 continue
-            raw_name = tc.get("tool_name") or ""
             ms = tool_call_stats_duration_ms(tc)
             if ms is None:
                 continue
