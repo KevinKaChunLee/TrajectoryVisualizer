@@ -70,6 +70,23 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertEqual(metrics["output_throughput_coverage_pct"], 100.0)
         self.assertFalse(metrics["output_throughput_incomplete"])
 
+    def test_spawn_wait_excluded_from_throughput_denominator(self):
+        """Parent task wall-clock must not be added on top of the child's time."""
+        parent = _assistant_step(0, output_tokens=100, duration=100.0)
+        parent["tool_calls"] = [
+            {"tool_name": "task", "status": "success", "duration_ms": 80_000},
+        ]
+        parent["tool_call_count"] = 1
+        child = _assistant_step(1, output_tokens=400, duration=80.0)
+        child["is_sub_agent"] = True
+
+        metrics = compute_metrics([parent, child], {})
+
+        # 100 output tokens kept; duration is 20s (parent excl. wait) + 80s child.
+        self.assertEqual(metrics["output_throughput_timed_tokens"], 500.0)
+        self.assertEqual(metrics["output_throughput_timed_seconds"], 100.0)
+        self.assertEqual(metrics["output_tokens_per_sec"], 5.0)
+
     def test_overview_labels_generation_rate_as_output_throughput(self):
         # Import here because this UI module loads optional Gradio dependencies.
         from trajviz.insight.presenters import build_overview_kpi_html

@@ -99,6 +99,23 @@ class ToolDurationChartTests(unittest.TestCase):
             {SESSION_COLORS[0], SESSION_COLORS[1]},
         )
 
+    def test_excludes_spawn_tool_wall_clock(self):
+        """task/Agent duration is child wall-clock — omit so it doesn't dominate."""
+        fig = build_tool_duration_chart([
+            _step(0, tools=[
+                _tc("task", ms=300_000),
+                _tc("Read", ms=1000),
+            ]),
+            _step(1, tools=[
+                _tc("Agent", ms=120_000),
+                _tc("Bash", ms=2000, command="git status"),
+            ]),
+        ])
+        labels = {t.y[0] for t in fig.data}
+        self.assertEqual(labels, {"Read", "git"})
+        self.assertNotIn("task", labels)
+        self.assertNotIn("Agent", labels)
+
 
 if __name__ == "__main__":
     unittest.main()

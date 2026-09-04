@@ -17,9 +17,9 @@ from ..palette import (
     SESSION_COLORS,
     TOKEN_COLORS,
 )
-from trajviz.tool_vocab import parse_skill_name
+from trajviz.tool_vocab import SPAWN_TOOL_NAMES, parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
-from ..metrics import tool_call_duration_ms
+from ..metrics import spawn_wait_seconds, step_duration_excluding_spawn, tool_call_duration_ms
 from ..patterns import tool_chart_name
 from ..step_errors import step_error_kind
 
@@ -179,17 +179,23 @@ def build_duration_chart(
 
     System errors (scaffold tools) and tool errors (agentic/custom) are
     separate legend series. Optional context compression markers.
+
+    Spawn/delegation wait (``task``, ``Agent``, …) is subtracted from each
+    bar so parent steps blocked on a child agent do not create false spikes.
     """
     if not steps:
         fig = _empty_figure(380)
         _apply_dark(fig, dark)
         return fig
 
-    durations = [s["duration"] if s["duration"] is not None else 0 for s in steps]
+    chart_durs = [step_duration_excluding_spawn(s) for s in steps]
+    durations = [d if d is not None else 0 for d in chart_durs]
+    spawn_adjusted = [
+        d is not None and spawn_wait_seconds(s) > 0
+        for s, d in zip(steps, chart_durs, strict=True)
+    ]
 
-    # Average over steps that actually have a duration; steps with a missing
-    # duration render as 0 bars but must not drag the mean down.
-    real_durations = [s["duration"] for s in steps if s["duration"] is not None]
+    real_durations = [d for d in chart_durs if d is not None]
     avg_d = sum(real_durations) / len(real_durations) if real_durations else 0
 
     kinds = [step_error_kind(s) for s in steps]
@@ -206,43 +212,54 @@ def build_duration_chart(
 
     bar_width = 0.8
 
+    def _hover(idxs: list[int], *, suffix: str = "") -> tuple[list, str]:
+        custom = [[step_ids[i], " (excl. task wait)" if spawn_adjusted[i] else ""] for i in idxs]
+        template = (
+            "Step %{customdata[0]}<br>%{y:.1f}s%{customdata[1]}"
+            f"{suffix}<extra></extra>"
+        )
+        return custom, template
+
     fig = go.Figure()
+    normal_cd, normal_hover = _hover(normal_x)
     fig.add_trace(
         go.Bar(
             x=normal_x,
             y=normal_y,
-            customdata=[step_ids[i] for i in normal_x],
+            customdata=normal_cd,
             name="Normal",
             legendgroup="Normal",
             marker_color="#3b82f6",
             width=bar_width,
-            hovertemplate="Step %{customdata}<br>%{y:.1f}s<extra></extra>",
+            hovertemplate=normal_hover,
         )
     )
     if system_x:
+        system_cd, system_hover = _hover(system_x, suffix=" (system error)")
         fig.add_trace(
             go.Bar(
                 x=system_x,
                 y=system_y,
-                customdata=[step_ids[i] for i in system_x],
+                customdata=system_cd,
                 name="System Error",
                 legendgroup="System Error",
                 marker_color=DURATION_ERROR_COLORS["system"],
                 width=bar_width,
-                hovertemplate="Step %{customdata}<br>%{y:.1f}s (system error)<extra></extra>",
+                hovertemplate=system_hover,
             )
         )
     if tool_x:
+        tool_cd, tool_hover = _hover(tool_x, suffix=" (tool error)")
         fig.add_trace(
             go.Bar(
                 x=tool_x,
                 y=tool_y,
-                customdata=[step_ids[i] for i in tool_x],
+                customdata=tool_cd,
                 name="Tool Error",
                 legendgroup="Tool Error",
                 marker_color=DURATION_ERROR_COLORS["tool"],
                 width=bar_width,
-                hovertemplate="Step %{customdata}<br>%{y:.1f}s (tool error)<extra></extra>",
+                hovertemplate=tool_hover,
             )
         )
 
@@ -392,6 +409,10 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
 
     Each segment is one tool invocation. Hover shows the step index where it
     ran (and the agent label when multiple agents are present).
+
+    Spawn/delegation tools (``task``, ``Agent``, …) are omitted: their duration
+    is wall-clock for the whole child agent, which swamps real tool timings and
+    double-counts work already shown via the child's own calls.
     """
     color_map, labels, agent_id_of = bind_timeline_agents(steps)
     has_agents = len(color_map) > 1
@@ -405,6 +426,9 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
         step_idx = int(s.get("index", i))
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
+                continue
+            raw_name = tc.get("tool_name") or ""
+            if raw_name in SPAWN_TOOL_NAMES:
                 continue
             ms = tool_call_duration_ms(tc)
             if ms is None:

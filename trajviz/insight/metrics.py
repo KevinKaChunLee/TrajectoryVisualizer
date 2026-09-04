@@ -3,6 +3,8 @@
 import math
 import statistics
 
+from trajviz.tool_vocab import SPAWN_TOOL_NAMES
+
 # Statuses that mark a tool call as failed. Single definition shared by
 # tool_success_rate (_compute_tool_stats) and edit_precision
 # (compute_diagnostic_metrics) so the two can never disagree.
@@ -207,6 +209,41 @@ def tool_call_duration_ms(tc: dict) -> float | None:
     return float(dm) if isinstance(dm, (int, float)) and dm > 0 else None
 
 
+def spawn_wait_seconds(step: dict) -> float:
+    """Wall-clock spent blocked on spawn/delegation tools for *step*.
+
+    Parallel ``task``/``Agent`` calls overlap, so this is the **max** timed
+    spawn duration on the step (not the sum). Returns ``0`` when none.
+    """
+    wait = 0.0
+    for tc in step.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        if (tc.get("tool_name") or "") not in SPAWN_TOOL_NAMES:
+            continue
+        ms = tool_call_duration_ms(tc)
+        if ms is not None:
+            wait = max(wait, ms / 1000.0)
+    return wait
+
+
+def step_duration_excluding_spawn(step: dict) -> float | None:
+    """Step duration with spawn/delegation wait removed.
+
+    Used by the Step Duration chart and output tok/s denominator. Parent
+    messages blocked on ``task``/``Agent`` report wall-clock that is really
+    the child's run; subtracting that wait avoids double-counting.
+    """
+    raw = step.get("duration")
+    if (
+        not isinstance(raw, (int, float))
+        or isinstance(raw, bool)
+        or not math.isfinite(raw)
+    ):
+        return None
+    return max(0.0, float(raw) - spawn_wait_seconds(step))
+
+
 def _raw_summary(raw: dict) -> tuple[dict, dict | None]:
     """Extract the ``output`` dict and ``session_raw.summary`` dict from raw."""
     output = raw.get("output", {}) if isinstance(raw.get("output"), dict) else {}
@@ -339,6 +376,10 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
     Output throughput uses output tokens and duration from the exact same set
     of assistant steps.  This prevents untimed output (which is common for
     some sub-agent final messages) from inflating the measured rate.
+
+    Spawn/delegation wait on parent steps is excluded from the duration sum so
+    blocked ``task``/``Agent`` time is not counted twice alongside the child's
+    own timed steps (which understated tok/s).
     """
     first_user_created = None
     first_asst_completed = None
@@ -377,7 +418,7 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
             )
             if has_duration and has_output_tokens:
                 timed_assistant_step_count += 1
-                timed_asst_duration += duration
+                timed_asst_duration += max(0.0, float(duration) - spawn_wait_seconds(s))
                 timed_output_tokens += output_tokens
 
     result: dict = {}
