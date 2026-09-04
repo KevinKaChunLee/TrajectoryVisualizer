@@ -68,7 +68,7 @@ _MODEL_CONTEXT_LIMITS: tuple[tuple[str, int], ...] = (
     ("claude", 200_000),
     ("gpt-4o", 128_000),
 )
-DEFAULT_CONTEXT_WINDOW_LIMIT = 256_000
+DEFAULT_CONTEXT_WINDOW_LIMIT = 128_000
 
 
 def pressure_agent_key(agent_id: str) -> str:
