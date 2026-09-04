@@ -71,10 +71,27 @@ class ToolDurationChartTests(unittest.TestCase):
         self.assertEqual(len(read), 2)
         bases = sorted(float(t.base[0]) for t in read)
         self.assertEqual(bases, [0.0, 1.0])
-        steps = {int(t.customdata[0]) for t in read}
+        steps = {int(t.customdata[0][0]) for t in read}
         self.assertEqual(steps, {0, 3})
         for trace in fig.data:
-            self.assertIn("Step %{customdata}", trace.hovertemplate)
+            self.assertIn("Step %{customdata[0]}", trace.hovertemplate)
+            self.assertIn("%{customdata[1]:.1f}s", trace.hovertemplate)
+            # Segment length is in customdata — not %{x}, which is cumulative end.
+            self.assertAlmostEqual(float(trace.customdata[0][1]), float(trace.x[0]))
+
+    def test_hover_reports_chunk_not_cumulative_end(self):
+        fig = build_tool_duration_chart([
+            _step(0, tools=[_tc("Read", ms=1000)]),
+            _step(1, tools=[_tc("Read", ms=2000)]),
+        ])
+        read = [t for t in fig.data if t.y[0] == "Read"]
+        self.assertEqual(len(read), 2)
+        by_base = sorted(read, key=lambda t: float(t.base[0]))
+        # Second chunk: base=1s, width=2s; cumulative end would be 3s.
+        self.assertAlmostEqual(float(by_base[1].base[0]), 1.0)
+        self.assertAlmostEqual(float(by_base[1].x[0]), 2.0)
+        self.assertAlmostEqual(float(by_base[1].customdata[0][1]), 2.0)
+        self.assertNotIn("%{x", by_base[1].hovertemplate)
 
     def test_missing_index_falls_back_to_enumerate(self):
         steps = [
@@ -82,7 +99,7 @@ class ToolDurationChartTests(unittest.TestCase):
             _step(None, tools=[_tc("Read", ms=500)]),
         ]
         fig = build_tool_duration_chart(steps)
-        steps_seen = sorted(int(t.customdata[0]) for t in fig.data)
+        steps_seen = sorted(int(t.customdata[0][0]) for t in fig.data)
         self.assertEqual(steps_seen, [0, 1])
 
     def test_colors_segments_by_agent(self):
