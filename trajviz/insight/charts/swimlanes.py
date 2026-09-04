@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from ._layout import _add_dummy_marker_legend, _apply_chart_layout, _apply_dark, _empty_figure
+from ._layout import (
+    _add_dummy_marker_legend,
+    _apply_chart_layout,
+    _apply_dark,
+    _empty_figure,
+    _truncate_chart_label,
+)
 import plotly.graph_objects as go
 
 from ..palette import SESSION_COLORS, TOOL_OUTCOME_COLORS
+from ..patterns import tool_chart_name
 from ._timeline import (
     _disambiguate_timeline_labels,
     _legend_label,
@@ -228,9 +235,7 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
                 continue
-            tool_name = tc.get("tool_name") or "(unnamed)"
-            if len(tool_name) > 30:
-                tool_name = tool_name[:27] + "..."
+            tool_name = _truncate_chart_label(tool_chart_name(tc))
             ok = not (tc.get("error") or tc.get("status") == "error")
             by_agent[agent].append((idx, tool_name, ok))
             tool_names.add(tool_name)
@@ -263,9 +268,12 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
                         size=8,
                         symbol=["circle" if p[2] else "x" for p in group],
                     ),
-                    customdata=["Success" if p[2] else "Failure" for p in group],
+                    # Step index in customdata drives Workflow jump on click.
+                    customdata=[p[0] for p in group],
+                    hovertext=["Success" if p[2] else "Failure" for p in group],
                     hovertemplate=(
-                        f"{label}<br>Step %{{x}}<br>%{{y}}<br>%{{customdata}}<extra></extra>"
+                        f"{label}<br>Step %{{customdata}}<br>%{{y}}"
+                        f"<br>%{{hovertext}}<extra></extra>"
                     ),
                 )
             )
@@ -296,7 +304,10 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
                     mode="markers",
                     name=name,
                     marker=dict(color=color, size=8, symbol=symbol),
-                    hovertemplate=f"Step %{{x}}<br>%{{y}}<br>{name}<extra></extra>",
+                    customdata=[p[0] for p in subset],
+                    hovertemplate=(
+                        f"Step %{{customdata}}<br>%{{y}}<br>{name}<extra></extra>"
+                    ),
                 )
             )
         title = "Tool Outcome Timeline"
@@ -308,5 +319,6 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
         height=max(300, 30 * len(tool_names)),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
+    fig.update_layout(clickmode="event")
     _apply_dark(fig, dark)
     return fig

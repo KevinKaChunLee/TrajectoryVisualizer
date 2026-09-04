@@ -8,11 +8,19 @@ from trajviz.insight.charts.swimlanes import build_tool_outcome_timeline
 from trajviz.insight.palette import SESSION_COLORS, TOOL_OUTCOME_COLORS
 
 
-def _step(index: int, *, agent: str = "", tools: list[tuple[str, str]] | None = None) -> dict:
-    tool_calls = [
-        {"tool_name": name, "status": status}
-        for name, status in (tools or [])
-    ]
+def _step(
+    index: int,
+    *,
+    agent: str = "",
+    tools: list[tuple[str, str] | tuple[str, str, str]] | None = None,
+) -> dict:
+    tool_calls = []
+    for entry in tools or []:
+        name, status = entry[0], entry[1]
+        tc: dict = {"tool_name": name, "status": status}
+        if len(entry) == 3:
+            tc["input"] = {"command": entry[2]}
+        tool_calls.append(tc)
     return {
         "index": index,
         "role": "assistant",
@@ -36,6 +44,46 @@ class ToolOutcomeTimelineTests(unittest.TestCase):
         by_name = {t.name: t for t in fig.data}
         self.assertEqual(by_name["Success"].marker.color, TOOL_OUTCOME_COLORS["success"])
         self.assertEqual(by_name["Failure"].marker.color, TOOL_OUTCOME_COLORS["failure"])
+
+    def test_bash_calls_use_shell_command_labels(self):
+        fig = build_tool_outcome_timeline([
+            _step(0, tools=[
+                ("Bash", "success", "git status"),
+                ("Bash", "error", "python3 tools/run_eval.py"),
+                ("Read", "success"),
+            ]),
+        ])
+        y_values = set()
+        for trace in fig.data:
+            y_values.update(trace.y)
+        self.assertIn("git", y_values)
+        self.assertIn("run_eval.py", y_values)
+        self.assertIn("Read", y_values)
+        self.assertNotIn("Bash", y_values)
+        self.assertNotIn("python3", y_values)
+
+    def test_customdata_carries_step_index_for_workflow_jump(self):
+        fig = build_tool_outcome_timeline([
+            _step(3, tools=[("Read", "success"), ("Bash", "error", "git status")]),
+        ])
+        self.assertEqual(fig.layout.clickmode, "event")
+        by_name = {t.name: t for t in fig.data}
+        self.assertEqual(list(by_name["Success"].customdata), [3])
+        self.assertEqual(list(by_name["Failure"].customdata), [3])
+
+    def test_multi_agent_customdata_is_step_index(self):
+        steps = [
+            _step(2, tools=[("Read", "success")]),
+            _step(5, agent="explore", tools=[("Bash", "error", "npm test")]),
+        ]
+        fig = build_tool_outcome_timeline(steps)
+        named = [
+            t for t in fig.data
+            if t.name and t.name not in ("Success (circle)", "Failure (x)")
+        ]
+        explore = next(t for t in named if t.name == "explore")
+        self.assertEqual(list(explore.customdata), [5])
+        self.assertEqual(list(explore.hovertext), ["Failure"])
 
     def test_multi_agent_colors_by_agent_and_shapes_by_outcome(self):
         steps = [

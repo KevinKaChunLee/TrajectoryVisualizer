@@ -6,7 +6,7 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Callable
 
-from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
+from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure, _truncate_chart_label
 import plotly.graph_objects as go
 
 from ..parser import infer_non_cache_input
@@ -19,6 +19,7 @@ from ..palette import (
 )
 from trajviz.tool_vocab import parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
+from ..patterns import tool_chart_name
 from ..step_errors import step_error_kind
 
 
@@ -323,7 +324,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
                 continue
-            name = tc.get("tool_name") or "(unnamed)"
+            name = tool_chart_name(tc)
             agent_tool[agent][name] += 1
             all_tools[name] += 1
 
@@ -333,7 +334,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         return fig
 
     sorted_tools = sorted(all_tools.keys(), key=lambda t: all_tools[t])
-    display_names = [n if len(n) <= 30 else n[:27] + "..." for n in sorted_tools]
+    display_names = [_truncate_chart_label(n) for n in sorted_tools]
 
     fig = go.Figure()
     if has_agents:

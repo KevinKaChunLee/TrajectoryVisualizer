@@ -127,31 +127,34 @@ def build_ui() -> gr.Blocks:
                             }
                         }, 200);
                     };
-                    window.tvBindDurationJump = function () {
-                        const root = document.getElementById('duration-chart');
-                        if (!root) return;
-                        const plots = root.querySelectorAll('.js-plotly-plot');
-                        plots.forEach((gd) => {
-                            if (gd.__tvJumpBound || typeof gd.on !== 'function') return;
-                            gd.__tvJumpBound = true;
-                            gd.style.cursor = 'pointer';
-                            gd.on('plotly_click', function (data) {
-                                const pt = data && data.points && data.points[0];
-                                if (!pt) return;
-                                let idx = pt.customdata;
-                                if (Array.isArray(idx)) idx = idx[0];
-                                const n = Number(idx);
-                                if (!Number.isFinite(n)) return;
-                                window.tvGotoWorkflowStep(Math.trunc(n));
+                    window.tvBindChartWorkflowJumps = function () {
+                        ['duration-chart', 'tool-outcome-chart'].forEach((id) => {
+                            const root = document.getElementById(id);
+                            if (!root) return;
+                            const plots = root.querySelectorAll('.js-plotly-plot');
+                            plots.forEach((gd) => {
+                                if (gd.__tvJumpBound || typeof gd.on !== 'function') return;
+                                gd.__tvJumpBound = true;
+                                gd.style.cursor = 'pointer';
+                                gd.on('plotly_click', function (data) {
+                                    const pt = data && data.points && data.points[0];
+                                    if (!pt) return;
+                                    let idx = pt.customdata;
+                                    if (Array.isArray(idx)) idx = idx[0];
+                                    const n = Number(idx);
+                                    if (!Number.isFinite(n)) return;
+                                    window.tvGotoWorkflowStep(Math.trunc(n));
+                                });
                             });
                         });
                     };
+                    window.tvBindDurationJump = window.tvBindChartWorkflowJumps;
                     let timer = null;
                     const schedule = () => {
                         if (timer) clearTimeout(timer);
                         timer = setTimeout(() => {
                             window.tvExpandFileTimeline();
-                            window.tvBindDurationJump();
+                            window.tvBindChartWorkflowJumps();
                         }, 60);
                     };
                     new MutationObserver(schedule).observe(document.documentElement, {

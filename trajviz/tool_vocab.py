@@ -83,6 +83,11 @@ SPAWN_TOOL_NAMES: frozenset[str] = frozenset({
     "spawn_agent",
 })
 
+# Shell tool spellings across Claude Code, OpenCode/Pi/DSH, and adapters.
+BASH_TOOL_NAMES: frozenset[str] = frozenset({
+    "Bash", "bash", "BashCommand",
+})
+
 # Scaffold/harness primitives (search, file I/O). Failures of these are
 # "system" errors on the Step Duration chart. Bash is intentionally excluded —
 # it usually runs user-defined scripts, so its failures count as tool errors.

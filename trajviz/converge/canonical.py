@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from trajviz.tool_vocab import WRITE_TOOL_NAMES as _WRITE_TOOLS
+from trajviz.tool_vocab import BASH_TOOL_NAMES as _BASH_TOOLS, WRITE_TOOL_NAMES as _WRITE_TOOLS
 # Shared single-source helpers (C8/C9): validation-command detection lives in
 # insight/patterns.py and bash path extraction in insight/diagnostics.py (the
 # quoted + Windows-drive-aware implementation). Both modules import only
@@ -60,7 +60,6 @@ class CanonicalAction:
 
 _READ_TOOLS = {"Read", "read"}
 _SEARCH_TOOLS = {"Glob", "glob", "Grep", "grep", "find", "ToolSearch"}
-_BASH_TOOLS = {"Bash", "bash", "BashCommand"}
 # Native spawn names plus DSH leftovers if the loader did not map them to Agent.
 # Do not include Claude Code ``Task`` — that would recategorize non-DSH runs.
 _SPAWN_TOOLS = {"Agent", "agent", "subagent", "subagent_fork"}

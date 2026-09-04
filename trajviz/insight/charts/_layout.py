@@ -74,6 +74,13 @@ def _add_legend_hint(fig: go.Figure) -> None:
     )
 
 
+def _truncate_chart_label(name: str, limit: int = 30) -> str:
+    """Shorten a chart axis/legend label with a trailing ellipsis."""
+    if len(name) <= limit:
+        return name
+    return name[: limit - 3] + "..."
+
+
 def _add_dummy_marker_legend(
     fig: go.Figure,
     entries: list[tuple[str, str, str]],
