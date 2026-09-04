@@ -215,7 +215,7 @@ def spawn_wait_seconds(step: dict) -> float:
     Parallel ``task``/``Agent`` calls overlap, so this is the **max** timed
     spawn duration on the step (not the sum). Returns ``0`` when none.
     """
-    waits: list[float] = []
+    wait = 0.0
     for tc in step.get("tool_calls") or []:
         if not isinstance(tc, dict):
             continue
@@ -223,28 +223,25 @@ def spawn_wait_seconds(step: dict) -> float:
             continue
         ms = tool_call_duration_ms(tc)
         if ms is not None:
-            waits.append(ms / 1000.0)
-    return max(waits) if waits else 0.0
+            wait = max(wait, ms / 1000.0)
+    return wait
 
 
 def step_duration_excluding_spawn(step: dict) -> float | None:
-    """Step duration with spawn/delegation wait removed, for duration charts.
+    """Step duration with spawn/delegation wait removed.
 
-    Parent messages blocked on ``task``/``Agent`` report wall-clock that is
-    really the child's run. Subtracting that wait keeps Step Duration from
-    showing false spikes; child work remains visible on the child's steps.
+    Used by the Step Duration chart and output tok/s denominator. Parent
+    messages blocked on ``task``/``Agent`` report wall-clock that is really
+    the child's run; subtracting that wait avoids double-counting.
     """
     raw = step.get("duration")
-    if raw is None:
+    if (
+        not isinstance(raw, (int, float))
+        or isinstance(raw, bool)
+        or not math.isfinite(raw)
+    ):
         return None
-    try:
-        duration = float(raw)
-    except (TypeError, ValueError):
-        return None
-    wait = spawn_wait_seconds(step)
-    if wait <= 0:
-        return duration
-    return max(0.0, duration - min(wait, duration))
+    return max(0.0, float(raw) - spawn_wait_seconds(step))
 
 
 def _raw_summary(raw: dict) -> tuple[dict, dict | None]:
@@ -421,8 +418,7 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
             )
             if has_duration and has_output_tokens:
                 timed_assistant_step_count += 1
-                adj = step_duration_excluding_spawn(s)
-                timed_asst_duration += float(adj) if adj is not None else float(duration)
+                timed_asst_duration += max(0.0, float(duration) - spawn_wait_seconds(s))
                 timed_output_tokens += output_tokens
 
     result: dict = {}

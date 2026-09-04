@@ -113,8 +113,6 @@ class DurationChartSeriesTests(unittest.TestCase):
         fig = build_duration_chart(steps)
         by_name = {t.name: t for t in fig.data if getattr(t, "name", None)}
         normal = by_name["Normal"]
-        # x positions 0 and 2 are spawn-adjusted normals; 1 is system? Grep success → normal
-        # Actually Grep with success → normal (no error). All three normal.
         self.assertEqual(list(normal.x), [0, 1, 2])
         self.assertAlmostEqual(normal.y[0], 10.0)  # 100 - 90
         self.assertAlmostEqual(normal.y[1], 5.0)

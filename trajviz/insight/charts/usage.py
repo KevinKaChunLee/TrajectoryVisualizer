@@ -19,7 +19,7 @@ from ..palette import (
 )
 from trajviz.tool_vocab import SPAWN_TOOL_NAMES, parse_skill_name
 from ._timeline import _legend_label, bind_timeline_agents
-from ..metrics import step_duration_excluding_spawn, tool_call_duration_ms
+from ..metrics import spawn_wait_seconds, step_duration_excluding_spawn, tool_call_duration_ms
 from ..patterns import tool_chart_name
 from ..step_errors import step_error_kind
 
@@ -188,11 +188,10 @@ def build_duration_chart(
         _apply_dark(fig, dark)
         return fig
 
-    # Chart durations exclude spawn wall-clock; missing → 0 bar, excluded from avg.
     chart_durs = [step_duration_excluding_spawn(s) for s in steps]
     durations = [d if d is not None else 0 for d in chart_durs]
     spawn_adjusted = [
-        bool(s.get("duration") is not None and d is not None and d < float(s["duration"]))
+        d is not None and spawn_wait_seconds(s) > 0
         for s, d in zip(steps, chart_durs, strict=True)
     ]
 
