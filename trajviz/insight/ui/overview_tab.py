@@ -175,10 +175,10 @@ def layout() -> OverviewRefs:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
                     agent_summary_html = gr.HTML("")
                     with gr.Row(equal_height=True):
+                        agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
+                    with gr.Row(equal_height=True):
                         agent_token_chart = gr.Plot(show_label=False, label="Token Breakdown by Agent")
                         gr.Column(scale=1)
-                    with gr.Row(equal_height=True):
-                        agent_swimlane_chart = gr.Plot(show_label=False, label="Agent Swimlane")
 
                 with gr.Column(visible=False) as diagnostics_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>")
