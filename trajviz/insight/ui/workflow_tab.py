@@ -180,17 +180,30 @@ WORKFLOW_JS = """
                             }
 
                             /* Card click handler */
-                            function selectCard(card) {
+                            function selectCard(card, opts) {
                                 if (!card) return;
+                                opts = opts || {};
+                                var pushHistory = opts.pushHistory !== false;
                                 element.querySelectorAll('.wf-card').forEach(function(c) {
                                     c.classList.remove('wf-active');
                                 });
                                 card.classList.add('wf-active');
                                 var idx = card.dataset.stepIdx;
-                                /* URL deep linking */
+                                /* URL history: push on real navigation so Back works;
+                                   replace on load/restore so we don't spam the stack. */
                                 if (idx != null) {
                                     window.__wfSelectedStep = idx;
-                                    history.replaceState(null, '', '#step-' + idx);
+                                    var targetHash = '#step-' + idx;
+                                    var histState = { tvTab: 'Workflow', step: String(idx) };
+                                    if (window.location.hash !== targetHash) {
+                                        if (pushHistory) {
+                                            history.pushState(histState, '', targetHash);
+                                        } else {
+                                            history.replaceState(histState, '', targetHash);
+                                        }
+                                    } else if (!history.state || history.state.step !== String(idx)) {
+                                        history.replaceState(histState, '', targetHash);
+                                    }
                                 }
                                 var storeEl = document.querySelector('#wf-detail-store [data-b64]');
                                 var target = document.getElementById('wf-detail-content');
@@ -205,7 +218,8 @@ WORKFLOW_JS = """
                                 } catch(ex) { console.error('wf-click:', ex); }
                             }
                             element.addEventListener('click', function(e) {
-                                selectCard(e.target.closest('.wf-card'));
+                                var card = e.target.closest('.wf-card');
+                                selectCard(card, window.__tvSelectOpts || {});
                             });
 
                             /* Keyboard navigation: j/k for next/prev step */
@@ -234,7 +248,7 @@ WORKFLOW_JS = """
                                     var card = document.getElementById('wf-card-' + m[1]);
                                     if (card) {
                                         card.scrollIntoView({behavior:'smooth', block:'center'});
-                                        selectCard(card);
+                                        selectCard(card, { pushHistory: false });
                                     } else {
                                         /* Stale hash from an earlier session or another
                                            trajectory: drop it rather than guess. */
@@ -268,7 +282,7 @@ WORKFLOW_JS = """
                                     var card = document.getElementById('wf-card-' + idx);
                                     if (card) {
                                         if (target.querySelector('[data-wf-hidden-msg]')) {
-                                            selectCard(card);
+                                            selectCard(card, { pushHistory: false });
                                         }
                                         return;
                                     }
@@ -296,12 +310,12 @@ WORKFLOW_JS = """
                                     var badges = cards[i].querySelectorAll('.wf-badge');
                                     for (var j = 0; j < badges.length; j++) {
                                         if (badges[j].textContent.trim() === 'Assistant') {
-                                            selectCard(cards[i]);
+                                            selectCard(cards[i], { pushHistory: false });
                                             return;
                                         }
                                     }
                                 }
-                                if (cards.length) selectCard(cards[0]);
+                                if (cards.length) selectCard(cards[0], { pushHistory: false });
                             }, 600);
                             """
 

@@ -111,13 +111,62 @@ def build_ui() -> gr.Blocks:
                             }
                         });
                     };
-                    window.tvFocusWorkflowCard = function (card) {
+                    window.tvClickMainTab = function (label) {
+                        const tabs = document.querySelectorAll('button[role=tab]');
+                        for (let ti = 0; ti < tabs.length; ti++) {
+                            if (tabs[ti].textContent.trim() === label) {
+                                window.__tvHistoryNav = true;
+                                try {
+                                    tabs[ti].click();
+                                } finally {
+                                    window.__tvHistoryNav = false;
+                                }
+                                return tabs[ti];
+                            }
+                        }
+                        return null;
+                    };
+                    window.tvActiveMainTab = function () {
+                        const tabs = document.querySelectorAll('button[role=tab]');
+                        for (let ti = 0; ti < tabs.length; ti++) {
+                            const t = tabs[ti];
+                            const selected = t.getAttribute('aria-selected');
+                            if (selected === 'true' || selected === true) {
+                                return t.textContent.trim();
+                            }
+                            if (t.classList.contains('selected') || t.getAttribute('data-selected') === 'true') {
+                                return t.textContent.trim();
+                            }
+                        }
+                        return '';
+                    };
+                    /* Remember the tab we left so Back can restore Overview (etc.). */
+                    window.tvPushTabReturnPoint = function (tabLabel) {
+                        if (!tabLabel || tabLabel === 'Workflow') return;
+                        const cur = history.state || {};
+                        if (cur.tvTab === tabLabel && !window.location.hash.startsWith('#step-')) {
+                            return;
+                        }
+                        history.pushState(
+                            { tvTab: tabLabel },
+                            '',
+                            window.location.pathname + window.location.search + window.location.hash
+                        );
+                    };
+                    window.tvFocusWorkflowCard = function (card, opts) {
                         if (!card) return;
+                        opts = opts || {};
+                        const flash = opts.flash !== false;
+                        const pushHistory = opts.pushHistory !== false;
                         document.querySelectorAll('.wf-card.wf-flash').forEach((el) => {
                             el.classList.remove('wf-flash');
                         });
                         card.scrollIntoView({behavior: 'smooth', block: 'center'});
+                        /* selectCard reads __tvSelectOpts when invoked via click. */
+                        window.__tvSelectOpts = { pushHistory: pushHistory };
                         card.click();
+                        window.__tvSelectOpts = null;
+                        if (!flash) return;
                         card.classList.add('wf-flash');
                         if (card.__tvFlashTimer) clearTimeout(card.__tvFlashTimer);
                         card.__tvFlashTimer = setTimeout(() => {
@@ -125,26 +174,60 @@ def build_ui() -> gr.Blocks:
                             card.__tvFlashTimer = null;
                         }, 2000);
                     };
-                    window.tvGotoWorkflowStep = function (idx) {
-                        const tabs = document.querySelectorAll('button[role=tab]');
-                        for (let ti = 0; ti < tabs.length; ti++) {
-                            if (tabs[ti].textContent.trim() === 'Workflow') {
-                                tabs[ti].click();
-                                break;
+                    window.tvGotoWorkflowStep = function (idx, opts) {
+                        opts = opts || {};
+                        const fromHistory = !!opts.fromHistory;
+                        if (!fromHistory) {
+                            const active = window.tvActiveMainTab();
+                            if (active && active !== 'Workflow') {
+                                window.tvPushTabReturnPoint(active);
                             }
                         }
+                        window.tvClickMainTab('Workflow');
                         let attempts = 0;
                         const tryFocus = function () {
                             const c = document.getElementById('wf-card-' + idx);
                             if (c) {
-                                window.tvFocusWorkflowCard(c);
+                                window.tvFocusWorkflowCard(c, {
+                                    flash: !fromHistory,
+                                    pushHistory: !fromHistory,
+                                });
                                 return;
                             }
                             if (attempts++ < 12) {
                                 setTimeout(tryFocus, 80);
                             }
                         };
-                        setTimeout(tryFocus, 200);
+                        setTimeout(tryFocus, fromHistory ? 80 : 200);
+                    };
+                    if (!window.__tvPopstateBound) {
+                        window.__tvPopstateBound = true;
+                        window.addEventListener('popstate', function () {
+                            const state = history.state || {};
+                            if (state.tvTab && state.tvTab !== 'Workflow') {
+                                window.tvClickMainTab(state.tvTab);
+                                return;
+                            }
+                            const m = String(window.location.hash || '').match(/^#step-(\\d+)$/);
+                            if (m) {
+                                window.tvGotoWorkflowStep(Number(m[1]), { fromHistory: true });
+                            }
+                        });
+                    };
+                    if (!window.__tvTabHistoryBound) {
+                        window.__tvTabHistoryBound = true;
+                        /* Capture phase: read the prior tab before Gradio switches. */
+                        document.addEventListener('click', function (e) {
+                            const tab = e.target && e.target.closest && e.target.closest('button[role=tab]');
+                            if (!tab) return;
+                            const next = tab.textContent.trim();
+                            if (next !== 'Workflow') return;
+                            if (window.__tvHistoryNav) return;
+                            const prev = window.tvActiveMainTab();
+                            if (prev && prev !== 'Workflow') {
+                                window.tvPushTabReturnPoint(prev);
+                            }
+                        }, true);
                     };
                     window.tvBindChartWorkflowJumps = function () {
                         ['duration-chart', 'tool-outcome-chart', 'tool-duration-chart'].forEach((id) => {
