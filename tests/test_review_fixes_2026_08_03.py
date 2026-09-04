@@ -353,7 +353,7 @@ class MetricsTests(unittest.TestCase):
                 "tokens": {"total": 100, "input": 100, "output": 0, "reasoning": 0, "cache_read": 0},
                 "parts": [], "tool_call_count": 1, "error_count": 0, "has_reasoning": False,
                 "text_preview": "", "finish": "", "model_id": "", "agent": "",
-                "tool_calls": [{"tool_name": "Task", "time_start": None, "time_end": None,
+                "tool_calls": [{"tool_name": "Bash", "time_start": None, "time_end": None,
                                 "duration_ms": None, "metadata": {"totalDurationMs": 8000}}]}
         sa = compute_step_analytics([step])[0]
         self.assertEqual(sa["tool_time_share"], 0.8)

@@ -222,6 +222,22 @@ def tool_call_duration_ms(tc: dict) -> float | None:
     return float(dm) if isinstance(dm, (int, float)) and dm > 0 else None
 
 
+def is_spawn_tool_call(tc: dict) -> bool:
+    """True when *tc* is a spawn/delegation tool (``task``, ``Agent``, …)."""
+    return (tc.get("tool_name") or "") in SPAWN_TOOL_NAMES
+
+
+def tool_call_stats_duration_ms(tc: dict) -> float | None:
+    """Duration for aggregate tool stats (excludes spawn/delegation tools).
+
+    Spawn wall-clock is the child's run and is already reflected in child
+    steps' tools/durations; counting it again inflates Tool time / wait %.
+    """
+    if is_spawn_tool_call(tc):
+        return None
+    return tool_call_duration_ms(tc)
+
+
 def spawn_wait_seconds(step: dict) -> float:
     """Wall-clock spent blocked on spawn/delegation tools for *step*.
 
@@ -323,7 +339,7 @@ def build_message_metrics(steps: list[dict]) -> list[dict]:
 
         tool_time_sum = 0.0
         for tc in s.get("tool_calls", []):
-            v = tool_call_duration_ms(tc)
+            v = tool_call_stats_duration_ms(tc)
             if v is not None:
                 tool_time_sum += v / 1000.0
 
@@ -535,8 +551,14 @@ def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw)
     }
 
 
-def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows):
-    """Tool frequency, success rate, duration, and load metrics."""
+def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows,
+                        wall_clock: float | None = None):
+    """Tool frequency, success rate, duration, and load metrics.
+
+    Tool-time aggregates omit spawn/delegation tools (child wall-clock). Wait %
+    uses session wall-clock when available so parallel main+subagent step sums
+    do not inflate the denominator.
+    """
     tool_count = 0
     tool_breakdown: dict[str, int] = {}
     tool_status_breakdown: dict[str, int] = {}
@@ -561,13 +583,17 @@ def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows)
                     tool_success += 1
             else:
                 tool_success += 1
-            v = tool_call_duration_ms(tc)
+            v = tool_call_stats_duration_ms(tc)
             if v is not None:
                 tool_durations.append(v / 1000.0)
 
     assistant_rows = [r for r in message_rows if r.get("role") == "assistant"]
     tool_time_total = sum(r["tool_time_sum"] for r in message_rows)
     avg_td = statistics.mean(tool_durations) if tool_durations else 0
+    if isinstance(wall_clock, (int, float)) and not isinstance(wall_clock, bool) and wall_clock > 0:
+        wait_denom = float(wall_clock)
+    else:
+        wait_denom = float(total_duration) if total_duration else 0.0
     return {
         "tool_call_count": tool_count,
         "tool_breakdown": tool_breakdown,
@@ -577,15 +603,15 @@ def _compute_tool_stats(steps, total_tokens_total, total_duration, message_rows)
         "tool_success_rate": round(tool_success / tool_count * 100, 1) if tool_count else 0,
         "tokens_per_tool": round(total_tokens_total / tool_count) if tool_count else 0,
         "tool_time_total": round(tool_time_total, 2),
-        "tool_wait_share": round(tool_time_total / total_duration * 100, 1) if total_duration else 0,
+        "tool_wait_share": round(tool_time_total / wait_denom * 100, 1) if wait_denom else 0,
         "avg_tool_duration": round(avg_td, 3),
         "p95_tool_duration": round(_percentile(tool_durations, 0.95), 3) if tool_durations else 0,
         "max_tool_duration": round(max(tool_durations), 3) if tool_durations else 0,
         "multi_tool_steps": sum(1 for r in assistant_rows if r["tool_calls"] >= 2),
         "no_tool_assistant_steps": sum(1 for r in assistant_rows if r["tool_calls"] == 0),
         "patch_steps": sum(1 for r in assistant_rows if r["patch_parts"] > 0),
-        "tool_calls_per_min": round(tool_count / (total_duration / 60), 2) if total_duration > 0 else None,
-        "tool_time_fraction": round(tool_time_total / total_duration, 4) if total_duration > 0 else None,
+        "tool_calls_per_min": round(tool_count / (wait_denom / 60), 2) if wait_denom > 0 else None,
+        "tool_time_fraction": round(tool_time_total / wait_denom, 4) if wait_denom > 0 else None,
         "tool_system_failure_rate": round(tool_fail / tool_count, 4) if tool_count > 0 else None,
     }
 
@@ -651,6 +677,33 @@ def _compute_efficiency_stats(steps, message_rows, raw):
     }
 
 
+def session_wall_clock_seconds(
+    steps: list[dict],
+    timing: dict | None = None,
+) -> float | None:
+    """Calendar elapsed time for the session in seconds.
+
+    Prefers ``timing.total_duration`` from the loader when present. Otherwise
+    derives wall-clock from the span of step ``time_created_ms`` /
+    ``time_completed_ms``. That matters for multi-agent traces where summed
+    step durations double-count overlapping parent wait and child work.
+    """
+    if isinstance(timing, dict):
+        td = timing.get("total_duration")
+        if isinstance(td, (int, float)) and not isinstance(td, bool) and td > 0:
+            return float(td)
+    stamps: list[float] = []
+    for s in steps:
+        for key in ("time_created_ms", "time_completed_ms"):
+            v = s.get(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                stamps.append(float(v))
+    if len(stamps) < 2:
+        return None
+    span = (max(stamps) - min(stamps)) / 1000.0
+    return span if span > 0 else None
+
+
 def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | None = None) -> dict:
     """Aggregate metrics from parsed steps and raw trajectory."""
     if message_rows is None:
@@ -666,6 +719,9 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
             total_tokens[k] += s["tokens"].get(k, 0)
 
     timing = raw.get("timing", {}) if isinstance(raw.get("timing"), dict) else {}
+    wall_clock = session_wall_clock_seconds(steps, timing)
+    if wall_clock is None:
+        wall_clock = total_duration
 
     return {
         "total_steps": len(steps),
@@ -674,9 +730,12 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
         "median_duration": round(statistics.median(durations), 2) if durations else 0,
         "p95_duration": round(_percentile(durations, 0.95), 2) if durations else 0,
         "max_duration": round(max(durations), 2) if durations else 0,
-        "wall_clock": timing.get("total_duration", total_duration),
+        "wall_clock": wall_clock,
         **_compute_token_stats(total_tokens, total_duration, steps, message_rows, raw),
-        **_compute_tool_stats(steps, total_tokens["total"], total_duration, message_rows),
+        **_compute_tool_stats(
+            steps, total_tokens["total"], total_duration, message_rows,
+            wall_clock=wall_clock if isinstance(wall_clock, (int, float)) else None,
+        ),
         **_compute_efficiency_stats(steps, message_rows, raw),
         **_compute_command_metrics(steps),
         **_compute_timing_metrics(steps),

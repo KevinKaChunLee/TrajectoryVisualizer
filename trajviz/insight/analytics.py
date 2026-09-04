@@ -2,7 +2,7 @@
 
 import statistics
 
-from .metrics import tool_call_duration_ms
+from .metrics import tool_call_stats_duration_ms
 from .parser import infer_non_cache_input
 
 
@@ -12,13 +12,12 @@ def compute_step_analytics(steps: list[dict]) -> list[dict]:
     for i, step in enumerate(steps):
         duration_s = step["duration"]
 
-        # Tool time: naive sum of individual tool call durations (may overcount
-        # parallel calls). Uses the shared fallback chain in
-        # tool_call_duration_ms, matching the message-level tool-time
-        # computation exactly.
+        # Tool time: sum of non-spawn tool durations (may still overcount
+        # parallel calls within a step). Spawn/delegation wait is omitted —
+        # that wall-clock belongs to the child agent.
         tool_time_ms = 0
         for tc in step["tool_calls"]:
-            v = tool_call_duration_ms(tc)
+            v = tool_call_stats_duration_ms(tc)
             if v is not None:
                 tool_time_ms += v
 
