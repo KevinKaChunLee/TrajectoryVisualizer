@@ -162,14 +162,14 @@ def layout() -> OverviewRefs:
                             elem_id="tool-duration-chart",
                         )
                     with gr.Row(equal_height=True):
-                        skill_chart = gr.Plot(show_label=False, label="Skill Calls by Agent")
-                        gr.Column(scale=1)
-                    with gr.Row(equal_height=True):
                         tool_outcome_chart = gr.Plot(
                             show_label=False,
                             label="Tool Outcome Timeline",
                             elem_id="tool-outcome-chart",
                         )
+                    with gr.Row(equal_height=True):
+                        skill_chart = gr.Plot(show_label=False, label="Skill Calls by Agent")
+                        gr.Column(scale=1)
 
                 with gr.Column(visible=False) as agents_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
