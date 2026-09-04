@@ -193,12 +193,25 @@ def _percentile(values: list[float], q: float) -> float:
 def tool_call_duration_ms(tc: dict) -> float | None:
     """Best-effort duration of one tool call in milliseconds.
 
-    Fallback chain: explicit ``time_start``/``time_end`` pair, then
-    ``duration_ms``, then ``metadata.totalDurationMs`` (Claude Code tool
-    calls carry only the latter). Returns ``None`` when no usable timing
-    exists. Shared by analytics, message metrics, tool stats, and hotspot
-    decomposition so they can never disagree about the same tool call.
+    Fallback chain:
+
+    1. ``time_created``/``time_updated`` — OpenCode part wall-clock from when
+       the tool call was issued until the result was written (includes queue).
+    2. ``time_start``/``time_end`` — execution window only (OpenCode
+       ``state.time``, or formats that stamp run bounds).
+    3. ``duration_ms``, then ``metadata.totalDurationMs`` (Claude Code).
+
+    Returns ``None`` when no usable timing exists. Shared by analytics,
+    message metrics, tool stats, and hotspot decomposition so they can never
+    disagree about the same tool call.
     """
+    created, updated = tc.get("time_created"), tc.get("time_updated")
+    if (
+        isinstance(created, (int, float))
+        and isinstance(updated, (int, float))
+        and updated >= created
+    ):
+        return float(updated - created)
     ts, te = tc.get("time_start"), tc.get("time_end")
     if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
         return float(te - ts)

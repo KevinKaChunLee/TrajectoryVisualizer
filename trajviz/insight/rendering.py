@@ -10,6 +10,7 @@ from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
 from .charts import bind_timeline_agents
+from .metrics import tool_call_duration_ms
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
 from .step_errors import step_error_kind
 from .styles import WORKFLOW_CSS
@@ -518,8 +519,9 @@ def _format_tool_call_detail(p: dict) -> str:
         out = out[:2000] + "\n... (truncated)"
 
     tc_dur = ""
-    if p.get("time_start") and p.get("time_end"):
-        tc_dur = f" &mdash; {round((p['time_end'] - p['time_start']) / 1000, 2)}s"
+    dur_ms = tool_call_duration_ms(p)
+    if dur_ms is not None:
+        tc_dur = f" &mdash; {round(dur_ms / 1000, 2)}s"
 
     meta_parts: list[str] = []
     tool_id = p.get("tool_id", "")
