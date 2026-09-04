@@ -81,14 +81,47 @@ class DurationChartSeriesTests(unittest.TestCase):
         self.assertEqual(list(by_name["Tool Error"].x), [2])
         self.assertEqual(by_name["System Error"].marker.color, DURATION_ERROR_COLORS["system"])
         self.assertEqual(by_name["Tool Error"].marker.color, DURATION_ERROR_COLORS["tool"])
-        self.assertEqual(list(by_name["Normal"].customdata), [0])
-        self.assertEqual(list(by_name["System Error"].customdata), [1])
-        self.assertEqual(list(by_name["Tool Error"].customdata), [2])
+        self.assertEqual(list(by_name["Normal"].customdata), [[0, ""]])
+        self.assertEqual(list(by_name["System Error"].customdata), [[1, ""]])
+        self.assertEqual(list(by_name["Tool Error"].customdata), [[2, ""]])
 
     def test_omits_empty_error_series(self):
         fig = build_duration_chart([_step(duration=1.0, tool_calls=[_tc("Grep")])])
         names = [t.name for t in fig.data if getattr(t, "name", None)]
         self.assertEqual(names, ["Normal", "System Error"])
+
+    def test_subtracts_spawn_wait_from_bars(self):
+        """Parent blocked on task should not show the child's full wall-clock."""
+        steps = [
+            _step(
+                duration=100.0,
+                tool_calls=[
+                    {"tool_name": "task", "status": "success", "duration_ms": 90_000},
+                    {"tool_name": "Read", "status": "success", "duration_ms": 500},
+                ],
+            ),
+            _step(duration=5.0, tool_calls=[_tc("Grep", status="success")]),
+            _step(
+                duration=60.0,
+                tool_calls=[
+                    # Parallel tasks: take max (50s), not sum.
+                    {"tool_name": "task", "status": "success", "duration_ms": 40_000},
+                    {"tool_name": "task", "status": "success", "duration_ms": 50_000},
+                ],
+            ),
+        ]
+        fig = build_duration_chart(steps)
+        by_name = {t.name: t for t in fig.data if getattr(t, "name", None)}
+        normal = by_name["Normal"]
+        # x positions 0 and 2 are spawn-adjusted normals; 1 is system? Grep success → normal
+        # Actually Grep with success → normal (no error). All three normal.
+        self.assertEqual(list(normal.x), [0, 1, 2])
+        self.assertAlmostEqual(normal.y[0], 10.0)  # 100 - 90
+        self.assertAlmostEqual(normal.y[1], 5.0)
+        self.assertAlmostEqual(normal.y[2], 10.0)  # 60 - 50
+        self.assertEqual(normal.customdata[0][1], " (excl. task wait)")
+        self.assertEqual(normal.customdata[1][1], "")
+        self.assertEqual(normal.customdata[2][1], " (excl. task wait)")
 
 
 if __name__ == "__main__":
