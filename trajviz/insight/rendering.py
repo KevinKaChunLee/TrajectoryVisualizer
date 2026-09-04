@@ -303,7 +303,9 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
         onclick = (
             f"(function(){{"
             f"var c=document.getElementById('wf-card-{idx}');"
-            f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
+            f"if(!c)return;"
+            f"if(typeof window.tvFocusWorkflowCard==='function'){{window.tvFocusWorkflowCard(c);}}"
+            f"else{{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
             f"}})()"
         )
         toc_indent = "padding-left:16px;" if step.get("is_sub_agent") else ""
@@ -911,7 +913,10 @@ def _diag_jump_onclick(idx: int) -> str:
         f"{_JS_GOTO_WORKFLOW}"
         f"setTimeout(function(){{"
         f"var c=document.getElementById('wf-card-{idx}');"
-        f"if(c){{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
+        f"if(c){{"
+        f"if(typeof window.tvFocusWorkflowCard==='function'){{window.tvFocusWorkflowCard(c);}}"
+        f"else{{c.scrollIntoView({{behavior:'smooth',block:'center'}});c.click();}}"
+        f"}}"
         f"}},200);"
         f"}})()"
     )

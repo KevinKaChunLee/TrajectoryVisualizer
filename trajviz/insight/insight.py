@@ -111,6 +111,20 @@ def build_ui() -> gr.Blocks:
                             }
                         });
                     };
+                    window.tvFocusWorkflowCard = function (card) {
+                        if (!card) return;
+                        document.querySelectorAll('.wf-card.wf-flash').forEach((el) => {
+                            el.classList.remove('wf-flash');
+                        });
+                        card.scrollIntoView({behavior: 'smooth', block: 'center'});
+                        card.click();
+                        card.classList.add('wf-flash');
+                        if (card.__tvFlashTimer) clearTimeout(card.__tvFlashTimer);
+                        card.__tvFlashTimer = setTimeout(() => {
+                            card.classList.remove('wf-flash');
+                            card.__tvFlashTimer = null;
+                        }, 2000);
+                    };
                     window.tvGotoWorkflowStep = function (idx) {
                         const tabs = document.querySelectorAll('button[role=tab]');
                         for (let ti = 0; ti < tabs.length; ti++) {
@@ -119,13 +133,18 @@ def build_ui() -> gr.Blocks:
                                 break;
                             }
                         }
-                        setTimeout(function () {
+                        let attempts = 0;
+                        const tryFocus = function () {
                             const c = document.getElementById('wf-card-' + idx);
                             if (c) {
-                                c.scrollIntoView({behavior: 'smooth', block: 'center'});
-                                c.click();
+                                window.tvFocusWorkflowCard(c);
+                                return;
                             }
-                        }, 200);
+                            if (attempts++ < 12) {
+                                setTimeout(tryFocus, 80);
+                            }
+                        };
+                        setTimeout(tryFocus, 200);
                     };
                     window.tvBindChartWorkflowJumps = function () {
                         ['duration-chart', 'tool-outcome-chart', 'tool-duration-chart'].forEach((id) => {
