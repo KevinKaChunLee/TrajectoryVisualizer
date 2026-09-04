@@ -331,10 +331,13 @@ class WorkflowFilteringTests(unittest.TestCase):
         self.assertIn("Selected step is hidden by the current filters", source)
         watcher = source[source.index("__wfHiddenStepObserverAttached"):]
         watcher = watcher[:watcher.index("MutationObserver")]
-        self.assertIn("selectCard(card)", watcher)
+        self.assertIn("selectCard(card, { pushHistory: false })", watcher)
         deep_link = source[source.index("Deep link: on load"):source.index("Hidden-selection watcher")]
         self.assertNotIn("hidden by the current filters", deep_link)
         self.assertIn("history.replaceState(", deep_link)
+        self.assertIn("pushHistory: false", deep_link)
+        self.assertIn("history.pushState(", source)
+        self.assertIn("pushHistory", source)
 
 
 @unittest.skipUnless(shutil.which("node"), "requires Node.js to execute the chip state machine")

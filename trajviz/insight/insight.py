@@ -111,21 +111,102 @@ def build_ui() -> gr.Blocks:
                             }
                         });
                     };
-                    window.tvGotoWorkflowStep = function (idx) {
+                    window.tvClickMainTab = function (label) {
                         const tabs = document.querySelectorAll('button[role=tab]');
                         for (let ti = 0; ti < tabs.length; ti++) {
-                            if (tabs[ti].textContent.trim() === 'Workflow') {
+                            if (tabs[ti].textContent.trim() === label) {
                                 tabs[ti].click();
-                                break;
+                                return;
                             }
                         }
-                        setTimeout(function () {
+                    };
+                    window.tvActiveMainTab = function () {
+                        const tabs = document.querySelectorAll('button[role=tab]');
+                        for (let ti = 0; ti < tabs.length; ti++) {
+                            if (tabs[ti].getAttribute('aria-selected') === 'true') {
+                                return tabs[ti].textContent.trim();
+                            }
+                        }
+                        return '';
+                    };
+                    window.tvPushTabReturnPoint = function (tabLabel) {
+                        if (!tabLabel || tabLabel === 'Workflow') return;
+                        const cur = history.state || {};
+                        if (cur.tvTab === tabLabel && !window.location.hash.startsWith('#step-')) {
+                            return;
+                        }
+                        history.pushState(
+                            { tvTab: tabLabel },
+                            '',
+                            window.location.pathname + window.location.search + window.location.hash
+                        );
+                    };
+                    window.tvFocusWorkflowCard = function (card, opts) {
+                        if (!card) return;
+                        opts = opts || {};
+                        const flash = opts.flash !== false;
+                        document.querySelectorAll('.wf-card.wf-flash').forEach((el) => {
+                            el.classList.remove('wf-flash');
+                        });
+                        card.scrollIntoView({behavior: 'smooth', block: 'center'});
+                        if (typeof window.tvSelectWorkflowCard === 'function') {
+                            window.tvSelectWorkflowCard(card, {
+                                pushHistory: opts.pushHistory !== false,
+                            });
+                        } else {
+                            card.click();
+                        }
+                        if (!flash) return;
+                        card.classList.add('wf-flash');
+                        if (card.__tvFlashTimer) clearTimeout(card.__tvFlashTimer);
+                        card.__tvFlashTimer = setTimeout(() => {
+                            card.classList.remove('wf-flash');
+                            card.__tvFlashTimer = null;
+                        }, 2000);
+                    };
+                    window.tvGotoWorkflowStep = function (idx, opts) {
+                        opts = opts || {};
+                        const restore = !!opts.restore;
+                        /* Tab return points come from the capture-phase Workflow
+                           tab listener (including programmatic clicks). */
+                        if (window.tvActiveMainTab() !== 'Workflow') {
+                            window.tvClickMainTab('Workflow');
+                        }
+                        let attempts = 0;
+                        const tryFocus = function () {
                             const c = document.getElementById('wf-card-' + idx);
                             if (c) {
-                                c.scrollIntoView({behavior: 'smooth', block: 'center'});
-                                c.click();
+                                window.tvFocusWorkflowCard(c, {
+                                    flash: !restore,
+                                    pushHistory: !restore,
+                                });
+                                return;
                             }
-                        }, 200);
+                            if (attempts++ < 12) {
+                                setTimeout(tryFocus, 80);
+                            }
+                        };
+                        setTimeout(tryFocus, 100);
+                    };
+                    if (!window.__tvHistoryBound) {
+                        window.__tvHistoryBound = true;
+                        window.addEventListener('popstate', function () {
+                            const state = history.state || {};
+                            if (state.tvTab && state.tvTab !== 'Workflow') {
+                                window.tvClickMainTab(state.tvTab);
+                                return;
+                            }
+                            const m = window.location.hash.match(/^#step-(\\d+)$/);
+                            if (m) {
+                                window.tvGotoWorkflowStep(Number(m[1]), { restore: true });
+                            }
+                        });
+                        /* Capture phase: read the prior tab before Gradio switches. */
+                        document.addEventListener('click', function (e) {
+                            const tab = e.target && e.target.closest && e.target.closest('button[role=tab]');
+                            if (!tab || tab.textContent.trim() !== 'Workflow') return;
+                            window.tvPushTabReturnPoint(window.tvActiveMainTab());
+                        }, true);
                     };
                     window.tvBindChartWorkflowJumps = function () {
                         ['duration-chart', 'tool-outcome-chart', 'tool-duration-chart'].forEach((id) => {

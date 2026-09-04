@@ -1307,6 +1307,42 @@ WORKFLOW_CSS = """
 }
 .wf-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.10); transform: translateY(-1px); }
 .wf-card.wf-active { border-left: 4px solid var(--ov-accent); box-shadow: 0 2px 10px rgba(29,78,216,0.15); }
+/* Temporary pulse when jumping here from Overview charts / diagnostics. */
+.wf-card.wf-flash {
+    animation: wf-flash-pulse 2s ease-out 1;
+    z-index: 2;
+    border-color: var(--ov-accent) !important;
+    border-width: 3px;
+    border-left-width: 6px;
+    background-color: color-mix(in srgb, var(--ov-accent) 22%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ov-accent) 45%, transparent),
+                0 8px 28px rgba(29, 78, 216, 0.4);
+}
+@keyframes wf-flash-pulse {
+    0% {
+        transform: scale(1.02);
+        background-color: color-mix(in srgb, var(--ov-accent) 38%, transparent);
+        box-shadow: 0 0 0 8px color-mix(in srgb, var(--ov-accent) 50%, transparent),
+                    0 10px 32px rgba(29, 78, 216, 0.5);
+    }
+    18% {
+        transform: scale(1);
+        background-color: color-mix(in srgb, var(--ov-accent) 28%, transparent);
+        box-shadow: 0 0 0 5px color-mix(in srgb, var(--ov-accent) 42%, transparent),
+                    0 8px 28px rgba(29, 78, 216, 0.42);
+    }
+    55% {
+        background-color: color-mix(in srgb, var(--ov-accent) 22%, transparent);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--ov-accent) 35%, transparent),
+                    0 6px 22px rgba(29, 78, 216, 0.35);
+    }
+    100% {
+        transform: scale(1);
+        background-color: color-mix(in srgb, var(--ov-accent) 0%, transparent);
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--ov-accent) 0%, transparent),
+                    0 2px 10px rgba(29, 78, 216, 0.15);
+    }
+}
 .wf-connector {
     width: 2px; height: 20px; background: linear-gradient(to bottom, var(--wf-connector-from), var(--wf-connector-to));
     margin: 0 auto;
