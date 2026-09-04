@@ -308,13 +308,13 @@ class WindowAndCompactionTests(unittest.TestCase):
         self.assertEqual(result["window_limit"], 256_000)
         self.assertEqual(result["loaded_pct"], 7.8)
 
-    def test_unknown_model_defaults_to_256k(self):
+    def test_unknown_model_defaults_to_128k(self):
         steps = [
-            _step(1, tokens=_tokens(inp=25_600), model_id="mystery-model",
-                  parts=[{"type": "text", "text": _chars(25_600)}]),
+            _step(1, tokens=_tokens(inp=12_800), model_id="mystery-model",
+                  parts=[{"type": "text", "text": _chars(12_800)}]),
         ]
         result = context_usage_breakdown(steps)
-        self.assertEqual(result["window_limit"], 256_000)
+        self.assertEqual(result["window_limit"], 128_000)
         self.assertEqual(result["loaded_pct"], 10.0)
 
     def test_compaction_drops_pre_compaction_text(self):
@@ -483,7 +483,7 @@ class HtmlTests(unittest.TestCase):
         self.assertIn("% window", html)
         self.assertNotIn("window limit unknown", html)
 
-    def test_unknown_window_uses_256k_column(self):
+    def test_unknown_window_uses_128k_column(self):
         steps = [
             _step(1, tokens=_tokens(inp=80), model_id="mystery-model",
                   parts=[{"type": "text", "text": _chars(20)}]),
@@ -491,4 +491,4 @@ class HtmlTests(unittest.TestCase):
         html = format_context_usage_html(context_usage_breakdown(steps))
         self.assertIn("% window", html)
         self.assertIn("% loaded", html)
-        self.assertIn("256k", html)
+        self.assertIn("128k", html)
