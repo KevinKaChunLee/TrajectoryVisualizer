@@ -71,7 +71,6 @@ def build_report_html(
         ("Tokens by agent", ch["agent_tok_fig"]),
         ("Agent swimlane", ch["swimlane_fig"]),
         ("File interactions", dg["diag_file_chart"]),
-        ("Tool-error classification", ch["error_class_fig"]),
         ("Plan timeline", ch["plan_timeline_fig"]),
     ]
 
