@@ -310,10 +310,22 @@ def build_duration_chart(
         yaxis="Duration (s)",
         height=400,
         barmode="overlay",
-        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5, itemclick="toggleothers"),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.06,
+            xanchor="center",
+            x=0.5,
+            # Click hides one series (e.g. Normal) so System Error and Tool
+            # Error can stay together. Double-click still isolates a single
+            # series. toggleothers on click made that combination impossible.
+            itemclick="toggle",
+            itemdoubleclick="toggleothers",
+        ),
     )
     fig.update_layout(margin=dict(t=70), clickmode="event")
     fig.update_xaxes(range=[-0.5, len(steps) - 0.5])
+    _add_legend_hint(fig)
 
     # Context compression markers (red vertical lines)
     if compression_steps:
