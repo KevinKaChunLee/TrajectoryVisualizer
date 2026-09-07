@@ -84,6 +84,8 @@ class DurationChartSeriesTests(unittest.TestCase):
         self.assertEqual(list(by_name["Normal"].customdata), [[0, ""]])
         self.assertEqual(list(by_name["System Error"].customdata), [[1, ""]])
         self.assertEqual(list(by_name["Tool Error"].customdata), [[2, ""]])
+        self.assertEqual(fig.layout.legend.itemclick, "toggle")
+        self.assertEqual(fig.layout.legend.itemdoubleclick, "toggleothers")
 
     def test_omits_empty_error_series(self):
         fig = build_duration_chart([_step(duration=1.0, tool_calls=[_tc("Grep")])])
