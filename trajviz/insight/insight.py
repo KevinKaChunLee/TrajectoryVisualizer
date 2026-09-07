@@ -129,6 +129,11 @@ def build_ui() -> gr.Blocks:
                         }
                         return '';
                     };
+                    window.tvWorkflowStepUrl = function (idx) {
+                        return window.location.pathname
+                            + window.location.search
+                            + '#step-' + idx;
+                    };
                     window.tvPushTabReturnPoint = function (tabLabel) {
                         if (!tabLabel || tabLabel === 'Workflow') return;
                         const cur = history.state || {};
@@ -167,26 +172,66 @@ def build_ui() -> gr.Blocks:
                     window.tvGotoWorkflowStep = function (idx, opts) {
                         opts = opts || {};
                         const restore = !!opts.restore;
+                        const targetHash = '#step-' + idx;
+                        /* Set the hash first so Workflow js_on_load auto-select
+                           does not steal the target, and so a late card mount
+                           can still deep-link. Use pathname+search so a <base>
+                           href or reverse-proxy prefix cannot drop the app path. */
+                        if (!restore) {
+                            const url = window.tvWorkflowStepUrl(idx);
+                            const histState = { tvTab: 'Workflow' };
+                            if (window.location.hash !== targetHash) {
+                                history.pushState(histState, '', url);
+                            } else {
+                                history.replaceState(histState, '', url);
+                            }
+                        }
                         /* Tab return points come from the capture-phase Workflow
                            tab listener (including programmatic clicks). */
                         if (window.tvActiveMainTab() !== 'Workflow') {
                             window.tvClickMainTab('Workflow');
                         }
-                        let attempts = 0;
+                        window.__tvGotoGen = (window.__tvGotoGen || 0) + 1;
+                        const gen = window.__tvGotoGen;
+                        const started = Date.now();
+                        let askedReset = false;
                         const tryFocus = function () {
+                            if (gen !== window.__tvGotoGen) return;
                             const c = document.getElementById('wf-card-' + idx);
                             if (c) {
                                 window.tvFocusWorkflowCard(c, {
                                     flash: !restore,
-                                    pushHistory: !restore,
+                                    pushHistory: false,
                                 });
                                 return;
                             }
-                            if (attempts++ < 12) {
-                                setTimeout(tryFocus, 80);
+                            const elapsed = Date.now() - started;
+                            /* Cards are on screen but this step is not: filters
+                               (or search) hid it. Reset chips once, then keep
+                               waiting for the Gradio re-render. */
+                            if (!askedReset && !restore
+                                    && document.querySelector('.wf-card')
+                                    && elapsed > 400) {
+                                askedReset = true;
+                                const reset = document.querySelector(
+                                    '[data-wf-action="reset-filters"]'
+                                );
+                                if (reset) reset.click();
+                            }
+                            if (elapsed < 8000) {
+                                setTimeout(tryFocus, 50);
+                                return;
+                            }
+                            if (restore && document.querySelector('.wf-card')) {
+                                /* Stale hash from an earlier session or another
+                                   trajectory: drop it rather than guess. */
+                                history.replaceState(
+                                    null, '',
+                                    window.location.pathname + window.location.search
+                                );
                             }
                         };
-                        setTimeout(tryFocus, 100);
+                        setTimeout(tryFocus, 0);
                     };
                     if (!window.__tvHistoryBound) {
                         window.__tvHistoryBound = true;
@@ -208,28 +253,36 @@ def build_ui() -> gr.Blocks:
                             window.tvPushTabReturnPoint(window.tvActiveMainTab());
                         }, true);
                     };
+                    /* Executed by tests/test_workflow_detail_ui.py against a fake plot. */
+                    /* __TV_BIND_JUMPS_BEGIN__ */
                     window.tvBindChartWorkflowJumps = function () {
+                        /* Rebind on every schedule: Gradio Plotly.react / newPlot
+                           reuses the graph div and drops .on() listeners, which
+                           a one-shot bind flag would miss. */
                         ['duration-chart', 'tool-outcome-chart', 'tool-duration-chart'].forEach((id) => {
                             const root = document.getElementById(id);
                             if (!root) return;
-                            const plots = root.querySelectorAll('.js-plotly-plot');
-                            plots.forEach((gd) => {
-                                if (gd.__tvJumpBound || typeof gd.on !== 'function') return;
-                                gd.__tvJumpBound = true;
-                                gd.style.cursor = 'pointer';
-                                gd.on('plotly_click', function (data) {
-                                    const pt = data && data.points && data.points[0];
-                                    if (!pt) return;
-                                    let idx = pt.customdata;
-                                    if (Array.isArray(idx)) idx = idx[0];
-                                    const n = Number(idx);
-                                    if (!Number.isFinite(n)) return;
-                                    window.tvGotoWorkflowStep(Math.trunc(n));
-                                });
-                            });
+                            const gd = root.querySelector('.js-plotly-plot')
+                                || root.querySelector('[data-testid="plotly"]');
+                            if (!gd || typeof gd.on !== 'function') return;
+                            if (gd.__tvJumpHandler && typeof gd.removeListener === 'function') {
+                                gd.removeListener('plotly_click', gd.__tvJumpHandler);
+                            }
+                            const handler = function (data) {
+                                const pt = data && data.points && data.points[0];
+                                if (!pt) return;
+                                let idx = pt.customdata;
+                                if (Array.isArray(idx)) idx = idx[0];
+                                const n = Number(idx);
+                                if (!Number.isFinite(n)) return;
+                                window.tvGotoWorkflowStep(Math.trunc(n));
+                            };
+                            gd.__tvJumpHandler = handler;
+                            gd.on('plotly_click', handler);
+                            gd.style.cursor = 'pointer';
                         });
                     };
-                    window.tvBindDurationJump = window.tvBindChartWorkflowJumps;
+                    /* __TV_BIND_JUMPS_END__ */
                     let timer = null;
                     const schedule = () => {
                         if (timer) clearTimeout(timer);

@@ -334,10 +334,12 @@ class WorkflowFilteringTests(unittest.TestCase):
         self.assertIn("selectCard(card, { pushHistory: false })", watcher)
         deep_link = source[source.index("Deep link: on load"):source.index("Hidden-selection watcher")]
         self.assertNotIn("hidden by the current filters", deep_link)
-        self.assertIn("history.replaceState(", deep_link)
-        self.assertIn("pushHistory: false", deep_link)
+        self.assertIn("waitForDeepLink", deep_link)
+        self.assertIn("tvGotoWorkflowStep", deep_link)
+        self.assertIn("restore: true", deep_link)
         self.assertIn("history.pushState(", source)
         self.assertIn("pushHistory", source)
+        self.assertIn("tvWorkflowStepUrl", source)
 
 
 @unittest.skipUnless(shutil.which("node"), "requires Node.js to execute the chip state machine")

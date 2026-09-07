@@ -184,20 +184,23 @@ WORKFLOW_JS = """
                                 if (!card) return;
                                 opts = opts || {};
                                 var pushHistory = opts.pushHistory !== false;
-                                element.querySelectorAll('.wf-card').forEach(function(c) {
+                                document.querySelectorAll('.wf-card').forEach(function(c) {
                                     c.classList.remove('wf-active');
                                 });
                                 card.classList.add('wf-active');
                                 var idx = card.dataset.stepIdx;
-                                /* Push on user navigation so Back works; replace on load/restore. */
+                                /* Push on user navigation so Back works; replace on load/restore.
+                                   Always include pathname+search so a <base href> or reverse-proxy
+                                   prefix cannot resolve '#step-N' to the site root. */
                                 if (idx != null) {
                                     window.__wfSelectedStep = idx;
                                     var targetHash = '#step-' + idx;
                                     var histState = { tvTab: 'Workflow' };
+                                    var nextUrl = window.tvWorkflowStepUrl(idx);
                                     if (pushHistory && window.location.hash !== targetHash) {
-                                        history.pushState(histState, '', targetHash);
+                                        history.pushState(histState, '', nextUrl);
                                     } else {
-                                        history.replaceState(histState, '', targetHash);
+                                        history.replaceState(histState, '', nextUrl);
                                     }
                                 }
                                 var storeEl = document.querySelector('#wf-detail-store [data-b64]');
@@ -222,7 +225,7 @@ WORKFLOW_JS = """
                                 var tag = (e.target.tagName || '').toLowerCase();
                                 if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
                                 if (e.key !== 'j' && e.key !== 'k') return;
-                                var cards = Array.from(element.querySelectorAll('.wf-card'));
+                                var cards = Array.from(document.querySelectorAll('.wf-card'));
                                 if (!cards.length) return;
                                 var activeIdx = cards.findIndex(function(c) { return c.classList.contains('wf-active'); });
                                 var nextIdx;
@@ -235,25 +238,15 @@ WORKFLOW_JS = """
                                 selectCard(cards[nextIdx]);
                             });
 
-                            /* Deep link: on load, scroll to step from URL hash */
-                            setTimeout(function() {
+                            /* Deep link: on load, wait for the hashed card
+                               (Workflow HTML often arrives after js_on_load). */
+                            (function waitForDeepLink() {
                                 var hash = window.location.hash;
                                 var m = hash && hash.match(/^#step-(\\d+)$/);
                                 if (m) {
-                                    var card = document.getElementById('wf-card-' + m[1]);
-                                    if (card) {
-                                        card.scrollIntoView({behavior:'smooth', block:'center'});
-                                        selectCard(card, { pushHistory: false });
-                                    } else {
-                                        /* Stale hash from an earlier session or another
-                                           trajectory: drop it rather than guess. */
-                                        history.replaceState(
-                                            null, '',
-                                            window.location.pathname + window.location.search
-                                        );
-                                    }
+                                    window.tvGotoWorkflowStep(Number(m[1]), { restore: true });
                                 }
-                            }, 500);
+                            })();
 
                             /* Hidden-selection watcher: when a re-render (filter,
                                search, or label upload) removes the selected step's
@@ -300,7 +293,7 @@ WORKFLOW_JS = """
                             /* Auto-select first assistant card if no hash link */
                             setTimeout(function() {
                                 if (window.location.hash) return;
-                                var cards = element.querySelectorAll('.wf-card');
+                                var cards = document.querySelectorAll('.wf-card');
                                 for (var i = 0; i < cards.length; i++) {
                                     var badges = cards[i].querySelectorAll('.wf-badge');
                                     for (var j = 0; j < badges.length; j++) {

@@ -1,4 +1,7 @@
 import inspect
+import json
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -48,6 +51,9 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("tvPushTabReturnPoint", source)
         self.assertIn("tvSelectWorkflowCard", source)
         self.assertIn("restore", source)
+        self.assertIn("tvWorkflowStepUrl", source)
+        self.assertNotIn("__tvJumpBound", source)
+        self.assertNotIn("tvBindDurationJump", source)
         self.assertIn('elem_id="duration-chart"', inspect.getsource(overview_tab.layout))
         self.assertIn('elem_id="tool-outcome-chart"', inspect.getsource(overview_tab.layout))
         self.assertIn('elem_id="tool-duration-chart"', inspect.getsource(overview_tab.layout))
@@ -268,6 +274,73 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("Tool Error", html)
         self.assertIn("var(--wf-border-system-error)", html)
         self.assertIn("var(--wf-bg-system-error)", html)
+
+
+def _bind_jumps_source():
+    from trajviz.insight import insight as insight_mod
+
+    source = inspect.getsource(insight_mod.build_ui)
+    begin = source.index("__TV_BIND_JUMPS_BEGIN__")
+    end = source.index("__TV_BIND_JUMPS_END__")
+    block = source[begin:end]
+    block = block[block.index("window.tvBindChartWorkflowJumps"):]
+    return block[:block.rindex("};") + 2]
+
+
+@unittest.skipUnless(shutil.which("node"), "requires Node.js to execute the jump binder")
+class ChartWorkflowJumpBinderTests(unittest.TestCase):
+    """Run the embedded Plotly rebind helper against a fake graph div."""
+
+    def test_rebind_after_plotly_wipes_listeners_and_reads_step_index(self):
+        script = r"""
+        var jumped = [];
+        var window = {
+            tvGotoWorkflowStep: function (idx) { jumped.push(idx); }
+        };
+        function makePlot() {
+            var listeners = [];
+            var gd = {
+                style: {},
+                on: function (ev, fn) { if (ev === 'plotly_click') listeners.push(fn); },
+                removeListener: function (ev, fn) {
+                    if (ev !== 'plotly_click') return;
+                    listeners = listeners.filter(function (x) { return x !== fn; });
+                },
+                querySelector: function () { return null; },
+                wipe: function () { listeners = []; },
+                fire: function (data) { listeners.slice().forEach(function (fn) { fn(data); }); },
+                count: function () { return listeners.length; }
+            };
+            return gd;
+        }
+        var plot = makePlot();
+        var roots = {
+            'tool-duration-chart': {
+                querySelector: function () { return plot; }
+            }
+        };
+        var document = {
+            getElementById: function (id) { return roots[id] || null; }
+        };
+        """ + _bind_jumps_source() + r"""
+        window.tvBindChartWorkflowJumps();
+        window.tvBindChartWorkflowJumps();
+        if (plot.count() !== 1) throw new Error('expected 1 listener after rebind, got ' + plot.count());
+        plot.fire({ points: [{ customdata: [7] }] });
+        plot.wipe();
+        if (plot.count() !== 0) throw new Error('wipe failed');
+        window.tvBindChartWorkflowJumps();
+        plot.fire({ points: [{ customdata: 9 }] });
+        console.log(JSON.stringify({ jumped: jumped, listeners: plot.count() }));
+        """
+        proc = subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(f"node failed: {proc.stderr}\n{proc.stdout}")
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["jumped"], [7, 9])
+        self.assertEqual(result["listeners"], 1)
 
 
 if __name__ == "__main__":
