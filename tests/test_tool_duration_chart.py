@@ -94,6 +94,26 @@ class ToolDurationChartTests(unittest.TestCase):
         ])
         self.assertEqual({t.y[0] for t in fig.data}, {"main.py"})
 
+    def test_cmd_c_labels_inner_command(self):
+        fig = build_tool_duration_chart([
+            _step(0, tools=[
+                _tc("Bash", ms=3000, command='cmd /c "timeout /t 300 /nobreak"'),
+            ]),
+        ])
+        self.assertEqual({t.y[0] for t in fig.data}, {"timeout"})
+
+    def test_powershell_command_labels_inner_cmdlet(self):
+        fig = build_tool_duration_chart([
+            _step(0, tools=[
+                _tc(
+                    "Bash",
+                    ms=3000,
+                    command='powershell -Command "Start-Sleep -Seconds 300"',
+                ),
+            ]),
+        ])
+        self.assertEqual({t.y[0] for t in fig.data}, {"start-sleep"})
+
     def test_missing_index_falls_back_to_enumerate(self):
         steps = [
             _step(None, tools=[_tc("Read", ms=1000)]),

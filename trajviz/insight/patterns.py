@@ -718,9 +718,14 @@ def _shell_segments(command: str) -> list[list[str]]:
     return segments
 
 
+def _path_basename(path: str) -> str:
+    """Basename of a POSIX or Windows path, preserving case."""
+    return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
 def _shell_name(token: str) -> str:
     """Return a case-insensitive executable basename."""
-    return token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return _path_basename(token).lower()
 
 
 def _is_shell_assignment(token: str) -> bool:
@@ -747,6 +752,169 @@ def _skip_wrapper_options(tokens: list[str], index: int, wrapper: str) -> int:
         if option in value_options and index < len(tokens):
             index += 1
     return index
+
+
+def _is_windows_timeout_invocation(tokens: list[str], index: int) -> bool:
+    """True when ``timeout`` is the Windows sleep builtin (``/t``, ``/nobreak``)."""
+    for tok in tokens[index + 1:index + 4]:
+        low = tok.lower()
+        if low in ("/t", "/nobreak") or low.startswith("/t:"):
+            return True
+        if not low.startswith("/"):
+            break
+    return False
+
+
+def _cmd_script_tokens(tokens: list[str], index: int) -> list[str]:
+    """Tokens after ``cmd /c`` or ``cmd /k``; empty if that form is not present."""
+    i = index + 1
+    while i < len(tokens):
+        low = tokens[i].lower()
+        if low in ("/c", "/k"):
+            return tokens[i + 1:]
+        # Other cmd switches (/d, /q, /s, /u, /a, /e:on, …).
+        if low.startswith("/") or (low.startswith("-") and low != "-"):
+            i += 1
+            continue
+        return []
+    return []
+
+
+def _wrapper_inner_label(rest: list[str], nesting: int, fallback: str) -> str:
+    """Label the command after a ``cmd /c`` / similar wrapper."""
+    if not rest:
+        return fallback
+    if len(rest) == 1:
+        return primary_shell_command(rest[0], _nesting=nesting + 1) or fallback
+    return _primary_from_segment(rest, nesting + 1) or fallback
+
+
+def _wrapper_inner_runs_search(rest: list[str], nesting: int) -> bool:
+    """Whether the command after a shell wrapper runs a search tool."""
+    if not rest:
+        return False
+    if len(rest) == 1:
+        return any(
+            _segment_runs_search(segment, nesting + 1)
+            for segment in _shell_segments(rest[0])
+        )
+    return _segment_runs_search(rest, nesting + 1)
+
+
+# powershell / pwsh: peel -Command body or -File basename (skip other switches).
+_PS_INTERPRETERS = frozenset({
+    "powershell", "powershell.exe", "pwsh", "pwsh.exe",
+})
+_PS_OPTIONS = {
+    "c": "command", "command": "command",
+    "f": "file", "file": "file",
+    "e": "encodedcommand", "ec": "encodedcommand", "encodedcommand": "encodedcommand",
+    "wd": "workingdirectory", "workingdirectory": "workingdirectory",
+    "ex": "executionpolicy", "ep": "executionpolicy", "executionpolicy": "executionpolicy",
+    "in": "inputformat", "inputformat": "inputformat",
+    "out": "outputformat", "outputformat": "outputformat",
+    "win": "windowstyle", "windowstyle": "windowstyle",
+    "version": "version",
+    "psc": "psconsolefile", "psconsolefile": "psconsolefile",
+}
+_PS_VALUE_OPTIONS = frozenset({
+    "command", "encodedcommand", "file", "inputformat", "outputformat",
+    "workingdirectory", "executionpolicy", "windowstyle", "version",
+    "psconsolefile",
+})
+
+
+def _ps_option_key(token: str) -> str | None:
+    """Canonical PowerShell switch name, ``_`` for unknown flags, else ``None``."""
+    if len(token) < 2 or token[0] not in "-/":
+        return None
+    raw = token[1:].lower()
+    if raw.startswith("-"):
+        raw = raw.lstrip("-")
+    if not raw:
+        return None
+    if raw in _PS_OPTIONS:
+        return _PS_OPTIONS[raw]
+    # Unknown -Flag (e.g. -NoProfile): skip without consuming a value.
+    if raw[0].isalpha():
+        return "_"
+    return None
+
+
+def _ps_unwrap_scriptblock_text(script: str) -> str:
+    """Drop a surrounding ``{ … }`` script-block wrapper when present."""
+    text = script.strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text[1:-1].strip()
+    return text
+
+
+def _ps_unwrap_scriptblock_tokens(tokens: list[str]) -> list[str]:
+    """Drop a surrounding ``{ … }`` script-block wrapper when present."""
+    if len(tokens) >= 2 and tokens[0] == "{" and tokens[-1] == "}":
+        return tokens[1:-1]
+    return tokens
+
+
+def _powershell_payload(
+    tokens: list[str], index: int, nesting: int,
+) -> tuple[str, str | list[str]] | None:
+    """Return ``('command', body)`` or ``('file', path)`` from powershell/pwsh argv."""
+    i = index + 1
+    while i < len(tokens):
+        key = _ps_option_key(tokens[i])
+        if key == "command":
+            if nesting >= 3 or i + 1 >= len(tokens):
+                return None
+            rest = tokens[i + 1:]
+            if len(rest) == 1 and rest[0] == "-":
+                return None
+            if len(rest) == 1:
+                return ("command", _ps_unwrap_scriptblock_text(rest[0]))
+            return ("command", _ps_unwrap_scriptblock_tokens(rest))
+        if key == "file":
+            if i + 1 >= len(tokens):
+                return None
+            return ("file", tokens[i + 1])
+        if key == "encodedcommand":
+            return None
+        if key in _PS_VALUE_OPTIONS:
+            i += 2
+            continue
+        if key is not None:
+            i += 1
+            continue
+        return None
+    return None
+
+
+def _powershell_invocation_label(
+    tokens: list[str], index: int, interpreter: str, nesting: int,
+) -> str:
+    """Label a powershell/pwsh invocation by ``-Command`` body or ``-File`` basename."""
+    peeled = _powershell_payload(tokens, index, nesting)
+    if peeled is None:
+        return interpreter
+    kind, body = peeled
+    if kind == "file":
+        return _path_basename(str(body)) or interpreter
+    if isinstance(body, str):
+        return primary_shell_command(body, _nesting=nesting + 1) or interpreter
+    return _primary_from_segment(body, nesting + 1) or interpreter
+
+
+def _powershell_runs_search(tokens: list[str], index: int, nesting: int) -> bool:
+    """True when a powershell/pwsh wrapper's ``-Command`` body runs a search tool."""
+    peeled = _powershell_payload(tokens, index, nesting)
+    if peeled is None or peeled[0] != "command":
+        return False
+    body = peeled[1]
+    if isinstance(body, str):
+        return any(
+            _segment_runs_search(segment, nesting + 1)
+            for segment in _shell_segments(body)
+        )
+    return _segment_runs_search(body, nesting + 1)
 
 
 def _segment_runs_search(tokens: list[str], nesting: int = 0) -> bool:
@@ -779,6 +947,8 @@ def _segment_runs_search(tokens: list[str], nesting: int = 0) -> bool:
             continue
 
         if command == "timeout":
+            if _is_windows_timeout_invocation(tokens, index):
+                return False
             index = _skip_wrapper_options(tokens, index + 1, command)
             # timeout's first positional argument is the duration.
             index += 1
@@ -787,6 +957,12 @@ def _segment_runs_search(tokens: list[str], nesting: int = 0) -> bool:
         if command == "busybox":
             index += 1
             continue
+
+        if command in ("cmd", "cmd.exe") and nesting < 3:
+            return _wrapper_inner_runs_search(_cmd_script_tokens(tokens, index), nesting)
+
+        if command in _PS_INTERPRETERS and nesting < 3:
+            return _powershell_runs_search(tokens, index, nesting)
 
         if command in ("bash", "dash", "ksh", "sh", "zsh") and nesting < 3:
             # A quoted ``sh -c`` script is data to this process.  Lex it again
@@ -813,7 +989,8 @@ def _segment_runs_search(tokens: list[str], nesting: int = 0) -> bool:
 def primary_shell_command(command: str, *, _nesting: int = 0) -> str | None:
     """Return the primary executable basename for a shell command string.
 
-    Peels common wrappers (``env``, ``sudo``, ``timeout``, ``sh -c``, …) and
+    Peels common wrappers (``env``, ``sudo``, ``timeout``, ``sh -c``, ``cmd /c``,
+    ``powershell -Command``, …) and
     skips leading directory-change segments (``cd`` / ``pushd`` / ``popd``)
     so ``cd src && git status`` reports ``git``. Returns ``None`` when nothing
     useful can be recovered.
@@ -881,6 +1058,8 @@ def _primary_from_segment(tokens: list[str], nesting: int = 0) -> str | None:
             continue
 
         if command_name == "timeout":
+            if _is_windows_timeout_invocation(tokens, index):
+                return "timeout"
             index = _skip_wrapper_options(tokens, index + 1, command_name)
             index += 1
             continue
@@ -888,6 +1067,16 @@ def _primary_from_segment(tokens: list[str], nesting: int = 0) -> str | None:
         if command_name == "busybox":
             index += 1
             continue
+
+        if command_name in ("cmd", "cmd.exe"):
+            if nesting >= 3:
+                return command_name
+            return _wrapper_inner_label(
+                _cmd_script_tokens(tokens, index), nesting, command_name,
+            )
+
+        if command_name in _PS_INTERPRETERS:
+            return _powershell_invocation_label(tokens, index, command_name, nesting)
 
         if command_name in ("bash", "dash", "ksh", "sh", "zsh"):
             option_index = index + 1
@@ -943,7 +1132,7 @@ def _python_invocation_label(tokens: list[str], index: int, interpreter: str) ->
     if i >= len(tokens):
         return interpreter
     script = tokens[i]
-    base = script.replace("\\", "/").rsplit("/", 1)[-1]
+    base = _path_basename(script)
     return base or interpreter
 
 

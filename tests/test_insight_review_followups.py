@@ -137,6 +137,8 @@ class WrappedShellSearchTests(unittest.TestCase):
             "git -C repo grep needle",
             "printf '%s\\0' src | xargs -0 rg needle",
             "bash -lc 'cd src && find . -name *.py'",
+            'cmd /c "rg needle ."',
+            'powershell -Command "rg needle ."',
         ]
 
         for command in commands:
@@ -154,6 +156,20 @@ class WrappedShellSearchTests(unittest.TestCase):
             "cd src && rg needle .": "rg",
             "cd only": "cd",
             "echo hello | grep hi": "echo",
+            # Windows cmd.exe /c|/k — label the inner command, not cmd.
+            'cmd /c "timeout /t 300 /nobreak"': "timeout",
+            "cmd /c timeout /t 300 /nobreak": "timeout",
+            'cmd.exe /c "ping -n 5 localhost"': "ping",
+            'cmd /d /c "git status"': "git",
+            'cmd /c "cd /d C:/foo && python.exe main.py"': "main.py",
+            "timeout /t 300 /nobreak": "timeout",
+            # PowerShell — label the -Command body or -File basename.
+            'powershell -Command "Start-Sleep -Seconds 300"': "start-sleep",
+            'powershell.exe -NoProfile -Command "Start-Sleep -Seconds 300"': "start-sleep",
+            'pwsh -c "Get-ChildItem -Recurse"': "get-childitem",
+            'powershell -c "git status"': "git",
+            "powershell -File C:/scripts/run.ps1": "run.ps1",
+            "PowerShell -Command { Start-Sleep -Seconds 1 }": "start-sleep",
         }
         for command, expected in cases.items():
             with self.subTest(command=command):
