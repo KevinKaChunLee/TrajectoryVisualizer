@@ -678,8 +678,7 @@ _WRAPPER_OPTIONS_WITH_VALUES = {
         "--max-chars",
     },
 }
-# python / python3 / python3.12 / python.exe / pythonw.exe / pypy3 — chart
-# labels should name the script/module rather than the interpreter binary.
+# Include Windows ``.exe`` / ``pythonw`` so chart labels name the script/module.
 _PYTHON_INTERPRETER_RE = re.compile(
     r"^(?:pythonw?|pypy)\d*(?:\.\d+)*(?:\.exe)?$"
 )
@@ -690,18 +689,10 @@ _PYTHON_VALUE_OPTIONS = frozenset({
 _WIN_CMD_HINT_RE = re.compile(r"(?i)(?:[A-Za-z]:\\|\.exe\b)")
 
 
-def _unixify_windows_cmd(command: str) -> str:
-    """Rewrite Windows path separators so posix shlex keeps path tokens intact."""
-    if "\\" not in command:
-        return command
-    if _WIN_CMD_HINT_RE.search(command):
-        return command.replace("\\", "/")
-    return command
-
-
 def _shell_segments(command: str) -> list[list[str]]:
     """Lex shell command segments without evaluating or executing anything."""
-    command = _unixify_windows_cmd(command)
+    if "\\" in command and _WIN_CMD_HINT_RE.search(command):
+        command = command.replace("\\", "/")
     lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
     # Preserve newlines as command boundaries while still honoring quoted ones.
     lexer.whitespace = " \t\r"
@@ -830,7 +821,6 @@ def primary_shell_command(command: str, *, _nesting: int = 0) -> str | None:
     if not isinstance(command, str) or not command.strip():
         return None
 
-    command = _unixify_windows_cmd(command)
     segments = _shell_segments(command)
     if not segments:
         # Malformed quoting — fall back to the converge-style first token.
