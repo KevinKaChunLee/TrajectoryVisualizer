@@ -13,6 +13,7 @@ from .overview import (
 )
 from .patterns import (
     build_antipattern_html,
+    build_failure_patterns_html,
     render_failure_patterns_html,
     render_tool_sequences_html,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "build_antipattern_html",
     "build_chart_outputs",
     "build_diagnostics_outputs",
+    "build_failure_patterns_html",
     "build_filtered_workflow_outputs",
     "build_label_ui_payload",
     "build_overview_kpi_html",

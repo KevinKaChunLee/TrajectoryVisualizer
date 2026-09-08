@@ -1152,20 +1152,82 @@ def build_attribution_html(data: dict) -> str:
 # Anti-Pattern Summary
 # ---------------------------------------------------------------------------
 
-def _antipattern_card(border_color: str, title: str, detail: str, why: str) -> str:
-    """Render a single anti-pattern card with a 'why this matters' line."""
-    # title/detail/why can embed untrusted trajectory text (e.g. TodoWrite
-    # plan-item content); escape so it renders as text in the gr.HTML panel.
+_STEP_CHIP_STYLE = (
+    "display:inline-block;padding:1px 6px;margin:0 4px 2px 0;"
+    "border-radius:8px;background:var(--ov-table-header-bg);"
+    "font-size:11px;font-variant-numeric:tabular-nums;cursor:pointer;"
+)
+
+
+def _step_link_chip(idx: int) -> str:
+    """Clickable ``#N`` chip that jumps to Workflow step *idx*."""
+    n = int(idx)
+    return (
+        f"<span class='insight-step-link' style='{_STEP_CHIP_STYLE}' "
+        f"onclick=\"{_diag_jump_onclick(n)}\">#{n}</span>"
+    )
+
+
+def _step_link_chips(indices: list[int], *, limit: int = 8) -> str:
+    """Deduped step chips; shows ``+N more`` when truncated."""
+    seen: list[int] = []
+    for raw in indices:
+        if raw is None:
+            continue
+        n = int(raw)
+        if n not in seen:
+            seen.append(n)
+    if not seen:
+        return ""
+    shown = seen[:limit]
+    chips = "".join(_step_link_chip(n) for n in shown)
+    extra = len(seen) - len(shown)
+    if extra > 0:
+        chips += (
+            f"<span style='font-size:11px;color:var(--ov-muted);'>"
+            f"+{extra} more</span>"
+        )
+    return f"<div style='margin-top:4px;'>{chips}</div>"
+
+
+def _indices_for_step_range(start: int | None, end: int | None, *, max_span: int = 5) -> list[int]:
+    """Expand a streak range to chips; long ranges keep only endpoints."""
+    if start is None:
+        return []
+    if end is None or end == start:
+        return [int(start)]
+    lo, hi = int(start), int(end)
+    if hi < lo:
+        lo, hi = hi, lo
+    if hi - lo + 1 <= max_span:
+        return list(range(lo, hi + 1))
+    return [lo, hi]
+
+
+def _antipattern_card(
+    border_color: str,
+    title: str,
+    detail: str,
+    why: str,
+    *,
+    steps_html: str = "",
+) -> str:
+    """Render a single anti-pattern card with a 'why this matters' line.
+
+    *steps_html* is trusted markup built via :func:`_step_link_chips` (integers
+    only). Title/detail/why are escaped — they may embed trajectory text.
+    """
     title = html.escape(str(title))
     detail = html.escape(str(detail))
     why = html.escape(str(why))
     return (
         f"<div style='padding:8px 12px;background:var(--ov-card);"
         f"border-left:3px solid {border_color};border-radius:4px;margin-bottom:6px;'>"
-        f"<div style='display:flex;align-items:center;gap:8px;'>"
+        f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
         f"<span style='font-size:12px;font-weight:600;'>{title}</span>"
         f"<span style='font-size:12px;color:var(--ov-muted);'>{detail}</span>"
         f"</div>"
+        f"{steps_html}"
         f"<div style='font-size:11px;color:var(--ov-muted);font-style:italic;margin-top:3px;'>"
         f"Why it matters: {why}</div>"
         f"</div>"
@@ -1177,8 +1239,9 @@ def build_antipattern_summary_html(
     tool_selection: list[dict],
     plan_metrics: dict,
     error_count: int = 0,
+    error_steps: list[int] | None = None,
 ) -> str:
-    """Render an anti-pattern summary panel with badges."""
+    """Render an anti-pattern summary panel with Workflow jump chips."""
     cards = []
 
     # Platform/tool errors
@@ -1190,6 +1253,7 @@ def build_antipattern_summary_html(
             "Failed tool calls cost tokens and turns to recover from, and often indicate "
             "environment problems (wrong path, missing dependency, sandbox limits) rather than agent mistakes — "
             "fix the environment and the agent may stop wandering.",
+            steps_html=_step_link_chips(error_steps or []),
         ))
 
     # Fruitless streaks
@@ -1203,6 +1267,11 @@ def build_antipattern_summary_html(
         if remaining > 0:
             remaining_len = sum(s["length"] for s in fruitless_streaks[len(shown):])
             streak_desc += f", +{remaining} more ({remaining_len})"
+        streak_indices: list[int] = []
+        for s in fruitless_streaks:
+            streak_indices.extend(
+                _indices_for_step_range(s.get("start_step"), s.get("end_step"))
+            )
         cards.append(_antipattern_card(
             "var(--ov-warn)",
             f"{len(fruitless_streaks)} fruitless search streak(s)",
@@ -1210,10 +1279,12 @@ def build_antipattern_summary_html(
             "Three or more consecutive searches that returned no matches. Each one still "
             "consumes tokens and latency; sustained streaks suggest the agent is looking "
             "in the wrong place rather than refining its query.",
+            steps_html=_step_link_chips(streak_indices),
         ))
 
     # Tool selection
     if tool_selection:
+        bash_steps = [f.get("step") for f in tool_selection if f.get("step") is not None]
         cards.append(_antipattern_card(
             "var(--ov-accent)",
             f"{len(tool_selection)} Bash-for-reading",
@@ -1221,12 +1292,18 @@ def build_antipattern_summary_html(
             "Reading files via shell pipes bypasses the Read tool's structure — "
             "no line numbers, no cross-turn cache, no output cap — which inflates "
             "context size and makes the trajectory harder to analyze.",
+            steps_html=_step_link_chips(bash_steps),
         ))
 
     # Stalled plan items
     stalled = plan_metrics.get("stalled", [])
     if stalled:
         items_desc = ", ".join(f"'{s['content'][:30]}'" for s in stalled[:2])
+        stall_steps: list[int] = []
+        for s in stalled:
+            stall_steps.extend(
+                _indices_for_step_range(s.get("start_step"), s.get("end_step"))
+            )
         cards.append(_antipattern_card(
             "var(--ov-warn)",
             f"{len(stalled)} stalled plan item(s)",
@@ -1234,9 +1311,15 @@ def build_antipattern_summary_html(
             "Items marked in_progress in TodoWrite but never marked completed, "
             "or completed more than 20 steps after they started. Often means the "
             "agent context-switched away and forgot to close the loop.",
+            steps_html=_step_link_chips(stall_steps),
         ))
 
     if not cards:
         return "<div style='padding:12px;color:var(--ov-muted);text-align:center;font-size:13px;'>No anti-patterns detected</div>"
 
-    return "<div>" + "".join(cards) + "</div>"
+    return (
+        "<div class='antipattern-summary'>"
+        "<div style='font-size:13px;font-weight:600;margin:4px 0 8px;'>Anti-pattern summary</div>"
+        + "".join(cards)
+        + "</div>"
+    )

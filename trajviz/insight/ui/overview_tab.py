@@ -27,6 +27,7 @@ from ..presenters.overview import (
     build_overview_outputs,
     empty_plotly_fig,
 )
+from ..presenters.patterns import build_antipattern_html, build_failure_patterns_html
 from ..session import LoadedSession
 from .shared import SharedState
 from .upload import UploadRefs
@@ -47,6 +48,8 @@ class OverviewRefs:
     metrics_md: gr.Markdown
     token_chart: gr.Plot
     duration_chart: gr.Plot
+    failure_patterns_html: gr.HTML
+    antipattern_summary_html: gr.HTML
     behavior_md: gr.Markdown
     tool_chart: gr.Plot
     tool_duration_chart: gr.Plot
@@ -78,7 +81,7 @@ class OverviewRefs:
 
 
 OVERVIEW_SECTION_NAMES = [
-    "Performance",
+    "Summary",
     "Tools",
     "Agents",
     "Context Utilization",
@@ -99,7 +102,7 @@ def layout() -> OverviewRefs:
                 gr.HTML("<div class='overview-nav-title'>Contents</div>")
                 overview_section = gr.Radio(
                     choices=overview_section_names,
-                    value="Performance",
+                    value="Summary",
                     show_label=False,
                     container=False,
                     elem_classes=["overview-section-radio"],
@@ -107,7 +110,7 @@ def layout() -> OverviewRefs:
 
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_performance'])}</div>")
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_summary'])}</div>")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
                         duration_chart = gr.Plot(
@@ -115,6 +118,8 @@ def layout() -> OverviewRefs:
                             label="Step Duration",
                             elem_id="duration-chart",
                         )
+                    failure_patterns_html = gr.HTML("")
+                    antipattern_summary_html = gr.HTML("")
                     metrics_md = gr.Markdown("")
 
                 with gr.Column(visible=False) as efficiency_section:
@@ -225,6 +230,8 @@ def layout() -> OverviewRefs:
         metrics_md=metrics_md,
         token_chart=token_chart,
         duration_chart=duration_chart,
+        failure_patterns_html=failure_patterns_html,
+        antipattern_summary_html=antipattern_summary_html,
         behavior_md=behavior_md,
         tool_chart=tool_chart,
         tool_duration_chart=tool_duration_chart,
@@ -264,6 +271,8 @@ def load_slots(refs: OverviewRefs) -> dict:
         "metrics_md": refs.metrics_md,
         "token_chart": refs.token_chart,
         "duration_chart": refs.duration_chart,
+        "overview_failure_patterns_html": refs.failure_patterns_html,
+        "overview_antipattern_html": refs.antipattern_summary_html,
         "behavior_md": refs.behavior_md,
         "tool_chart": refs.tool_chart,
         "tool_duration_chart": refs.tool_duration_chart,
@@ -297,6 +306,8 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "metrics_md": "",
             "token_chart": fig,
             "duration_chart": fig,
+            "overview_failure_patterns_html": "",
+            "overview_antipattern_html": "",
             "behavior_md": "",
             "tool_chart": fig,
             "tool_duration_chart": fig,
@@ -335,6 +346,8 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "metrics_md": ov["metrics_text"],
         "token_chart": ch["tok_fig"],
         "duration_chart": ch["dur_fig"],
+        "overview_failure_patterns_html": build_failure_patterns_html(session),
+        "overview_antipattern_html": build_antipattern_html(session),
         "behavior_md": ov["behavior_text"],
         "tool_chart": ch["tl_fig"],
         "tool_duration_chart": ch["tool_dur_fig"],

@@ -4,18 +4,36 @@ from __future__ import annotations
 
 import html
 
-from ..rendering import build_antipattern_summary_html
+from ..rendering import _step_link_chip, build_antipattern_summary_html
 from ..session import LoadedSession
 
 
 def build_antipattern_html(session: LoadedSession) -> str:
-    """Anti-pattern summary HTML for the Patterns tab."""
-    error_count = sum(1 for s in session.steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
+    """Anti-pattern summary HTML for Overview and Patterns."""
+    error_steps: list[int] = []
+    error_count = 0
+    for s in session.steps:
+        errs = [tc for tc in (s.get("tool_calls") or []) if tc.get("error_type")]
+        if not errs:
+            continue
+        error_count += len(errs)
+        error_steps.append(int(s.get("index", 0)))
     return build_antipattern_summary_html(
         session.fruitless_streaks,
         session.tool_selection,
         session.plan_metrics,
         error_count=error_count,
+        error_steps=error_steps,
+    )
+
+
+def build_failure_patterns_html(session: LoadedSession) -> str:
+    """Failure-pattern panel with heading for Overview Performance."""
+    return (
+        "<div class='failure-patterns-summary'>"
+        "<div style='font-size:13px;font-weight:600;margin:4px 0 8px;'>Failure patterns</div>"
+        + render_failure_patterns_html(session.failure_patterns)
+        + "</div>"
     )
 
 
@@ -46,7 +64,7 @@ def render_tool_sequences_html(sequences: list[dict]) -> str:
 
 
 def render_failure_patterns_html(patterns: list[dict]) -> str:
-    """Render failure pattern clusters as expandable cards."""
+    """Render failure pattern clusters as cards with Workflow jump chips."""
     if not patterns:
         return "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>No errors detected — no failure patterns to analyze.</div>"
     cards = []
@@ -58,12 +76,7 @@ def render_failure_patterns_html(patterns: list[dict]) -> str:
         recovery_html = " → ".join(html.escape(t) for t in recovery) if recovery else "<em>No recovery path found</em>"
         step_ids = p.get("steps") or []
         steps_html = (
-            "".join(
-                f"<span style='display:inline-block;padding:1px 6px;margin:0 4px 2px 0;"
-                f"border-radius:8px;background:var(--ov-table-header-bg);"
-                f"font-size:11px;font-variant-numeric:tabular-nums;'>#{int(idx)}</span>"
-                for idx in step_ids
-            )
+            "".join(_step_link_chip(int(idx)) for idx in step_ids)
             if step_ids
             else "<em>—</em>"
         )
