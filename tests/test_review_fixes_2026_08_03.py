@@ -356,6 +356,7 @@ class MetricsTests(unittest.TestCase):
         v = self._verdicts(m)["Throughput"]
         self.assertEqual(v["status"], "warn")
         self.assertIn("48.3", v["label"])
+        self.assertIn("gen tok/s", v["label"])
 
     def test_verdicts_na_on_missing_token_data(self):
         m = {"tokens": {"total": 0}, "avg_cache_ratio": 0, "output_tokens_per_sec": None,

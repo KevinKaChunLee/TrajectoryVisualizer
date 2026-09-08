@@ -167,9 +167,11 @@ def build_overview_kpi_html(
 
     output_rate = metrics.get("output_tokens_per_sec")
     if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
-        throughput_sub = f"{output_rate:,} output tok/s"
+        throughput_sub = f"{output_rate:,} gen tok/s"
+        if metrics.get("output_throughput_excludes_tool_wait"):
+            throughput_sub += " excl. tools"
     else:
-        throughput_sub = "Output throughput: N/A"
+        throughput_sub = "Generation throughput: N/A"
     timed_steps = metrics.get("output_throughput_timed_steps")
     throughput_steps = metrics.get("output_throughput_total_steps")
     if (

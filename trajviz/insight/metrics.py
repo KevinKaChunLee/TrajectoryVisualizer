@@ -256,9 +256,9 @@ def spawn_wait_seconds(step: dict) -> float:
 def step_duration_excluding_spawn(step: dict) -> float | None:
     """Step duration with spawn/delegation wait removed.
 
-    Used by the Step Duration chart and output tok/s denominator. Parent
-    messages blocked on ``task``/``Agent`` report wall-clock that is really
-    the child's run; subtracting that wait avoids double-counting.
+    Used by the Step Duration chart. Parent messages blocked on ``task``/
+    ``Agent`` report wall-clock that is really the child's run; subtracting
+    that wait avoids double-counting on the chart.
     """
     raw = step.get("duration")
     if (
@@ -268,6 +268,32 @@ def step_duration_excluding_spawn(step: dict) -> float | None:
     ):
         return None
     return max(0.0, float(raw) - spawn_wait_seconds(step))
+
+
+def non_spawn_tool_seconds(step: dict) -> float:
+    """Sum of timed non-spawn tool durations on *step* (seconds)."""
+    total = 0.0
+    for tc in step.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        ms = tool_call_stats_duration_ms(tc)
+        if ms is not None:
+            total += ms / 1000.0
+    return total
+
+
+def generation_seconds(step: dict) -> float | None:
+    """Step time attributable to model generation (excludes spawn + tool waits).
+
+    Output tok/s uses this as the denominator so a 20-minute Bash call does not
+    look like near-zero generation throughput. Tool time is capped so parallel
+    or overlapping stamps cannot drive the result negative.
+    """
+    remaining = step_duration_excluding_spawn(step)
+    if remaining is None:
+        return None
+    tool_s = min(non_spawn_tool_seconds(step), remaining)
+    return remaining - tool_s
 
 
 def _raw_summary(raw: dict) -> tuple[dict, dict | None]:
@@ -399,18 +425,20 @@ def _compute_command_metrics(steps: list[dict]) -> dict:
 def _compute_timing_metrics(steps: list[dict]) -> dict:
     """Compute TTFT, output throughput, TTLT, and timing coverage.
 
-    Output throughput uses output tokens and duration from the exact same set
-    of assistant steps.  This prevents untimed output (which is common for
-    some sub-agent final messages) from inflating the measured rate.
+    Output throughput uses output tokens and generation time from the exact
+    same set of assistant steps.  This prevents untimed output (which is
+    common for some sub-agent final messages) from inflating the measured rate.
 
-    Spawn/delegation wait on parent steps is excluded from the duration sum so
-    blocked ``task``/``Agent`` time is not counted twice alongside the child's
-    own timed steps (which understated tok/s).
+    Denominator is step duration minus spawn/delegation wait and timed
+    non-spawn tool time, so blocked Bash/script waits are not counted as
+    generation. When tool stamps are missing, those waits remain in the
+    denominator (conservative under-estimate of gen rate).
     """
     first_user_created = None
     first_asst_completed = None
     last_asst_completed = None
     timed_asst_duration = 0.0
+    timed_tool_wait = 0.0
     timed_output_tokens = 0.0
     assistant_step_count = 0
     timed_assistant_step_count = 0
@@ -443,8 +471,13 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
                 and output_tokens >= 0
             )
             if has_duration and has_output_tokens:
+                gen_s = generation_seconds(s)
+                if gen_s is None:
+                    continue
+                excl_spawn = step_duration_excluding_spawn(s) or 0.0
                 timed_assistant_step_count += 1
-                timed_asst_duration += max(0.0, float(duration) - spawn_wait_seconds(s))
+                timed_asst_duration += gen_s
+                timed_tool_wait += max(0.0, excl_spawn - gen_s)
                 timed_output_tokens += output_tokens
 
     result: dict = {}
@@ -468,6 +501,8 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
     )
     result["output_throughput_timed_tokens"] = timed_output_tokens
     result["output_throughput_timed_seconds"] = round(timed_asst_duration, 3)
+    result["output_throughput_tool_wait_seconds"] = round(timed_tool_wait, 3)
+    result["output_throughput_excludes_tool_wait"] = timed_tool_wait > 0
 
     if first_user_created is not None and last_asst_completed is not None:
         result["time_to_last_token"] = round((last_asst_completed - first_user_created) / 1000, 3)
@@ -886,7 +921,8 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     else:
         verdicts.append({"metric": "Tool Success", "status": "bad", "label": f"{tool_rate}%", "detail": f"{tool_rate}% success — high failure rate across {tool_count} calls"})
 
-    # Generation throughput — output tokens per second of assistant wall time.
+    # Generation throughput — output tokens per second of model time
+    # (assistant step duration minus spawn wait and timed tool waits).
     # NOTE: use output_tokens_per_sec, not tokens_per_second, which divides the
     # cumulative cache-read context (re-counted every turn) by wall time and is
     # inflated ~(#turns)x, making the verdict structurally "good".
@@ -894,6 +930,7 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     timed_steps = metrics.get("output_throughput_timed_steps")
     throughput_steps = metrics.get("output_throughput_total_steps")
     incomplete_timing = metrics.get("output_throughput_incomplete", False)
+    excl_tools = metrics.get("output_throughput_excludes_tool_wait", False)
     coverage_note = ""
     if (
         incomplete_timing
@@ -902,20 +939,23 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
         and throughput_steps > 0
     ):
         coverage_note = f"; based on {timed_steps}/{throughput_steps} assistant steps with timing"
+    if excl_tools:
+        coverage_note += "; tool wait excluded from denominator"
+    rate_label = f"{gen_rate} gen tok/s" if gen_rate is not None else "N/A"
     if gen_rate is None:
         detail = "No timing/output-token data"
         if coverage_note:
             detail += coverage_note
         verdicts.append({"metric": "Throughput", "status": "good", "label": "N/A", "detail": detail})
     elif gen_rate >= 50:
-        verdicts.append({"metric": "Throughput", "status": "good", "label": f"{gen_rate} output tok/s",
-                         "detail": f"{gen_rate} output tok/s — strong throughput{coverage_note}"})
+        verdicts.append({"metric": "Throughput", "status": "good", "label": rate_label,
+                         "detail": f"{gen_rate} gen tok/s — strong throughput{coverage_note}"})
     elif gen_rate >= 20:
-        verdicts.append({"metric": "Throughput", "status": "warn", "label": f"{gen_rate} output tok/s",
-                         "detail": f"{gen_rate} output tok/s — moderate throughput{coverage_note}"})
+        verdicts.append({"metric": "Throughput", "status": "warn", "label": rate_label,
+                         "detail": f"{gen_rate} gen tok/s — moderate throughput{coverage_note}"})
     else:
-        verdicts.append({"metric": "Throughput", "status": "bad", "label": f"{gen_rate} output tok/s",
-                         "detail": f"{gen_rate} output tok/s — low throughput{coverage_note}"})
+        verdicts.append({"metric": "Throughput", "status": "bad", "label": rate_label,
+                         "detail": f"{gen_rate} gen tok/s — low throughput{coverage_note}"})
 
     # Failed tool calls — tool_fail counts failing tool CALLS (already reflected
     # in Tool Success); label accordingly rather than as "error steps".

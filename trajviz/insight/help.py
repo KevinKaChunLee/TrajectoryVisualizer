@@ -8,7 +8,7 @@ HELP_TEXT: dict[str, str] = {
     # KPI card metrics
     "steps": "Total number of conversation turns (user + assistant messages) in the trajectory.",
     "wall_clock": "Elapsed wall-clock time from first to last step, including idle gaps between steps.",
-    "tokens": "Total tokens consumed across all steps: input + output + reasoning + cache read.",
+    "tokens": "Total tokens consumed across all steps: input + output + reasoning + cache read. Subtitle gen tok/s is output tokens ÷ model generation time (step duration minus spawn wait and timed tool waits).",
     "tool_success": "Percentage of tool calls that completed without errors. 100% means no tool failures.",
     # Section subtitles
     "section_summary": "Token and timing charts, failure patterns, anti-pattern summary (click a step chip to open Workflow), and resource metrics.",
