@@ -678,15 +678,21 @@ _WRAPPER_OPTIONS_WITH_VALUES = {
         "--max-chars",
     },
 }
-# python / python3 / python3.12 / pypy3 — chart labels should name the script/module.
-_PYTHON_INTERPRETER_RE = re.compile(r"^(?:python|pypy)\d*(?:\.\d+)*$")
+# Include Windows ``.exe`` / ``pythonw`` so chart labels name the script/module.
+_PYTHON_INTERPRETER_RE = re.compile(
+    r"^(?:pythonw?|pypy)\d*(?:\.\d+)*(?:\.exe)?$"
+)
 _PYTHON_VALUE_OPTIONS = frozenset({
     "-W", "-X", "-Q", "--check-hash-based-pycs",
 })
+# Drive path or .exe → treat ``\`` as a path separator, not a posix escape.
+_WIN_CMD_HINT_RE = re.compile(r"(?i)(?:[A-Za-z]:\\|\.exe\b)")
 
 
 def _shell_segments(command: str) -> list[list[str]]:
     """Lex shell command segments without evaluating or executing anything."""
+    if "\\" in command and _WIN_CMD_HINT_RE.search(command):
+        command = command.replace("\\", "/")
     lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
     # Preserve newlines as command boundaries while still honoring quoted ones.
     lexer.whitespace = " \t\r"
@@ -714,7 +720,7 @@ def _shell_segments(command: str) -> list[list[str]]:
 
 def _shell_name(token: str) -> str:
     """Return a case-insensitive executable basename."""
-    return token.rsplit("/", 1)[-1].lower()
+    return token.replace("\\", "/").rsplit("/", 1)[-1].lower()
 
 
 def _is_shell_assignment(token: str) -> bool:

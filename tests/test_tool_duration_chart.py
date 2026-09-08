@@ -79,6 +79,21 @@ class ToolDurationChartTests(unittest.TestCase):
             self.assertRegex(trace.hovertemplate, r"<br>\d+\.\d+s")
             self.assertNotIn("%{x", trace.hovertemplate)
 
+    def test_windows_python_exe_labels_script_basename(self):
+        fig = build_tool_duration_chart([
+            _step(0, tools=[
+                _tc(
+                    "Bash",
+                    ms=3000,
+                    command=(
+                        r"D:\install\py\python.exe "
+                        r"C:\Users\x\.config\opencode\skills\checker_master\main.py"
+                    ),
+                ),
+            ]),
+        ])
+        self.assertEqual({t.y[0] for t in fig.data}, {"main.py"})
+
     def test_missing_index_falls_back_to_enumerate(self):
         steps = [
             _step(None, tools=[_tc("Read", ms=1000)]),

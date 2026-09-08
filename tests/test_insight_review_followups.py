@@ -170,6 +170,14 @@ class WrappedShellSearchTests(unittest.TestCase):
             "python -c 'print(1)'": "python",
             "python3": "python3",
             "cd src && python3 ../bin/check.py": "check.py",
+            # Windows interpreters: label by script/module, not python.exe.
+            "python.exe script.py": "script.py",
+            "pythonw.exe -u main.py": "main.py",
+            "D:/install/py/python.exe C:/Users/x/.config/opencode/skills/checker_master/main.py":
+                "main.py",
+            r"D:\install\py\python.exe C:\Users\x\.config\opencode\skills\checker_master\main.py":
+                "main.py",
+            "C:/Python312/python.exe -m pytest -q": "pytest",
         }
         for command, expected in cases.items():
             with self.subTest(command=command):
