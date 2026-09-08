@@ -310,18 +310,7 @@ def build_duration_chart(
         yaxis="Duration (s)",
         height=400,
         barmode="overlay",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.06,
-            xanchor="center",
-            x=0.5,
-            # Click hides one series (e.g. Normal) so System Error and Tool
-            # Error can stay together. Double-click still isolates a single
-            # series. toggleothers on click made that combination impossible.
-            itemclick="toggle",
-            itemdoubleclick="toggleothers",
-        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5, itemclick="toggle", itemdoubleclick="toggleothers"),
     )
     fig.update_layout(margin=dict(t=70), clickmode="event")
     fig.update_xaxes(range=[-0.5, len(steps) - 0.5])
@@ -415,7 +404,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         barmode="stack" if has_agents else "relative",
     )
     if has_agents:
-        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1.0),margin=dict(t=150),)
     _apply_dark(fig, dark)
     return fig
 
@@ -512,7 +501,7 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
     fig.update_layout(clickmode="event")
     fig.update_yaxes(categoryorder="array", categoryarray=display_names)
     if has_agents:
-        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.00, xanchor="right", x=1.0),margin=dict(t=200))
     _apply_dark(fig, dark)
     return fig
 
