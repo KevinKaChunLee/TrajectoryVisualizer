@@ -99,7 +99,6 @@ class OutputThroughputTests(unittest.TestCase):
 
         self.assertEqual(metrics["output_throughput_timed_seconds"], 10.0)
         self.assertEqual(metrics["output_throughput_tool_wait_seconds"], 1200.0)
-        self.assertTrue(metrics["output_throughput_excludes_tool_wait"])
         self.assertEqual(metrics["output_tokens_per_sec"], 10.0)
 
         throughput = {
@@ -128,7 +127,7 @@ class OutputThroughputTests(unittest.TestCase):
             "output_throughput_timed_steps": 1,
             "output_throughput_total_steps": 2,
             "output_throughput_incomplete": True,
-            "output_throughput_excludes_tool_wait": True,
+            "output_throughput_tool_wait_seconds": 1200.0,
             "tool_success_rate": 0,
             "tool_call_count": 0,
         }
