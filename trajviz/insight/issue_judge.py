@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 
-from .assistant import ChatFn, complete_chat
+from .assistant import ChatFn, complete_chat, _first_user_task
 from .llm_config import AnalysisLLMConfig, resolve_analysis_config
 from .presenters.issues import IssueJudgment, OverviewIssue
 from .session import LoadedSession
@@ -17,9 +17,9 @@ _CLIP = 160
 
 JUDGE_SYSTEM_PROMPT = """You are TrajViz's Issues fix judge for coding-agent runs.
 
-You receive ONE detected workflow issue plus a clipped local workflow window and
-session skill evidence. Reply with ONLY a single JSON object (no markdown prose
-outside JSON). Schema:
+You receive ONE detected workflow issue plus a clipped local workflow window,
+optional first-user task text, and session skill evidence. Reply with ONLY a
+single JSON object (no markdown prose outside JSON). Schema:
 
 {
   "where": "string — durable edit target",
@@ -39,9 +39,11 @@ Rules for "where":
 - If evidence names a SKILL.md path or skill id → that skill / path.
 - Otherwise → durable agent instructions for the harness (e.g. CLAUDE.md, AGENTS.md,
   OpenCode agent config). Never use this run's one-shot user message as the edit target.
+  user_task is goal context only — not the place to edit.
 
 Rules for "fix":
 - One actionable change the agent author can make.
+- Prefer fixes that help the agent complete user_task without repeating this issue.
 - Do NOT prescribe noisy recovery tool trails (e.g. glob→glob→glob→bash) as a recipe.
 - Only cite step numbers that appear in the evidence.
 
@@ -125,10 +127,15 @@ def pack_issue_judge_context(session: LoadedSession, issue: OverviewIssue) -> st
         if len(skills) >= 12:
             break
 
+    session_meta: dict = {
+        "format": getattr(session, "format", "") or "",
+    }
+    user_task = _first_user_task(getattr(session, "steps", None) or [])
+    if user_task:
+        session_meta["user_task"] = user_task
+
     payload = {
-        "session": {
-            "format": getattr(session, "format", "") or "",
-        },
+        "session": session_meta,
         "issue": {
             "kind": issue.kind,
             "title": issue.title,

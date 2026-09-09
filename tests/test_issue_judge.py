@@ -82,6 +82,12 @@ class PackContextTests(unittest.TestCase):
         session = _session(
             steps=[
                 {
+                    "index": 0,
+                    "role": "user",
+                    "text_preview": "Fix the auth bug in login.py",
+                    "tool_calls": [],
+                },
+                {
                     "index": 4,
                     "role": "assistant",
                     "text_preview": "searching",
@@ -119,6 +125,8 @@ class PackContextTests(unittest.TestCase):
         self.assertIn("cat foo.py", packed)
         self.assertIn("skill:search", packed)
         self.assertIn("claude_code", packed)
+        self.assertIn("user_task", packed)
+        self.assertIn("Fix the auth bug in login.py", packed)
 
 
 class JudgeMockTests(unittest.TestCase):
