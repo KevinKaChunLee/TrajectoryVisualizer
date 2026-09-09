@@ -281,51 +281,31 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
             )
         )
 
-    for i, reg in enumerate(getattr(session, "phase_regressions", None) or []):
-        step_idx = reg.get("step_idx")
-        if step_idx is None:
-            continue
-        from_p = reg.get("from_phase") or "?"
-        to_p = reg.get("to_phase") or "?"
-        out.append(
-            OverviewIssue(
-                kind="antipattern",
-                title=f"Phase regression: {from_p} → {to_p}",
-                detail=f"at step {int(step_idx)}",
-                why=(
-                    "Workflow moved backward without a nearby planning step — often "
-                    "unintentional rework or context loss."
-                ),
-                steps=(int(step_idx),),
-                source_id=f"antipattern:phase_regression:{i}:{step_idx}",
-            )
-        )
-
     return out
 
 
 def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
-    """Map top duration hotspots into bottleneck Issues."""
+    """Map detected performance bottlenecks (outlier + clear cause), not top-N slow steps."""
     out: list[OverviewIssue] = []
-    for i, bn in enumerate(getattr(session, "bottleneck_explanations", None) or []):
+    for i, bn in enumerate(getattr(session, "performance_bottlenecks", None) or []):
         step_idx = bn.get("step_idx")
         if step_idx is None:
             continue
         idx = int(step_idx)
-        duration = float(bn.get("duration") or 0)
-        explanation = str(bn.get("explanation") or "").strip()
-        detail = explanation[:200] if explanation else f"{duration:.1f}s wall time"
+        title = str(bn.get("title") or f"Performance bottleneck at #{idx}")
+        detail = str(bn.get("detail") or bn.get("explanation") or "")[:200]
+        why = str(bn.get("why") or (
+            "Session-relative duration outlier with a dominant tool, idle/queue, "
+            "or context/inference cause."
+        ))
         out.append(
             OverviewIssue(
                 kind="bottleneck",
-                title=f"Slow step #{idx} ({duration:.1f}s)",
+                title=title,
                 detail=detail,
-                why=(
-                    "Top wall-clock hotspot — check whether tool choice, context size, "
-                    "or idle/rate-limit gaps are under author control."
-                ),
+                why=why,
                 steps=(idx,),
-                source_id=f"bottleneck:{i}:{idx}",
+                source_id=f"bottleneck:{bn.get('cause', 'unknown')}:{i}:{idx}",
             )
         )
     return out

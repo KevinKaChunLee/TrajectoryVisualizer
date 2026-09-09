@@ -11,6 +11,7 @@ from trajviz.tool_vocab import (
 
 import os
 import re
+import statistics
 
 # Tool-call statuses that open/continue a failure chain. Shared by
 # _step_has_error, classify_chain_steps, and cluster_errors so the chain
@@ -659,6 +660,8 @@ def compute_bottleneck_explanations(
     """Compute duration decomposition and explanation for top-N hotspot steps.
 
     Returns list of {step_idx, duration, decomposition, explanation} dicts.
+    This is a Hotspots-style ranking (vanity top-N). For Issues triage use
+    :func:`detect_performance_bottlenecks` instead.
     """
     # Find top-N assistant steps by duration
     asst = [s for s in steps if s.get("role") == "assistant" and s.get("duration")]
@@ -685,3 +688,179 @@ def compute_bottleneck_explanations(
         })
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# 4b. Real performance bottlenecks (outlier + actionable cause)
+# ---------------------------------------------------------------------------
+
+_BN_MIN_ABS_S = 8.0
+_BN_MIN_IDLE_S = 10.0
+_BN_MIN_TOOL_S = 5.0
+_BN_MIN_INFERENCE_S = 15.0
+_BN_MAX_ISSUES = 3
+
+
+def _duration_outlier_threshold(durations: list[float]) -> float:
+    """Session-relative floor: absolute minimum, or median×2 / mean+1.5σ when possible."""
+    if not durations:
+        return _BN_MIN_ABS_S
+    from .metrics import _percentile
+
+    median = float(statistics.median(durations))
+    p90 = float(_percentile(durations, 0.90))
+    floor = max(_BN_MIN_ABS_S, median * 2.0, p90)
+
+    if len(durations) >= 8:
+        mean = statistics.mean(durations)
+        try:
+            stdev = statistics.stdev(durations)
+        except statistics.StatisticsError:
+            stdev = 0.0
+        if stdev > 0:
+            sigma = mean + 1.5 * stdev
+            # Prefer the stricter of relative floors so uniform slow runs stay quiet.
+            floor = max(_BN_MIN_ABS_S, min(floor, max(median * 2.0, sigma)))
+    return floor
+
+
+def _classify_performance_cause(
+    decomp: dict,
+    step: dict,
+    analytics_row: dict | None,
+) -> str | None:
+    """Return cause key if the dominant component is an actionable bottleneck."""
+    idle_pct = float(decomp.get("idle_pct") or 0)
+    tool_pct = float(decomp.get("tool_pct") or 0)
+    inf_pct = float(decomp.get("inference_pct") or 0)
+    idle_s = float(decomp.get("idle_s") or 0)
+    tool_s = float(decomp.get("tool_s") or 0)
+    inference_s = float(decomp.get("inference_s") or 0)
+
+    # Idle/queue first — often the true wall-clock bottleneck and distinct from step work.
+    if idle_pct >= 40 and idle_s >= _BN_MIN_IDLE_S:
+        return "idle"
+
+    if tool_pct >= 50 and tool_s >= _BN_MIN_TOOL_S:
+        return "tool"
+
+    if inf_pct >= 50 and inference_s >= _BN_MIN_INFERENCE_S:
+        tokens = step.get("tokens") or {}
+        tok_total = int(tokens.get("total") or 0) if isinstance(tokens, dict) else 0
+        cache_ratio = None
+        if analytics_row is not None:
+            cache_ratio = analytics_row.get("cache_ratio")
+        # Context waste: large prompt and/or weak cache hit rate.
+        if tok_total >= 40_000 or (
+            cache_ratio is not None and tok_total > 0 and float(cache_ratio) < 0.35
+        ):
+            return "context"
+        # Extremely long model-side turn even without cache signal.
+        if inference_s >= 30:
+            return "inference"
+
+    return None
+
+
+def detect_performance_bottlenecks(
+    steps: list[dict],
+    step_analytics: list[dict],
+    *,
+    max_issues: int = _BN_MAX_ISSUES,
+) -> list[dict]:
+    """Detect real performance bottlenecks (outlier + clear cause).
+
+    Unlike :func:`compute_bottleneck_explanations` (top-N by duration), this
+    requires the step to exceed a session-relative duration floor **and** have
+    a dominant actionable cause: idle/queue, tool wait, or context/inference.
+
+    Returns
+    -------
+    list[dict]
+        ``step_idx``, ``duration``, ``cause``, ``title``, ``detail``, ``why``,
+        ``decomposition``, ``explanation``.
+    """
+    asst = [
+        s for s in steps
+        if s.get("role") == "assistant" and isinstance(s.get("duration"), (int, float))
+        and float(s["duration"]) > 0
+    ]
+    if not asst:
+        return []
+
+    durations = [float(s["duration"]) for s in asst]
+    threshold = _duration_outlier_threshold(durations)
+    analytics_map = {a["index"]: a for a in step_analytics}
+
+    candidates: list[dict] = []
+    for step in asst:
+        duration = float(step["duration"])
+        idx = int(step["index"])
+        analytics_row = analytics_map.get(idx)
+        idle_gap = analytics_row.get("idle_before_s") if analytics_row else None
+        idle_for_impact = max(0.0, float(idle_gap or 0))
+        # Idle gaps sit outside step.duration; include them so queue stalls qualify.
+        if duration + idle_for_impact < threshold:
+            continue
+        decomp = decompose_hotspot_duration(step, analytics_row, idle_gap)
+        cause = _classify_performance_cause(decomp, step, analytics_row)
+        if cause is None:
+            continue
+
+        explanation = explain_hotspot(step, decomp)
+        dt = decomp.get("dominant_tool") or {}
+        tool_name = str(dt.get("name") or "tool")
+        tool_target = str(dt.get("target") or "")
+        tool_s = float(decomp.get("tool_s") or 0)
+        idle_s = float(decomp.get("idle_s") or 0)
+        inference_s = float(decomp.get("inference_s") or 0)
+
+        if cause == "idle":
+            title = f"Idle/queue bottleneck before #{idx} ({idle_s:.0f}s gap)"
+            detail = explanation[:200]
+            why = (
+                "Large pre-step idle usually means queuing or rate limiting — "
+                "reduce parallel pressure or wait policy rather than changing prompts."
+            )
+        elif cause == "tool":
+            label = f"{tool_name}: {tool_target}" if tool_target else tool_name
+            short = label if len(label) <= 40 else (label[:37] + "…")
+            title = f"Tool bottleneck: {short} ({tool_s:.1f}s)"
+            detail = explanation[:200]
+            why = (
+                "Most of this outlier step was spent in a tool — prefer cheaper tools, "
+                "narrower scopes, or caching results instead of repeating heavy calls."
+            )
+        elif cause == "context":
+            title = f"Context/cache bottleneck at #{idx} ({duration:.1f}s)"
+            detail = explanation[:200]
+            why = (
+                "Long inference with heavy tokens or weak cache hits — trim context, "
+                "improve cache locality, or avoid reloading large files each turn."
+            )
+        else:  # inference
+            title = f"Inference bottleneck at #{idx} ({duration:.1f}s)"
+            detail = explanation[:200]
+            why = (
+                "Outlier model-side turn with little tool wait — often oversized "
+                "reasoning or prompt; tighten instructions or split the task."
+            )
+
+        candidates.append({
+            "step_idx": idx,
+            "duration": duration,
+            "cause": cause,
+            "title": title,
+            "detail": detail,
+            "why": why,
+            "decomposition": decomp,
+            "explanation": explanation,
+        })
+
+    # Prefer largest wall impact; for idle, use idle_s as secondary sort key via duration+idle.
+    def _impact(item: dict) -> float:
+        d = item["decomposition"]
+        return float(item["duration"]) + float(d.get("idle_s") or 0)
+
+    candidates.sort(key=_impact, reverse=True)
+    return candidates[:max_issues]

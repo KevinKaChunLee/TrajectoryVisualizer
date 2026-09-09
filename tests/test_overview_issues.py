@@ -25,6 +25,7 @@ def _session(**kwargs):
         repeated_searches=[],
         phase_regressions=[],
         bottleneck_explanations=[],
+        performance_bottlenecks=[],
         file_interactions=[],
         format="",
     )
@@ -72,10 +73,13 @@ class OverviewIssuesTests(unittest.TestCase):
                     "end_step": 6,
                     "length": 3,
                 }],
-                bottleneck_explanations=[{
+                performance_bottlenecks=[{
                     "step_idx": 8,
                     "duration": 42.5,
-                    "explanation": "Step 8: 42.5s — 40s LLM inference",
+                    "cause": "tool",
+                    "title": "Tool bottleneck: Bash: npm test (40.0s)",
+                    "detail": "Step 8: 42.5s — 40s executing tools",
+                    "why": "tool wait",
                 }],
             )
         )
@@ -84,21 +88,37 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(shown[1].kind, "antipattern")
         self.assertEqual(shown[2].kind, "bottleneck")
 
-    def test_bottleneck_issue_from_explanations(self):
+    def test_bottleneck_issue_from_performance_bottlenecks(self):
         issues = collect_overview_issues(
             _session(
-                bottleneck_explanations=[{
+                performance_bottlenecks=[{
                     "step_idx": 12,
                     "duration": 18.2,
-                    "explanation": "Step 12: 18.2s — 15s executing tools (Bash: npm test 14s)",
+                    "cause": "tool",
+                    "title": "Tool bottleneck: Bash: npm test (14.0s)",
+                    "detail": "Step 12: 18.2s — 15s executing tools (Bash: npm test 14s)",
+                    "why": "Most of this outlier step was spent in a tool.",
                 }],
             )
         )
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].kind, "bottleneck")
         self.assertEqual(issues[0].steps, (12,))
-        self.assertIn("18.2s", issues[0].title)
+        self.assertIn("Tool bottleneck", issues[0].title)
         self.assertIn("npm test", issues[0].detail)
+
+    def test_top_n_hotspot_explanations_are_not_issues(self):
+        # Vanity top-N slow steps must not become Issues without performance_bottlenecks.
+        issues = collect_overview_issues(
+            _session(
+                bottleneck_explanations=[{
+                    "step_idx": 12,
+                    "duration": 18.2,
+                    "explanation": "Step 12: 18.2s — slow",
+                }],
+            )
+        )
+        self.assertEqual(issues, [])
 
     def test_step_chips_without_fix_or_change(self):
         html = render_overview_issues_html([
@@ -201,7 +221,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("cascade", issues[0].title.lower())
         self.assertEqual(issues[0].steps, (3, 4, 5))
 
-    def test_plan_resets_edit_thrash_repeated_search_phase_regression(self):
+    def test_plan_resets_edit_thrash_repeated_search(self):
         issues = collect_overview_issues(
             _session(
                 plan_metrics={"plan_resets": 2, "stalled": []},
@@ -219,19 +239,13 @@ class OverviewIssuesTests(unittest.TestCase):
                     "count": 3,
                     "steps": [1, 4, 9],
                 }],
-                phase_regressions=[{
-                    "from_phase": "implementation",
-                    "to_phase": "exploration",
-                    "step_idx": 12,
-                    "category": "unintentional_drift",
-                }],
             )
         )
         titles = [i.title for i in issues]
         self.assertTrue(any("plan reset" in t for t in titles))
         self.assertTrue(any("Edit thrash" in t for t in titles))
         self.assertTrue(any("Repeated empty search" in t for t in titles))
-        self.assertTrue(any("Phase regression" in t for t in titles))
+        self.assertFalse(any("Phase regression" in t for t in titles))
         thrash = next(i for i in issues if "Edit thrash" in i.title)
         self.assertEqual(thrash.steps, (5, 6, 7, 8))
 

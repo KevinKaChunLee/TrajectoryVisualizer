@@ -18,6 +18,7 @@ from .diagnostics import (
     compute_bottleneck_explanations,
     compute_failure_chain_metrics,
     detect_failure_chains,
+    detect_performance_bottlenecks,
     extract_file_interactions,
     identify_target_files,
     link_chains_to_agents,
@@ -88,6 +89,7 @@ class LoadedSession:
     chain_metrics: dict
     clusters: list
     bottleneck_explanations: list
+    performance_bottlenecks: list
     pressure_series: dict
     pressure_choices: list
     show_root_cause: bool
@@ -274,6 +276,7 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         chain_metrics=chain_metrics,
         clusters=clusters,
         bottleneck_explanations=bottleneck_explanations,
+        performance_bottlenecks=detect_performance_bottlenecks(steps, step_analytics),
         pressure_series=pressure_series,
         pressure_choices=pressure_choices,
         show_root_cause=detected not in _NOISY_ROOT_CAUSE_FORMATS,
