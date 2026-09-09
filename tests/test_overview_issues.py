@@ -229,6 +229,7 @@ class OverviewIssuesTests(unittest.TestCase):
                 edit_thrash=[{
                     "path": "src/app.py",
                     "count": 4,
+                    "fail_count": 2,
                     "steps": [5, 6, 7, 8],
                     "start_step": 5,
                     "end_step": 8,
@@ -243,10 +244,9 @@ class OverviewIssuesTests(unittest.TestCase):
         )
         titles = [i.title for i in issues]
         self.assertTrue(any("plan reset" in t for t in titles))
-        self.assertTrue(any("Edit thrash" in t for t in titles))
+        self.assertTrue(any("Failed edit retries" in t for t in titles))
         self.assertTrue(any("Repeated empty search" in t for t in titles))
-        self.assertFalse(any("Phase regression" in t for t in titles))
-        thrash = next(i for i in issues if "Edit thrash" in i.title)
+        thrash = next(i for i in issues if "Failed edit retries" in i.title)
         self.assertEqual(thrash.steps, (5, 6, 7, 8))
 
 

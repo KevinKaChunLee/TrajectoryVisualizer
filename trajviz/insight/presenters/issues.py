@@ -246,16 +246,20 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
     for i, thrash in enumerate(getattr(session, "edit_thrash", None) or []):
         path = str(thrash.get("path") or "")
         count = int(thrash.get("count") or 0)
+        fail_count = int(thrash.get("fail_count") or 0)
         steps = tuple(int(s) for s in (thrash.get("steps") or []) if s is not None)
         short = path if len(path) <= 48 else ("…" + path[-47:])
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"Edit thrash on {short} ({count}×)",
-                detail=f"steps {thrash.get('start_step')}–{thrash.get('end_step')}",
+                title=f"Failed edit retries on {short} ({count}×)",
+                detail=(
+                    f"{fail_count} failed write(s) in steps "
+                    f"{thrash.get('start_step')}–{thrash.get('end_step')}"
+                ),
                 why=(
-                    "Repeated Write/Edit on the same file in a short window often means "
-                    "thrashing without a stable approach."
+                    "Same file rewritten after write failures — usually a bad path, "
+                    "patch mismatch, or approach that needs a precondition check."
                 ),
                 steps=steps,
                 source_id=f"antipattern:edit_thrash:{i}:{path}",

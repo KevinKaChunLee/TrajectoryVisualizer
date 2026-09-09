@@ -8,7 +8,12 @@ from bisect import bisect_right
 from collections import Counter
 
 from trajviz.insight.parser import spawned_child_session_id
-from trajviz.tool_vocab import BASH_TOOL_NAMES, WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES
+from trajviz.insight.step_errors import tool_call_failed
+from trajviz.tool_vocab import (
+    BASH_TOOL_NAMES,
+    WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES,
+    write_target_path,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1284,7 +1289,7 @@ def detect_tool_selection_antipatterns(steps: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 6b. Same-path edit thrash + repeated identical search
+# 6b. Failed same-path edit retries + repeated identical search
 # ---------------------------------------------------------------------------
 
 _EDIT_THRASH_WINDOW = 15
@@ -1293,17 +1298,19 @@ _REPEATED_SEARCH_MIN = 3
 
 
 def detect_edit_thrash(steps: list[dict]) -> list[dict]:
-    """Detect ≥3 Write/Edit attempts on the same path within a short window.
+    """Detect repeated Write/Edit on one path that includes failed attempts.
+
+    Successful iterate/fix loops on the same file are normal and are NOT
+    flagged. A cluster qualifies only when ≥3 write attempts hit the same path
+    within a short window **and** at least one of those attempts failed.
 
     Returns
     -------
     list[dict]
-        ``{"path": str, "count": int, "steps": [int], "start_step": int, "end_step": int}``
+        ``{"path", "count", "fail_count", "steps", "start_step", "end_step"}``
     """
-    from trajviz.tool_vocab import write_target_path
-
-    # path -> list of step indices (one entry per write call)
-    by_path: dict[str, list[int]] = {}
+    # path -> list of (step_idx, failed)
+    by_path: dict[str, list[tuple[int, bool]]] = {}
     for s in steps[:_MAX_STEPS]:
         idx = int(s.get("index", 0))
         for tc in s.get("tool_calls") or []:
@@ -1315,36 +1322,41 @@ def detect_edit_thrash(steps: list[dict]) -> list[dict]:
             if not path:
                 continue
             path = path.replace("\\", "/")
-            by_path.setdefault(path, []).append(idx)
+            by_path.setdefault(path, []).append((idx, tool_call_failed(tc)))
 
     thrash: list[dict] = []
-    for path, step_list in by_path.items():
-        if len(step_list) < _EDIT_THRASH_MIN:
+    for path, events in by_path.items():
+        if len(events) < _EDIT_THRASH_MIN:
             continue
-        # Sliding window over chronological step indices
-        ordered = sorted(step_list)
-        best: tuple[int, ...] | None = None
-        for i in range(len(ordered)):
-            window: list[int] = [ordered[i]]
-            for j in range(i + 1, len(ordered)):
-                if ordered[j] - ordered[i] > _EDIT_THRASH_WINDOW:
+        best: list[tuple[int, bool]] | None = None
+        best_fails = 0
+        for i in range(len(events)):
+            window = [events[i]]
+            for j in range(i + 1, len(events)):
+                if events[j][0] - events[i][0] > _EDIT_THRASH_WINDOW:
                     break
-                window.append(ordered[j])
-            if len(window) >= _EDIT_THRASH_MIN:
-                cand = tuple(window)
-                if best is None or len(cand) > len(best):
-                    best = cand
+                window.append(events[j])
+            if len(window) < _EDIT_THRASH_MIN:
+                continue
+            fail_count = sum(1 for _, failed in window if failed)
+            if fail_count < 1:
+                continue
+            if best is None or len(window) > len(best):
+                best = window
+                best_fails = fail_count
         if best is None:
             continue
+        step_list = [idx for idx, _ in best]
         thrash.append({
             "path": path,
             "count": len(best),
-            "steps": list(best),
-            "start_step": best[0],
-            "end_step": best[-1],
+            "fail_count": best_fails,
+            "steps": step_list,
+            "start_step": step_list[0],
+            "end_step": step_list[-1],
         })
 
-    thrash.sort(key=lambda t: (-t["count"], t["start_step"], t["path"]))
+    thrash.sort(key=lambda t: (-t["fail_count"], -t["count"], t["start_step"], t["path"]))
     return thrash
 
 

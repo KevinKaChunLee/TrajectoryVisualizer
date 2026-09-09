@@ -5,15 +5,15 @@ import unittest
 from trajviz.insight.patterns import detect_edit_thrash, detect_repeated_searches
 
 
-def _write(idx: int, path: str) -> dict:
+def _write(idx: int, path: str, *, status: str = "success") -> dict:
     return {
         "index": idx,
         "role": "assistant",
         "tool_calls": [{
             "tool_name": "Write",
             "input": {"file_path": path},
-            "status": "success",
-            "output": "ok",
+            "status": status,
+            "output": "ok" if status == "success" else "failed",
         }],
     }
 
@@ -32,9 +32,18 @@ def _empty_grep(idx: int, pattern: str, path: str = "") -> dict:
 
 
 class EditThrashTests(unittest.TestCase):
-    def test_detects_three_writes_same_path_in_window(self):
+    def test_successful_optimize_loop_is_not_thrash(self):
         steps = [
             _write(1, "src/a.py"),
+            _write(3, "src/a.py"),
+            _write(5, "src/a.py"),
+            _write(7, "src/a.py"),
+        ]
+        self.assertEqual(detect_edit_thrash(steps), [])
+
+    def test_detects_retries_when_a_write_failed(self):
+        steps = [
+            _write(1, "src/a.py", status="error"),
             _write(3, "src/a.py"),
             _write(5, "src/a.py"),
             _write(20, "src/other.py"),
@@ -43,11 +52,12 @@ class EditThrashTests(unittest.TestCase):
         self.assertEqual(len(thrash), 1)
         self.assertEqual(thrash[0]["path"], "src/a.py")
         self.assertEqual(thrash[0]["count"], 3)
+        self.assertEqual(thrash[0]["fail_count"], 1)
         self.assertEqual(thrash[0]["steps"], [1, 3, 5])
 
     def test_ignores_writes_spread_beyond_window(self):
         steps = [
-            _write(1, "src/a.py"),
+            _write(1, "src/a.py", status="error"),
             _write(20, "src/a.py"),
             _write(40, "src/a.py"),
         ]
