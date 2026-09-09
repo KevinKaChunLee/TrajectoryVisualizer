@@ -86,8 +86,6 @@ def filter_workflow_steps(
 
     agent_tokens = {t for t in active if t.startswith(AGENT_FILTER_PREFIX)}
     restrict_agents = AGENT_ALL_FILTER not in agent_tokens and bool(agent_tokens)
-    selected_agent_ids: set[str] = set()
-    agent_id_of = None
     if restrict_agents:
         selected_agent_ids = {
             aid
@@ -97,6 +95,9 @@ def filter_workflow_steps(
         if not selected_agent_ids:
             return []
         agent_id_of = timeline_agent_id_of(steps)
+    else:
+        selected_agent_ids = set()
+        agent_id_of = None
 
     filtered: list[int] = []
     for position, step in enumerate(steps):
@@ -105,7 +106,7 @@ def filter_workflow_steps(
             continue
         if restrict_features and not (labels & feature_filters):
             continue
-        if agent_id_of is not None and agent_id_of(step) not in selected_agent_ids:
+        if restrict_agents and agent_id_of(step) not in selected_agent_ids:
             continue
 
         if keyword:

@@ -87,12 +87,14 @@ WORKFLOW_JS = """
                                exact source in Node. Keep it DOM-free. */
                             /* __WF_CHIP_STATE_BEGIN__ */
                             window.__wfComputeChipState = function(state, action) {
-                                var roles = {};
-                                var features = {};
-                                var agents = {};
-                                Object.keys(state.roles).forEach(function(k) { roles[k] = !!state.roles[k]; });
-                                Object.keys(state.features).forEach(function(k) { features[k] = !!state.features[k]; });
-                                Object.keys(state.agents).forEach(function(k) { agents[k] = !!state.agents[k]; });
+                                var cloneFlags = function(src) {
+                                    var out = {};
+                                    Object.keys(src).forEach(function(k) { out[k] = !!src[k]; });
+                                    return out;
+                                };
+                                var roles = cloneFlags(state.roles);
+                                var features = cloneFlags(state.features);
+                                var agents = cloneFlags(state.agents);
                                 var rejected = false;
                                 var toggleExclusiveAll = function(group, allKey, name) {
                                     if (name === allKey) {
@@ -128,28 +130,29 @@ WORKFLOW_JS = """
                                 return {roles: roles, features: features, agents: agents, rejected: rejected};
                             };
                             /* __WF_CHIP_STATE_END__ */
+                            window.__wfChipGroups = [
+                                ['role', 'roles'],
+                                ['feature', 'features'],
+                                ['agent', 'agents']
+                            ];
                             window.__wfReadChipState = function(bar) {
                                 var state = {roles: {}, features: {}, agents: {}};
-                                bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
-                                    state.roles[c.dataset.filter] = c.classList.contains('chip-active');
-                                });
-                                bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
-                                    state.features[c.dataset.filter] = c.classList.contains('chip-active');
-                                });
-                                bar.querySelectorAll('[data-filter-group="agent"]').forEach(function(c) {
-                                    state.agents[c.dataset.filter] = c.classList.contains('chip-active');
+                                window.__wfChipGroups.forEach(function(pair) {
+                                    var group = pair[0];
+                                    var key = pair[1];
+                                    bar.querySelectorAll('[data-filter-group="' + group + '"]').forEach(function(c) {
+                                        state[key][c.dataset.filter] = c.classList.contains('chip-active');
+                                    });
                                 });
                                 return state;
                             };
                             window.__wfApplyChipState = function(bar, state) {
-                                bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
-                                    window.__setWorkflowChipActive(c, !!state.roles[c.dataset.filter]);
-                                });
-                                bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
-                                    window.__setWorkflowChipActive(c, !!state.features[c.dataset.filter]);
-                                });
-                                bar.querySelectorAll('[data-filter-group="agent"]').forEach(function(c) {
-                                    window.__setWorkflowChipActive(c, !!state.agents[c.dataset.filter]);
+                                window.__wfChipGroups.forEach(function(pair) {
+                                    var group = pair[0];
+                                    var key = pair[1];
+                                    bar.querySelectorAll('[data-filter-group="' + group + '"]').forEach(function(c) {
+                                        window.__setWorkflowChipActive(c, !!state[key][c.dataset.filter]);
+                                    });
                                 });
                             };
                             if (!window.__wfChipHandlerAttached) {

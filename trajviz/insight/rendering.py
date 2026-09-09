@@ -10,6 +10,7 @@ from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
 from .charts import bind_timeline_agents
+from .context_usage import PRESSURE_MAIN_AGENT, pressure_agent_key
 from .metrics import tool_call_duration_ms
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
 from .parser import _optional_token_count
@@ -172,14 +173,12 @@ _FEATURE_FILTER_CHIPS = ["Tool Calls", "Errors", "Reasoning"]
 _ALL_FEATURE_FILTER = "All"
 AGENT_FILTER_PREFIX = "agent:"
 AGENT_ALL_FILTER = "agent:All"
-MAIN_AGENT_FILTER = "agent:__main__"
+MAIN_AGENT_FILTER = f"{AGENT_FILTER_PREFIX}{PRESSURE_MAIN_AGENT}"
 
 
 def agent_filter_token(agent_id: str) -> str:
     """CSV / chip token for a timeline agent id (empty id → main)."""
-    if agent_id == "":
-        return MAIN_AGENT_FILTER
-    return f"{AGENT_FILTER_PREFIX}{agent_id}"
+    return f"{AGENT_FILTER_PREFIX}{pressure_agent_key(agent_id)}"
 
 
 def agent_id_from_filter_token(token: str) -> str | None:
@@ -192,7 +191,7 @@ def agent_id_from_filter_token(token: str) -> str | None:
     rest = token[len(AGENT_FILTER_PREFIX):]
     if rest == "All":
         return None
-    if rest == "__main__":
+    if rest == PRESSURE_MAIN_AGENT:
         return ""
     return rest
 
@@ -314,6 +313,15 @@ def render_filter_chips(
             f"{escaped_label}</button>"
         )
 
+    def _group(key: str, title: str, hint: str, chips_html: str) -> str:
+        return (
+            f"<div class='filter-group' data-filter-group-container='{key}'>"
+            f"<div class='filter-group-label'>{html.escape(title)}"
+            f"<span>{html.escape(hint)}</span></div>"
+            f"<div class='filter-options'>{chips_html}</div>"
+            "</div>"
+        )
+
     role_chips = "".join(
         _chip(data_filter=name, label=name, group="role")
         for name in _ROLE_FILTER_CHIPS
@@ -329,20 +337,8 @@ def render_filter_chips(
     )
 
     groups = [
-        (
-            "<div class='filter-group' data-filter-group-container='role'>"
-            "<div class='filter-group-label'>Role"
-            "<span>select at least one</span></div>"
-            f"<div class='filter-options'>{role_chips}</div>"
-            "</div>"
-        ),
-        (
-            "<div class='filter-group' data-filter-group-container='feature'>"
-            "<div class='filter-group-label'>Step feature"
-            "<span>match any selected</span></div>"
-            f"<div class='filter-options'>{feature_chips}</div>"
-            "</div>"
-        ),
+        _group("role", "Role", "select at least one", role_chips),
+        _group("feature", "Step feature", "match any selected", feature_chips),
     ]
 
     summary = "Role: Assistant or User &middot; Step feature: All"
@@ -362,13 +358,7 @@ def render_filter_chips(
                 group="agent",
                 style=f"border-left:3px solid {hex_color};",
             )
-        groups.append(
-            "<div class='filter-group' data-filter-group-container='agent'>"
-            "<div class='filter-group-label'>Agent"
-            "<span>match any selected</span></div>"
-            f"<div class='filter-options'>{agent_chips}</div>"
-            "</div>"
-        )
+        groups.append(_group("agent", "Agent", "match any selected", agent_chips))
         summary += " &middot; Agent: All"
         reset_title = (
             "Restore all roles and remove step feature / agent restrictions"
