@@ -36,9 +36,15 @@ def _session(**kwargs):
     base = dict(
         steps=[],
         failure_patterns=[],
+        failure_chains=[],
         fruitless_streaks=[],
         tool_selection=[],
         plan_metrics={},
+        plan_history=[],
+        edit_thrash=[],
+        repeated_searches=[],
+        phase_regressions=[],
+        bottleneck_explanations=[],
         file_interactions=[],
         format="claude_code",
     )
@@ -129,8 +135,13 @@ class JudgeMockTests(unittest.TestCase):
 
         def chat_fn(config, system, messages):
             self.assertIn("fix judge", system.lower())
+            self.assertIn("Simplified Chinese", system)
+            self.assertIn("Simplified Chinese", messages[0]["content"])
             self.assertEqual(messages[0]["role"], "user")
-            return '{"where":"CLAUDE.md","fix":"Check path before Bash","also":"","confidence":"high"}'
+            return (
+                '{"where":"CLAUDE.md","fix":"Bash 读文件前先确认路径",'
+                '"also":"","confidence":"high"}'
+            )
 
         j = judge_issue_fix(session, issue, config=_cfg(), chat_fn=chat_fn)
         self.assertEqual(j.where, "CLAUDE.md")
@@ -153,8 +164,8 @@ class JudgeMockTests(unittest.TestCase):
 
         def chat_fn(config, system, messages):
             return (
-                '{"where":"CLAUDE.md","fix":"Stop after N empty searches",'
-                '"also":"Seed paths","confidence":"medium"}'
+                '{"where":"CLAUDE.md","fix":"空搜索超过 N 次后停止",'
+                '"also":"预先给出路径","confidence":"medium"}'
             )
 
         judged, errors = judge_overview_issues(
@@ -166,7 +177,7 @@ class JudgeMockTests(unittest.TestCase):
         self.assertIn(">Change<", html)
         self.assertIn(">Fix", html)
         self.assertIn("CLAUDE.md", html)
-        self.assertIn("Stop after N empty searches", html)
+        self.assertIn("空搜索超过 N 次后停止", html)
         self.assertIn("with LLM fix", html)
 
     def test_render_without_judgment_has_no_change_fix(self):

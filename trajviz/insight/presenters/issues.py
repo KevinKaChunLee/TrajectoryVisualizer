@@ -13,18 +13,20 @@ from ..rendering import (
 from ..session import LoadedSession
 from .patterns import count_tool_errors
 
-IssueKind = Literal["error", "antipattern"]
+IssueKind = Literal["error", "antipattern", "bottleneck"]
 Confidence = Literal["high", "medium", "low"]
 
-# Lower = more urgent. Errors before waste.
+# Lower = more urgent. Errors before waste before latency.
 _SEVERITY: dict[IssueKind, int] = {
     "error": 0,
     "antipattern": 1,
+    "bottleneck": 2,
 }
 
 _BORDER: dict[IssueKind, str] = {
     "error": "var(--ov-bad)",
     "antipattern": "var(--ov-warn)",
+    "bottleneck": "var(--ov-accent)",
 }
 
 
@@ -67,14 +69,12 @@ def rank_issues(issues: list[OverviewIssue]) -> list[OverviewIssue]:
 
 
 def collect_overview_issues(session: LoadedSession) -> list[OverviewIssue]:
-    """Map LoadedSession diagnostics into Issues (no re-detection).
-
-    Slow-step bottlenecks are omitted — latency is usually not author-controllable
-    the way errors and anti-patterns are.
-    """
+    """Map LoadedSession diagnostics into Issues (no re-detection)."""
     issues: list[OverviewIssue] = []
     issues.extend(_from_failure_patterns(session))
+    issues.extend(_from_failure_chains(session))
     issues.extend(_from_antipatterns(session))
+    issues.extend(_from_bottlenecks(session))
     return issues
 
 
@@ -98,6 +98,32 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
                 why=why,
                 steps=steps,
                 source_id=f"fail:{i}:{label}",
+            )
+        )
+    return out
+
+
+def _from_failure_chains(session: LoadedSession) -> list[OverviewIssue]:
+    """Consecutive assistant error runs (cascades). Skip length-1 (covered by clusters)."""
+    out: list[OverviewIssue] = []
+    chains = getattr(session, "failure_chains", None) or []
+    for i, chain in enumerate(chains):
+        steps = tuple(int(s) for s in (chain.get("steps") or []) if s is not None)
+        if len(steps) < 2:
+            continue
+        start = chain.get("start", steps[0])
+        end = chain.get("end", steps[-1])
+        out.append(
+            OverviewIssue(
+                kind="error",
+                title=f"{len(steps)}-step failure cascade",
+                detail=f"steps {start}–{end}",
+                why=(
+                    "Consecutive assistant steps failed without a clean recovery in between; "
+                    "cascades often amplify one root error into thrash."
+                ),
+                steps=steps,
+                source_id=f"cascade:{i}:{start}-{end}",
             )
         )
     return out
@@ -196,6 +222,112 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
             )
         )
 
+    plan_resets = int((session.plan_metrics or {}).get("plan_resets") or 0)
+    if plan_resets > 0:
+        plan_steps = sorted({
+            int(snap["step"])
+            for snap in (getattr(session, "plan_history", None) or [])
+            if snap.get("step") is not None
+        })
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"{plan_resets} plan reset(s)",
+                detail="todo list content replaced with no overlapping items",
+                why=(
+                    "A full plan rewrite mid-run usually means the agent abandoned context "
+                    "instead of completing or revising items in place."
+                ),
+                steps=tuple(plan_steps[:12]),
+                source_id="antipattern:plan_resets",
+            )
+        )
+
+    for i, thrash in enumerate(getattr(session, "edit_thrash", None) or []):
+        path = str(thrash.get("path") or "")
+        count = int(thrash.get("count") or 0)
+        steps = tuple(int(s) for s in (thrash.get("steps") or []) if s is not None)
+        short = path if len(path) <= 48 else ("…" + path[-47:])
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"Edit thrash on {short} ({count}×)",
+                detail=f"steps {thrash.get('start_step')}–{thrash.get('end_step')}",
+                why=(
+                    "Repeated Write/Edit on the same file in a short window often means "
+                    "thrashing without a stable approach."
+                ),
+                steps=steps,
+                source_id=f"antipattern:edit_thrash:{i}:{path}",
+            )
+        )
+
+    for i, rep in enumerate(getattr(session, "repeated_searches", None) or []):
+        display = str(rep.get("display") or rep.get("signature") or "")
+        count = int(rep.get("count") or 0)
+        steps = tuple(int(s) for s in (rep.get("steps") or []) if s is not None)
+        short = display if len(display) <= 48 else (display[:45] + "…")
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"Repeated empty search ({count}×)",
+                detail=short,
+                why=(
+                    "The same search ran multiple times with empty results (not only as a "
+                    "consecutive streak) — the query or path is likely wrong."
+                ),
+                steps=steps,
+                source_id=f"antipattern:repeated_search:{i}",
+            )
+        )
+
+    for i, reg in enumerate(getattr(session, "phase_regressions", None) or []):
+        step_idx = reg.get("step_idx")
+        if step_idx is None:
+            continue
+        from_p = reg.get("from_phase") or "?"
+        to_p = reg.get("to_phase") or "?"
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"Phase regression: {from_p} → {to_p}",
+                detail=f"at step {int(step_idx)}",
+                why=(
+                    "Workflow moved backward without a nearby planning step — often "
+                    "unintentional rework or context loss."
+                ),
+                steps=(int(step_idx),),
+                source_id=f"antipattern:phase_regression:{i}:{step_idx}",
+            )
+        )
+
+    return out
+
+
+def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
+    """Map top duration hotspots into bottleneck Issues."""
+    out: list[OverviewIssue] = []
+    for i, bn in enumerate(getattr(session, "bottleneck_explanations", None) or []):
+        step_idx = bn.get("step_idx")
+        if step_idx is None:
+            continue
+        idx = int(step_idx)
+        duration = float(bn.get("duration") or 0)
+        explanation = str(bn.get("explanation") or "").strip()
+        detail = explanation[:200] if explanation else f"{duration:.1f}s wall time"
+        out.append(
+            OverviewIssue(
+                kind="bottleneck",
+                title=f"Slow step #{idx} ({duration:.1f}s)",
+                detail=detail,
+                why=(
+                    "Top wall-clock hotspot — check whether tool choice, context size, "
+                    "or idle/rate-limit gaps are under author control."
+                ),
+                steps=(idx,),
+                source_id=f"bottleneck:{i}:{idx}",
+            )
+        )
     return out
 
 

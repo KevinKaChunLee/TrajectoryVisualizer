@@ -28,8 +28,14 @@ outside JSON). Schema:
   "confidence": "high" | "medium" | "low"
 }
 
+Language:
+- Write the values of "where", "fix", and "also" in Simplified Chinese (Mandarin).
+- Keep JSON keys in English.
+- Keep "confidence" as the English enum: high | medium | low.
+- File/path/tool names may stay in their original Latin spelling when that is clearer.
+
 Rules for "where":
-- Permission/auth/sandbox/cwd runtime failures → Environment (not instructions).
+- Permission/auth/sandbox/cwd runtime failures → 环境 (not instructions).
 - If evidence names a SKILL.md path or skill id → that skill / path.
 - Otherwise → durable agent instructions for the harness (e.g. CLAUDE.md, AGENTS.md,
   OpenCode agent config). Never use this run's one-shot user message as the edit target.
@@ -192,7 +198,8 @@ def judge_issue_fix(
 
     context = pack_issue_judge_context(session, issue)
     user_msg = (
-        "Judge a fix for this TrajViz issue. Return ONLY the JSON object.\n\n"
+        "Judge a fix for this TrajViz issue. Return ONLY the JSON object. "
+        "where / fix / also must be Simplified Chinese (Mandarin).\n\n"
         f"{context}"
     )
     fn: ChatFn = chat_fn or complete_chat

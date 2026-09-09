@@ -16,9 +16,15 @@ def _session(**kwargs):
     base = dict(
         steps=[],
         failure_patterns=[],
+        failure_chains=[],
         fruitless_streaks=[],
         tool_selection=[],
         plan_metrics={},
+        plan_history=[],
+        edit_thrash=[],
+        repeated_searches=[],
+        phase_regressions=[],
+        bottleneck_explanations=[],
         file_interactions=[],
         format="",
     )
@@ -66,11 +72,33 @@ class OverviewIssuesTests(unittest.TestCase):
                     "end_step": 6,
                     "length": 3,
                 }],
+                bottleneck_explanations=[{
+                    "step_idx": 8,
+                    "duration": 42.5,
+                    "explanation": "Step 8: 42.5s — 40s LLM inference",
+                }],
             )
         )
         shown = rank_issues(issues)
         self.assertEqual(shown[0].kind, "error")
         self.assertEqual(shown[1].kind, "antipattern")
+        self.assertEqual(shown[2].kind, "bottleneck")
+
+    def test_bottleneck_issue_from_explanations(self):
+        issues = collect_overview_issues(
+            _session(
+                bottleneck_explanations=[{
+                    "step_idx": 12,
+                    "duration": 18.2,
+                    "explanation": "Step 12: 18.2s — 15s executing tools (Bash: npm test 14s)",
+                }],
+            )
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].kind, "bottleneck")
+        self.assertEqual(issues[0].steps, (12,))
+        self.assertIn("18.2s", issues[0].title)
+        self.assertIn("npm test", issues[0].detail)
 
     def test_step_chips_without_fix_or_change(self):
         html = render_overview_issues_html([
@@ -158,6 +186,54 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(issues[0].kind, "antipattern")
         self.assertIn(4, issues[0].steps)
         self.assertIn(6, issues[0].steps)
+
+    def test_failure_cascade_skips_single_step_chains(self):
+        issues = collect_overview_issues(
+            _session(
+                failure_chains=[
+                    {"start": 1, "end": 1, "steps": [1]},
+                    {"start": 3, "end": 5, "steps": [3, 4, 5]},
+                ],
+            )
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].kind, "error")
+        self.assertIn("cascade", issues[0].title.lower())
+        self.assertEqual(issues[0].steps, (3, 4, 5))
+
+    def test_plan_resets_edit_thrash_repeated_search_phase_regression(self):
+        issues = collect_overview_issues(
+            _session(
+                plan_metrics={"plan_resets": 2, "stalled": []},
+                plan_history=[{"step": 2, "items": []}, {"step": 10, "items": []}],
+                edit_thrash=[{
+                    "path": "src/app.py",
+                    "count": 4,
+                    "steps": [5, 6, 7, 8],
+                    "start_step": 5,
+                    "end_step": 8,
+                }],
+                repeated_searches=[{
+                    "signature": "grep:foo|",
+                    "display": "foo|",
+                    "count": 3,
+                    "steps": [1, 4, 9],
+                }],
+                phase_regressions=[{
+                    "from_phase": "implementation",
+                    "to_phase": "exploration",
+                    "step_idx": 12,
+                    "category": "unintentional_drift",
+                }],
+            )
+        )
+        titles = [i.title for i in issues]
+        self.assertTrue(any("plan reset" in t for t in titles))
+        self.assertTrue(any("Edit thrash" in t for t in titles))
+        self.assertTrue(any("Repeated empty search" in t for t in titles))
+        self.assertTrue(any("Phase regression" in t for t in titles))
+        thrash = next(i for i in issues if "Edit thrash" in i.title)
+        self.assertEqual(thrash.steps, (5, 6, 7, 8))
 
 
 if __name__ == "__main__":
