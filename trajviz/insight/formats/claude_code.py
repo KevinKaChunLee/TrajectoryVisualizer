@@ -5,9 +5,13 @@ import os
 from .common import _iso_to_epoch_ms
 
 def _cc_extract_usage(usage: dict | None) -> dict:
-    """Extract token usage from a Claude Code message's usage field."""
+    """Extract token usage from a Claude Code message's usage field.
+
+    Reasoning tokens are omitted: Claude Code / Anthropic usage does not report
+    them, and a fabricated ``0`` was misread as a real measurement in Overview.
+    """
     if not isinstance(usage, dict):
-        return {"total": 0, "input": 0, "output": 0, "reasoning": 0,
+        return {"total": 0, "input": 0, "output": 0,
                 "cache": {"read": 0, "write": 0}}
     inp = usage.get("input_tokens", 0) or 0
     out = usage.get("output_tokens", 0) or 0
@@ -18,7 +22,7 @@ def _cc_extract_usage(usage: dict | None) -> dict:
     # their sum; cache_creation must be included to agree with the session total.
     total = inp + out + cache_read + cache_write
     return {
-        "total": total, "input": inp, "output": out, "reasoning": 0,
+        "total": total, "input": inp, "output": out,
         "cache": {"read": cache_read, "write": cache_write},
     }
 
@@ -205,7 +209,8 @@ def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
 
     Derived fields (tool_calls, error_count, has_reasoning) are computed from
     *parts* unless explicitly overridden.  ``usage=None`` yields zeroed token
-    counts.  Callers compute their own ``text_preview`` (the preview heuristics
+    counts (no ``reasoning`` key — Claude Code does not report that field).
+    Callers compute their own ``text_preview`` (the preview heuristics
     intentionally differ between the main-trajectory and event paths).
     """
     if tool_calls is None:
@@ -215,14 +220,13 @@ def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
     if has_reasoning is None:
         has_reasoning = any(p.get("type") == "reasoning" for p in parts)
     if usage is None:
-        tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0,
+        tokens = {"total": 0, "input": 0, "output": 0,
                   "cache_read": 0, "cache_write": 0}
     else:
         tokens = {
             "total": usage["total"],
             "input": usage["input"],
             "output": usage["output"],
-            "reasoning": usage["reasoning"],
             "cache_read": usage["cache"]["read"],
             "cache_write": usage["cache"]["write"],
         }

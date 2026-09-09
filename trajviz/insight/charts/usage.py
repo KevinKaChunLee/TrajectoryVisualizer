@@ -120,12 +120,12 @@ def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | No
             total_tokens=s["tokens"]["total"],
             input_tokens=s["tokens"]["input"],
             output_tokens=s["tokens"]["output"],
-            reasoning_tokens=s["tokens"]["reasoning"],
+            reasoning_tokens=s["tokens"].get("reasoning", 0),
             cache_read_tokens=s["tokens"]["cache_read"],
         )
         for s in steps
     ]
-    reasoning_t = [s["tokens"]["reasoning"] for s in steps]
+    reasoning_t = [s["tokens"].get("reasoning", 0) for s in steps]
     output_t = [s["tokens"]["output"] for s in steps]
     net_output = [max(0, output - reasoning) for output, reasoning in zip(output_t, reasoning_t, strict=False)]
     cache_w = [s["tokens"].get("cache_write", 0) or 0 for s in steps]

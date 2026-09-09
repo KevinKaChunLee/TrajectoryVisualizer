@@ -266,5 +266,39 @@ class WrappedShellSearchTests(unittest.TestCase):
         self.assertEqual(streaks[0]["length"], 3)
 
 
+class ReasoningTokensNaTests(unittest.TestCase):
+    def test_unreported_reasoning_shows_na_not_fake_zero(self):
+        from trajviz.insight.formats.claude_code import _cc_extract_usage, _cc_build_step
+        from trajviz.insight.formatting import format_performance_md
+
+        usage = _cc_extract_usage({"input_tokens": 10, "output_tokens": 5})
+        self.assertNotIn("reasoning", usage)
+
+        step = _cc_build_step([], role="assistant", usage=usage, timestamp_ms=1)
+        self.assertNotIn("reasoning", step["tokens"])
+
+        metrics = compute_metrics([step], {})
+        self.assertFalse(metrics["reasoning_tokens_reported"])
+        self.assertEqual(metrics["tokens"]["reasoning"], 0)
+
+        html = format_performance_md(metrics, "1s")
+        self.assertRegex(
+            html,
+            r"Reasoning</span><span[^>]*>N/A</span>",
+        )
+
+    def test_reported_zero_reasoning_still_shows_zero(self):
+        from trajviz.insight.formatting import format_performance_md
+
+        step = _assistant_step(0, output_tokens=50, duration=1.0)
+        metrics = compute_metrics([step], {})
+        self.assertTrue(metrics["reasoning_tokens_reported"])
+        html = format_performance_md(metrics, "1s")
+        self.assertRegex(
+            html,
+            r"Reasoning</span><span[^>]*>0</span>",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

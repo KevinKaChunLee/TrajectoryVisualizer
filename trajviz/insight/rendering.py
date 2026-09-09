@@ -12,6 +12,7 @@ from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextL
 from .charts import bind_timeline_agents
 from .metrics import tool_call_duration_ms
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
+from .parser import _optional_token_count
 from .step_errors import step_error_kind
 from .styles import WORKFLOW_CSS
 
@@ -713,7 +714,6 @@ _METRIC_TOKEN_FIELDS = (
     ("total", "Total Tokens"),
     ("input", "Input Tokens"),
     ("output", "Output Tokens"),
-    ("reasoning", "Reasoning Tokens"),
     ("cache_read", "Cache Read"),
     ("cache_write", "Cache Write"),
 )
@@ -734,15 +734,8 @@ def _unavailable_metric_fields(step: dict) -> list[str]:
         tokens = {}
 
     for key, label in _METRIC_TOKEN_FIELDS:
-        value = tokens.get(key)
-        if (
-            key not in tokens
-            or value is None
-            or isinstance(value, bool)
-            or not isinstance(value, (int, float))
-        ):
-            if label not in missing:
-                missing.append(label)
+        if _optional_token_count(tokens, key) is None and label not in missing:
+            missing.append(label)
     return missing
 
 
@@ -765,9 +758,11 @@ def _format_metrics_tab(step: dict) -> str:
     """Render the Metrics table, or one explicit unavailable state.
 
     A real ``0`` in any token count renders as ``0``; the table is replaced
-    by the unavailable notice only when a token count is genuinely missing.
-    Duration and the derived rows show ``n/a`` individually when they cannot
-    be computed, so complete token data is never hidden by a missing timing.
+    by the unavailable notice only when a required token count is genuinely
+    missing. Reasoning tokens are optional (formats that never report them
+    show ``n/a`` on that row). Duration and the derived rows show ``n/a``
+    individually when they cannot be computed, so complete token data is
+    never hidden by a missing timing.
     """
     missing = _unavailable_metric_fields(step)
     if missing:
@@ -789,11 +784,13 @@ def _format_metrics_tab(step: dict) -> str:
         cache_ratio_text = f"{tokens['cache_read'] / tokens['total'] * 100:.1f}%"
     else:
         cache_ratio_text = "n/a"
+    reasoning = _optional_token_count(tokens, "reasoning")
+    reasoning_text = f"{reasoning:,}" if reasoning is not None else "n/a"
     rows = [
         ("Total Tokens", f"{tokens['total']:,}"),
         ("Input Tokens", f"{tokens['input']:,}"),
         ("Output Tokens", f"{tokens['output']:,}"),
-        ("Reasoning Tokens", f"{tokens['reasoning']:,}"),
+        ("Reasoning Tokens", reasoning_text),
         ("Cache Read", f"{tokens['cache_read']:,}"),
         ("Cache Write", f"{tokens['cache_write']:,}"),
         ("Duration", duration_text),
