@@ -181,12 +181,17 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
     has_breakdown = tok['input'] > 0 or tok['output'] > 0 or tok['cache_read'] > 0
     def _tok_val(v: int) -> str:
         return f"{v:,}" if has_breakdown else "N/A"
+    reasoning_val = (
+        f"{tok['reasoning']:,}"
+        if has_breakdown and metrics.get("reasoning_tokens_reported")
+        else "N/A"
+    )
 
     token_chips = [
         _metric_chip("Total tokens", f"{tok['total']:,}"),
         _metric_chip("Input", _tok_val(tok['input'])),
         _metric_chip("Output", _tok_val(tok['output'])),
-        _metric_chip("Reasoning", _tok_val(tok['reasoning'])),
+        _metric_chip("Reasoning", reasoning_val),
         _metric_chip("Cache read", _tok_val(tok['cache_read'])),
         _metric_chip("Cache write", _tok_val(tok['cache_write'])),
         _metric_chip("Fresh input",

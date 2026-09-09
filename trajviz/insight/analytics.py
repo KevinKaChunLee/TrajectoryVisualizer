@@ -33,7 +33,7 @@ def compute_step_analytics(steps: list[dict]) -> list[dict]:
         cache_ratio = round(cache_read / tok_total, 4) if tok_total > 0 else 0.0
         input_tok = step["tokens"]["input"]
         output_tok = step["tokens"]["output"]
-        reasoning_tok = step["tokens"]["reasoning"]
+        reasoning_tok = step["tokens"].get("reasoning", 0)
         non_cache_tok = infer_non_cache_input(
             total_tokens=tok_total,
             input_tokens=input_tok,

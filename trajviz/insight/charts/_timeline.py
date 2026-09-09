@@ -150,29 +150,9 @@ def _legend_label(agent_id: str, labels: dict[str, str]) -> str:
     return agent_id or "main"
 
 
-def bind_timeline_agents(
-    steps: list[dict],
-) -> tuple[dict[str, int], dict[str, str], Callable[[dict], str]]:
-    """Color map, legend labels, and per-step timeline identity.
-
-    Charts and workflow cards must use this together so OpenCode
-    ``session_id::mode`` keys stay consistent with the palette.
-    """
+def timeline_agent_id_of(steps: list[dict]) -> Callable[[dict], str]:
+    """Per-step timeline identity without building color maps or legend labels."""
     multi, use_names, primary = _timeline_context(steps)
-    order: list[str] = []
-    for s in steps:
-        if not isinstance(s, dict):
-            continue
-        agent = _timeline_agent_id(s, multi_session=multi, use_agent_names=use_names, primary_agents=primary)
-        if agent not in order:
-            order.append(agent)
-    if "" in order and order[0] != "":
-        order.remove("")
-        order.insert(0, "")
-    if not order:
-        order = [""]
-    color_map = {aid: i for i, aid in enumerate(order)}
-    labels = _disambiguate_timeline_labels(list(color_map.keys()), steps)
 
     def agent_id(step: dict) -> str:
         return _timeline_agent_id(
@@ -182,6 +162,32 @@ def bind_timeline_agents(
             primary_agents=primary,
         )
 
+    return agent_id
+
+
+def bind_timeline_agents(
+    steps: list[dict],
+) -> tuple[dict[str, int], dict[str, str], Callable[[dict], str]]:
+    """Color map, legend labels, and per-step timeline identity.
+
+    Charts and workflow cards must use this together so OpenCode
+    ``session_id::mode`` keys stay consistent with the palette.
+    """
+    agent_id = timeline_agent_id_of(steps)
+    order: list[str] = []
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        agent = agent_id(s)
+        if agent not in order:
+            order.append(agent)
+    if "" in order and order[0] != "":
+        order.remove("")
+        order.insert(0, "")
+    if not order:
+        order = [""]
+    color_map = {aid: i for i, aid in enumerate(order)}
+    labels = _disambiguate_timeline_labels(list(color_map.keys()), steps)
     return color_map, labels, agent_id
 
 

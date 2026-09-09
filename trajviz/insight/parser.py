@@ -38,12 +38,21 @@ from .labels import (  # noqa: F401
 )
 
 
+# Fields whose absence makes the whole Metrics table unavailable. Reasoning is
+# optional: many formats never report it (show per-row N/A instead of fake 0).
 _TOKEN_METRIC_FIELDS = {
     "total": "Total Tokens",
     "input": "Input Tokens",
     "output": "Output Tokens",
-    "reasoning": "Reasoning Tokens",
 }
+
+
+def _optional_token_count(tokens: dict, key: str) -> int | None:
+    """Return an int token count when *key* was reported, else None."""
+    value = tokens.get(key)
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
 
 
 def _missing_token_metric_fields(tokens_info: dict) -> list[str]:
@@ -250,14 +259,16 @@ def parse_steps(raw: dict) -> list[dict]:
             tokens_info = {}
         metrics_unavailable_fields = _missing_token_metric_fields(tokens_info)
         metrics_source_format = ""
+        reasoning = _optional_token_count(tokens_info, "reasoning")
         tokens = {
             "total": tokens_info.get("total", 0) or 0,
             "input": tokens_info.get("input", 0) or 0,
             "output": tokens_info.get("output", 0) or 0,
-            "reasoning": tokens_info.get("reasoning", 0) or 0,
             "cache_read": safe_get(tokens_info, "cache", "read", default=0) or 0,
             "cache_write": safe_get(tokens_info, "cache", "write", default=0) or 0,
         }
+        if reasoning is not None:
+            tokens["reasoning"] = reasoning
 
         t_created = safe_get(info, "time", "created", default=None)
         t_completed = safe_get(info, "time", "completed", default=None)

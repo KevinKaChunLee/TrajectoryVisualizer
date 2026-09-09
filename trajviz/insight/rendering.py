@@ -10,8 +10,10 @@ from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
 from .charts import bind_timeline_agents
+from .context_usage import PRESSURE_MAIN_AGENT, pressure_agent_key
 from .metrics import tool_call_duration_ms
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
+from .parser import _optional_token_count
 from .step_errors import step_error_kind
 from .styles import WORKFLOW_CSS
 
@@ -169,6 +171,40 @@ def _md_to_html_preview(text: str) -> str:
 _ROLE_FILTER_CHIPS = ["Assistant", "User"]
 _FEATURE_FILTER_CHIPS = ["Tool Calls", "Errors", "Reasoning"]
 _ALL_FEATURE_FILTER = "All"
+AGENT_FILTER_PREFIX = "agent:"
+AGENT_ALL_FILTER = "agent:All"
+MAIN_AGENT_FILTER = f"{AGENT_FILTER_PREFIX}{PRESSURE_MAIN_AGENT}"
+
+
+def agent_filter_token(agent_id: str) -> str:
+    """CSV / chip token for a timeline agent id (empty id → main)."""
+    return f"{AGENT_FILTER_PREFIX}{pressure_agent_key(agent_id)}"
+
+
+def agent_id_from_filter_token(token: str) -> str | None:
+    """Parse an ``agent:<id>`` filter token to a timeline id.
+
+    Returns None for non-agent tokens and for ``agent:All``.
+    """
+    if not token.startswith(AGENT_FILTER_PREFIX):
+        return None
+    rest = token[len(AGENT_FILTER_PREFIX):]
+    if rest == "All":
+        return None
+    if rest == PRESSURE_MAIN_AGENT:
+        return ""
+    return rest
+
+
+def workflow_agent_chip_options(steps: list[dict]) -> list[tuple[str, str, int]]:
+    """``(token, label, color_index)`` for multi-agent Workflow chips, else []."""
+    color_map, labels, _agent_id_of = bind_timeline_agents(steps)
+    if len(color_map) <= 1:
+        return []
+    return [
+        (agent_filter_token(aid), labels[aid], idx)
+        for aid, idx in color_map.items()
+    ]
 
 
 def _render_one_agent_card(a: dict, agent_hex: str) -> str:
@@ -231,57 +267,111 @@ def render_agent_summary_cards(agent_summaries: list[dict]) -> str:
     return "<div class='agent-cards-grid'>" + "".join(cards) + "</div>"
 
 
-def render_filter_chips(active: list[str] | None = None) -> str:
-    """Render the two-level Workflow filter.
+def render_filter_chips(
+    active: list[str] | None = None,
+    *,
+    agent_options: list[tuple[str, str, int]] | None = None,
+) -> str:
+    """Render the Workflow filter chip panel.
 
-    Roles are a required multi-select (OR within the group).  Step features are
-    also ORed, while ``All`` means that no feature predicate is applied.  The
-    delegated browser handler enforces these states and combines the two groups
-    with AND semantics in the backend.
+    Roles are a required multi-select (OR within the group). Step features are
+    also ORed, while ``All`` means that no feature predicate is applied. When
+    *agent_options* is non-empty (multi-agent trajectories), a third Agent
+    group mirrors feature semantics with ``agent:All`` / ``agent:…`` tokens.
+    The delegated browser handler enforces these states; the backend ANDs the
+    groups together.
     """
+    agent_options = agent_options or []
     if active is None:
         active = [*_ROLE_FILTER_CHIPS, _ALL_FEATURE_FILTER]
+        if agent_options:
+            active = [*active, AGENT_ALL_FILTER]
     active_set = set(active)
 
-    def _chip(name: str, group: str, *, extra_class: str = "") -> str:
+    def _chip(
+        *,
+        data_filter: str,
+        label: str,
+        group: str,
+        extra_class: str = "",
+        style: str = "",
+    ) -> str:
         classes = ["filter-chip"]
         if extra_class:
             classes.append(extra_class)
-        is_active = name in active_set
+        is_active = data_filter in active_set
         if is_active:
             classes.append("chip-active")
-        escaped = html.escape(name, quote=True)
+        escaped_filter = html.escape(data_filter, quote=True)
+        escaped_label = html.escape(label)
+        style_attr = f" style='{html.escape(style, quote=True)}'" if style else ""
+        pressed = "true" if is_active else "false"
         return (
             f"<button type='button' class='{' '.join(classes)}'"
-            f" data-filter='{escaped}' data-filter-group='{group}'"
-            f" aria-pressed='{'true' if is_active else 'false'}'>"
-            f"{html.escape(name)}</button>"
+            f" data-filter='{escaped_filter}' data-filter-group='{group}'"
+            f" aria-pressed='{pressed}'{style_attr}>"
+            f"{escaped_label}</button>"
         )
 
-    role_chips = "".join(_chip(name, "role") for name in _ROLE_FILTER_CHIPS)
+    def _group(key: str, title: str, hint: str, chips_html: str) -> str:
+        return (
+            f"<div class='filter-group' data-filter-group-container='{key}'>"
+            f"<div class='filter-group-label'>{html.escape(title)}"
+            f"<span>{html.escape(hint)}</span></div>"
+            f"<div class='filter-options'>{chips_html}</div>"
+            "</div>"
+        )
+
+    role_chips = "".join(
+        _chip(data_filter=name, label=name, group="role")
+        for name in _ROLE_FILTER_CHIPS
+    )
     feature_chips = _chip(
-        _ALL_FEATURE_FILTER,
-        "feature",
+        data_filter=_ALL_FEATURE_FILTER,
+        label=_ALL_FEATURE_FILTER,
+        group="feature",
         extra_class="filter-chip-all",
-    ) + "".join(_chip(name, "feature") for name in _FEATURE_FILTER_CHIPS)
+    ) + "".join(
+        _chip(data_filter=name, label=name, group="feature")
+        for name in _FEATURE_FILTER_CHIPS
+    )
+
+    groups = [
+        _group("role", "Role", "select at least one", role_chips),
+        _group("feature", "Step feature", "match any selected", feature_chips),
+    ]
+
+    summary = "Role: Assistant or User &middot; Step feature: All"
+    reset_title = "Restore all roles and remove the step feature restriction"
+    if agent_options:
+        agent_chips = _chip(
+            data_filter=AGENT_ALL_FILTER,
+            label="All",
+            group="agent",
+            extra_class="filter-chip-all",
+        )
+        for token, label, color_idx in agent_options:
+            hex_color = AGENT_COLORS[color_idx % len(AGENT_COLORS)]
+            agent_chips += _chip(
+                data_filter=token,
+                label=label,
+                group="agent",
+                style=f"border-left:3px solid {hex_color};",
+            )
+        groups.append(_group("agent", "Agent", "match any selected", agent_chips))
+        summary += " &middot; Agent: All"
+        reset_title = (
+            "Restore all roles and remove step feature / agent restrictions"
+        )
 
     return (
         "<div class='filter-panel' id='wf-filter-bar'>"
-        "<div class='filter-group' data-filter-group-container='role'>"
-        "<div class='filter-group-label'>Role"
-        "<span>select at least one</span></div>"
-        f"<div class='filter-options'>{role_chips}</div>"
-        "</div>"
-        "<div class='filter-group' data-filter-group-container='feature'>"
-        "<div class='filter-group-label'>Step feature"
-        "<span>match any selected</span></div>"
-        f"<div class='filter-options'>{feature_chips}</div>"
-        "</div>"
-        "</div>"
+        + "".join(groups)
+        + "</div>"
         "<div class='filter-summary' id='wf-filter-summary'>"
-        "<span id='wf-filter-query'>Role: Assistant or User &middot; Step feature: All</span>"
+        f"<span id='wf-filter-query'>{summary}</span>"
         "<button type='button' class='reset-filters' data-wf-action='reset-filters'"
-        " title='Restore all roles and remove the step feature restriction'>"
+        f" title='{html.escape(reset_title, quote=True)}'>"
         "Reset filters</button>"
         "</div>"
     )
@@ -713,7 +803,6 @@ _METRIC_TOKEN_FIELDS = (
     ("total", "Total Tokens"),
     ("input", "Input Tokens"),
     ("output", "Output Tokens"),
-    ("reasoning", "Reasoning Tokens"),
     ("cache_read", "Cache Read"),
     ("cache_write", "Cache Write"),
 )
@@ -734,15 +823,8 @@ def _unavailable_metric_fields(step: dict) -> list[str]:
         tokens = {}
 
     for key, label in _METRIC_TOKEN_FIELDS:
-        value = tokens.get(key)
-        if (
-            key not in tokens
-            or value is None
-            or isinstance(value, bool)
-            or not isinstance(value, (int, float))
-        ):
-            if label not in missing:
-                missing.append(label)
+        if _optional_token_count(tokens, key) is None and label not in missing:
+            missing.append(label)
     return missing
 
 
@@ -765,9 +847,11 @@ def _format_metrics_tab(step: dict) -> str:
     """Render the Metrics table, or one explicit unavailable state.
 
     A real ``0`` in any token count renders as ``0``; the table is replaced
-    by the unavailable notice only when a token count is genuinely missing.
-    Duration and the derived rows show ``n/a`` individually when they cannot
-    be computed, so complete token data is never hidden by a missing timing.
+    by the unavailable notice only when a required token count is genuinely
+    missing. Reasoning tokens are optional (formats that never report them
+    show ``n/a`` on that row). Duration and the derived rows show ``n/a``
+    individually when they cannot be computed, so complete token data is
+    never hidden by a missing timing.
     """
     missing = _unavailable_metric_fields(step)
     if missing:
@@ -789,11 +873,13 @@ def _format_metrics_tab(step: dict) -> str:
         cache_ratio_text = f"{tokens['cache_read'] / tokens['total'] * 100:.1f}%"
     else:
         cache_ratio_text = "n/a"
+    reasoning = _optional_token_count(tokens, "reasoning")
+    reasoning_text = f"{reasoning:,}" if reasoning is not None else "n/a"
     rows = [
         ("Total Tokens", f"{tokens['total']:,}"),
         ("Input Tokens", f"{tokens['input']:,}"),
         ("Output Tokens", f"{tokens['output']:,}"),
-        ("Reasoning Tokens", f"{tokens['reasoning']:,}"),
+        ("Reasoning Tokens", reasoning_text),
         ("Cache Read", f"{tokens['cache_read']:,}"),
         ("Cache Write", f"{tokens['cache_write']:,}"),
         ("Duration", duration_text),

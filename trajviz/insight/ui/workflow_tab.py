@@ -55,31 +55,65 @@ WORKFLOW_JS = """
                                 if (!root) return;
                                 var roles = Array.from(root.querySelectorAll(
                                     '[data-filter-group="role"].chip-active'
-                                )).map(function(c) { return c.dataset.filter; });
+                                )).map(function(c) { return c.textContent; });
                                 var features = Array.from(root.querySelectorAll(
                                     '[data-filter-group="feature"].chip-active'
-                                )).map(function(c) { return c.dataset.filter; });
+                                )).map(function(c) { return c.textContent; });
                                 var query = root.querySelector('#wf-filter-query');
                                 if (!query) return;
                                 var featureText = features.indexOf('All') >= 0
                                     ? 'All'
                                     : features.join(' or ');
-                                query.textContent = 'Role: ' + roles.join(' or ')
-                                    + ' · Step feature: ' + featureText;
+                                var parts = [
+                                    'Role: ' + roles.join(' or '),
+                                    'Step feature: ' + featureText
+                                ];
+                                var agents = Array.from(root.querySelectorAll(
+                                    '[data-filter-group="agent"].chip-active'
+                                ));
+                                if (root.querySelector('[data-filter-group="agent"]')) {
+                                    var agentAll = agents.some(function(c) {
+                                        return c.dataset.filter === 'agent:All';
+                                    });
+                                    var agentText = agentAll
+                                        ? 'All'
+                                        : agents.map(function(c) { return c.textContent; }).join(' or ');
+                                    parts.push('Agent: ' + agentText);
+                                }
+                                query.textContent = parts.join(' · ');
                             };
                             /* Pure chip state machine, unit-tested in
                                tests/test_workflow_filtering.py by executing this
                                exact source in Node. Keep it DOM-free. */
                             /* __WF_CHIP_STATE_BEGIN__ */
                             window.__wfComputeChipState = function(state, action) {
-                                var roles = {};
-                                var features = {};
-                                Object.keys(state.roles).forEach(function(k) { roles[k] = !!state.roles[k]; });
-                                Object.keys(state.features).forEach(function(k) { features[k] = !!state.features[k]; });
+                                var cloneFlags = function(src) {
+                                    var out = {};
+                                    Object.keys(src).forEach(function(k) { out[k] = !!src[k]; });
+                                    return out;
+                                };
+                                var roles = cloneFlags(state.roles);
+                                var features = cloneFlags(state.features);
+                                var agents = cloneFlags(state.agents);
                                 var rejected = false;
+                                var toggleExclusiveAll = function(group, allKey, name) {
+                                    if (name === allKey) {
+                                        Object.keys(group).forEach(function(k) { group[k] = (k === allKey); });
+                                        return;
+                                    }
+                                    group[name] = !group[name];
+                                    group[allKey] = false;
+                                    var anySpecific = Object.keys(group).some(function(k) {
+                                        return k !== allKey && group[k];
+                                    });
+                                    if (!anySpecific) {
+                                        group[allKey] = true;
+                                    }
+                                };
                                 if (action.type === 'reset') {
                                     Object.keys(roles).forEach(function(k) { roles[k] = true; });
                                     Object.keys(features).forEach(function(k) { features[k] = (k === 'All'); });
+                                    Object.keys(agents).forEach(function(k) { agents[k] = (k === 'agent:All'); });
                                 } else if (action.group === 'role') {
                                     var activeRoles = Object.keys(roles).filter(function(k) { return roles[k]; });
                                     if (roles[action.name] && activeRoles.length === 1) {
@@ -88,39 +122,37 @@ WORKFLOW_JS = """
                                     } else {
                                         roles[action.name] = !roles[action.name];
                                     }
-                                } else if (action.name === 'All') {
-                                    /* 'All' is exclusive with specific features. */
-                                    Object.keys(features).forEach(function(k) { features[k] = (k === 'All'); });
-                                } else {
-                                    features[action.name] = !features[action.name];
-                                    features['All'] = false;
-                                    var anySpecific = Object.keys(features).some(function(k) {
-                                        return k !== 'All' && features[k];
-                                    });
-                                    if (!anySpecific) {
-                                        /* Auto-restore 'All' when nothing specific is left. */
-                                        features['All'] = true;
-                                    }
+                                } else if (action.group === 'feature') {
+                                    toggleExclusiveAll(features, 'All', action.name);
+                                } else if (action.group === 'agent') {
+                                    toggleExclusiveAll(agents, 'agent:All', action.name);
                                 }
-                                return {roles: roles, features: features, rejected: rejected};
+                                return {roles: roles, features: features, agents: agents, rejected: rejected};
                             };
                             /* __WF_CHIP_STATE_END__ */
+                            window.__wfChipGroups = [
+                                ['role', 'roles'],
+                                ['feature', 'features'],
+                                ['agent', 'agents']
+                            ];
                             window.__wfReadChipState = function(bar) {
-                                var state = {roles: {}, features: {}};
-                                bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
-                                    state.roles[c.dataset.filter] = c.classList.contains('chip-active');
-                                });
-                                bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
-                                    state.features[c.dataset.filter] = c.classList.contains('chip-active');
+                                var state = {roles: {}, features: {}, agents: {}};
+                                window.__wfChipGroups.forEach(function(pair) {
+                                    var group = pair[0];
+                                    var key = pair[1];
+                                    bar.querySelectorAll('[data-filter-group="' + group + '"]').forEach(function(c) {
+                                        state[key][c.dataset.filter] = c.classList.contains('chip-active');
+                                    });
                                 });
                                 return state;
                             };
                             window.__wfApplyChipState = function(bar, state) {
-                                bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
-                                    window.__setWorkflowChipActive(c, !!state.roles[c.dataset.filter]);
-                                });
-                                bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
-                                    window.__setWorkflowChipActive(c, !!state.features[c.dataset.filter]);
+                                window.__wfChipGroups.forEach(function(pair) {
+                                    var group = pair[0];
+                                    var key = pair[1];
+                                    bar.querySelectorAll('[data-filter-group="' + group + '"]').forEach(function(c) {
+                                        window.__setWorkflowChipActive(c, !!state[key][c.dataset.filter]);
+                                    });
                                 });
                             };
                             if (!window.__wfChipHandlerAttached) {

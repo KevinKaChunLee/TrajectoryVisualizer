@@ -104,6 +104,18 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("document.addEventListener('click', function(e) {", source)
         self.assertIn("e.target.closest('.dp-tab')", source)
 
+    def test_missing_reasoning_keeps_table_with_na_row(self):
+        from trajviz.insight.rendering import _format_metrics_tab
+
+        tokens = dict(self._metric_step()["tokens"])
+        del tokens["reasoning"]
+        html = _format_metrics_tab(self._metric_step(tokens=tokens))
+
+        self.assertIn("<table class='dp-meta-table'>", html)
+        self.assertNotIn("Metrics unavailable", html)
+        self.assertIn("<td>Reasoning Tokens</td><td>n/a</td>", html)
+        self.assertIn("<td>Total Tokens</td><td>100</td>", html)
+
     def test_complete_metrics_render_the_whole_table_and_keep_real_zeroes(self):
         from trajviz.insight.rendering import _format_metrics_tab
 
@@ -111,6 +123,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
 
         self.assertIn("<table class='dp-meta-table'>", html)
         self.assertIn("<td>Output Tokens</td><td>0</td>", html)
+        self.assertIn("<td>Reasoning Tokens</td><td>0</td>", html)
         self.assertIn("<td>Cache Ratio</td><td>0.0%</td>", html)
         self.assertNotIn("Metrics unavailable", html)
 

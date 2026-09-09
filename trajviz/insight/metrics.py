@@ -737,9 +737,15 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
     total_duration = sum(durations)
     total_tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0,
                     "cache_read": 0, "cache_write": 0}
+    from .parser import _optional_token_count
+
+    reasoning_tokens_reported = False
     for s in steps:
+        tokens = s["tokens"]
+        if _optional_token_count(tokens, "reasoning") is not None:
+            reasoning_tokens_reported = True
         for k in total_tokens:
-            total_tokens[k] += s["tokens"].get(k, 0)
+            total_tokens[k] += tokens.get(k, 0) or 0
 
     timing = raw.get("timing", {}) if isinstance(raw.get("timing"), dict) else {}
     wall_clock = session_wall_clock_seconds(steps, timing)
@@ -754,6 +760,7 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
         "p95_duration": round(_percentile(durations, 0.95), 2) if durations else 0,
         "max_duration": round(max(durations), 2) if durations else 0,
         "wall_clock": wall_clock,
+        "reasoning_tokens_reported": reasoning_tokens_reported,
         **_compute_token_stats(total_tokens, total_duration, steps, message_rows, raw),
         **_compute_tool_stats(steps, total_tokens["total"], message_rows, float(wall_clock)),
         **_compute_efficiency_stats(steps, message_rows, raw),
