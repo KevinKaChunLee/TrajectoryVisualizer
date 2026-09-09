@@ -21,14 +21,20 @@ from ..context_usage import (
 from ..formatting import format_context_pressure_html
 from ..help import HELP_TEXT
 from ..presenters.label_ui import build_label_ui_payload
-from ..presenters.issues import build_overview_issues_html
+from ..presenters.issues import (
+    build_overview_issues_html,
+    collect_overview_issues,
+    rank_issues,
+)
 from ..presenters.overview import (
     build_chart_outputs,
     build_diagnostics_outputs,
     build_overview_outputs,
     empty_plotly_fig,
 )
-from ..session import LoadedSession
+from ..issue_judge import JUDGE_ISSUE_CAP, judge_overview_issues
+from ..llm_config import resolve_analysis_config
+from ..session import LoadedSession, build_loaded_session
 from .shared import SharedState
 from .upload import UploadRefs
 
@@ -46,6 +52,8 @@ class OverviewRefs:
     deep_dive_section: gr.Column
     labels_section: gr.Column
     issues_html: gr.HTML
+    issues_suggest_btn: gr.Button
+    issues_judge_status: gr.HTML
     metrics_md: gr.Markdown
     token_chart: gr.Plot
     duration_chart: gr.Plot
@@ -110,6 +118,16 @@ def layout() -> OverviewRefs:
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_summary'])}</div>")
+                    with gr.Row():
+                        issues_suggest_btn = gr.Button(
+                            "Suggest fixes",
+                            size="sm",
+                            variant="secondary",
+                        )
+                        issues_judge_status = gr.HTML(
+                            "<span style='font-size:12px;color:var(--ov-muted);'>"
+                            "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
+                        )
                     issues_html = gr.HTML("")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
@@ -226,6 +244,8 @@ def layout() -> OverviewRefs:
         deep_dive_section=deep_dive_section,
         labels_section=labels_section,
         issues_html=issues_html,
+        issues_suggest_btn=issues_suggest_btn,
+        issues_judge_status=issues_judge_status,
         metrics_md=metrics_md,
         token_chart=token_chart,
         duration_chart=duration_chart,
@@ -266,6 +286,7 @@ def load_slots(refs: OverviewRefs) -> dict:
         "overview_kpi_html": refs.overview_kpi_html,
         "session_detail_html": refs.session_detail_html,
         "issues_html": refs.issues_html,
+        "issues_judge_status": refs.issues_judge_status,
         "metrics_md": refs.metrics_md,
         "token_chart": refs.token_chart,
         "duration_chart": refs.duration_chart,
@@ -300,6 +321,10 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "overview_kpi_html": "",
             "session_detail_html": "",
             "issues_html": "",
+            "issues_judge_status": (
+                "<span style='font-size:12px;color:var(--ov-muted);'>"
+                "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
+            ),
             "metrics_md": "",
             "token_chart": fig,
             "duration_chart": fig,
@@ -339,6 +364,10 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "overview_kpi_html": ov["kpi_html"],
         "session_detail_html": ov["session_detail"],
         "issues_html": build_overview_issues_html(session),
+        "issues_judge_status": (
+            "<span style='font-size:12px;color:var(--ov-muted);'>"
+            "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
+        ),
         "metrics_md": ov["metrics_text"],
         "token_chart": ch["tok_fig"],
         "duration_chart": ch["dur_fig"],
@@ -406,6 +435,67 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
     ).then(
         fn=None,
         js="() => { if (window.tvExpandFileTimeline) { window.tvExpandFileTimeline(); setTimeout(window.tvExpandFileTimeline, 200); } }",
+    )
+
+    def on_suggest_fixes(steps, raw):
+        """On-demand LLM judge for Overview Issues."""
+        from ..presenters.issues import render_overview_issues_html
+
+        idle = (
+            "<span style='font-size:12px;color:var(--ov-muted);'>"
+            "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
+        )
+        if not steps:
+            return render_overview_issues_html([]), idle
+
+        cfg = resolve_analysis_config()
+        raw_dict = raw if isinstance(raw, dict) else {}
+        session = build_loaded_session("", raw_dict)
+
+        if not cfg.ready:
+            missing = ", ".join(cfg.missing)
+            status = (
+                f"<span style='font-size:12px;color:var(--ov-warn);'>"
+                f"Configure {html.escape(missing)} in .env</span>"
+            )
+            return build_overview_issues_html(session), status
+
+        ranked = rank_issues(collect_overview_issues(session))
+        if not ranked:
+            return build_overview_issues_html(session, issues=ranked), (
+                "<span style='font-size:12px;color:var(--ov-muted);'>No issues to judge</span>"
+            )
+
+        judged, errors = judge_overview_issues(
+            session, ranked, config=cfg, limit=JUDGE_ISSUE_CAP,
+        )
+        ok = sum(1 for i in judged if i.judgment is not None)
+        if errors and ok == 0:
+            banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
+            status = (
+                f"<span style='font-size:12px;color:var(--ov-warn);'>"
+                f"{html.escape(banner)}</span>"
+            )
+            return build_overview_issues_html(session, issues=ranked, banner=banner), status
+
+        status_bits = [f"Judged {ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} issue(s)"]
+        if errors:
+            status_bits.append(f"{len(errors)} failed")
+        if len(ranked) > JUDGE_ISSUE_CAP:
+            status_bits.append(f"capped at {JUDGE_ISSUE_CAP}")
+        status = (
+            f"<span style='font-size:12px;color:var(--ov-muted);'>"
+            f"{html.escape(' · '.join(status_bits))}</span>"
+        )
+        banner = ""
+        if errors:
+            banner = f"{len(errors)} issue(s) could not be judged (see status)."
+        return build_overview_issues_html(session, issues=judged, banner=banner), status
+
+    refs.issues_suggest_btn.click(
+        fn=on_suggest_fixes,
+        inputs=[shared.state_steps, shared.state_raw],
+        outputs=[refs.issues_html, refs.issues_judge_status],
     )
 
     def _rebuild_utilization(agent_key, window_limit, snapshot_key, steps, raw, dark):

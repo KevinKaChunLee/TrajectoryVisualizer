@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from ..rendering import (
@@ -14,6 +14,7 @@ from ..session import LoadedSession
 from .patterns import count_tool_errors
 
 IssueKind = Literal["error", "antipattern"]
+Confidence = Literal["high", "medium", "low"]
 
 # Lower = more urgent. Errors before waste.
 _SEVERITY: dict[IssueKind, int] = {
@@ -28,14 +29,29 @@ _BORDER: dict[IssueKind, str] = {
 
 
 @dataclass(frozen=True)
+class IssueJudgment:
+    """LLM-suggested Change/Fix for one OverviewIssue (on-demand judge)."""
+
+    where: str
+    fix: str
+    also: str = ""
+    confidence: Confidence = "medium"
+
+
+@dataclass(frozen=True)
 class OverviewIssue:
-    """One Overview triage item (session diagnostics only; no Fix/Change yet)."""
+    """One Overview triage item (session diagnostics; optional LLM judgment)."""
 
     kind: IssueKind
     title: str
     detail: str
     why: str = ""
     steps: tuple[int, ...] = ()
+    source_id: str = ""
+    judgment: IssueJudgment | None = None
+
+    def with_judgment(self, judgment: IssueJudgment) -> OverviewIssue:
+        return replace(self, judgment=judgment)
 
 
 def rank_issues(issues: list[OverviewIssue]) -> list[OverviewIssue]:
@@ -64,7 +80,7 @@ def collect_overview_issues(session: LoadedSession) -> list[OverviewIssue]:
 
 def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
     out: list[OverviewIssue] = []
-    for pat in session.failure_patterns or []:
+    for i, pat in enumerate(session.failure_patterns or []):
         label = str(pat.get("cluster_label") or "Unknown error")
         count = int(pat.get("count") or 0)
         example = str(pat.get("example_error") or "")[:200]
@@ -81,6 +97,7 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
                 detail=example,
                 why=why,
                 steps=steps,
+                source_id=f"fail:{i}:{label}",
             )
         )
     return out
@@ -103,6 +120,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                         "indicate environment problems rather than agent mistakes."
                     ),
                     steps=tuple(error_steps),
+                    source_id="antipattern:tool_errors",
                 )
             )
 
@@ -133,6 +151,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                     "sustained streaks suggest looking in the wrong place."
                 ),
                 steps=tuple(streak_indices),
+                source_id="antipattern:fruitless",
             )
         )
 
@@ -151,6 +170,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                     "weaker cache, larger context."
                 ),
                 steps=tuple(bash_steps),
+                source_id="antipattern:bash_read",
             )
         )
 
@@ -172,6 +192,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                     "context switch that never closed the loop."
                 ),
                 steps=tuple(stall_steps),
+                source_id="antipattern:stalled_plan",
             )
         )
 
@@ -179,11 +200,39 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
 
 
 def _issue_card(issue: OverviewIssue) -> str:
-    """Render one issue card: title, detail, step links, optional why."""
+    """Render one issue card; Change/Fix only when an LLM judgment is present."""
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
     border = _BORDER[issue.kind]
     steps_html = _step_link_chips(list(issue.steps))
+
+    judgment_html = ""
+    if issue.judgment is not None:
+        j = issue.judgment
+        also_html = ""
+        if j.also:
+            also_html = (
+                f"<div style='font-size:11px;color:var(--ov-muted);margin-top:6px;"
+                f"line-height:1.35;'>Also: {html.escape(j.also)}</div>"
+            )
+        conf = html.escape(j.confidence)
+        judgment_html = (
+            "<div style='margin-top:8px;font-size:12px;line-height:1.4;'>"
+            "<span style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
+            "text-transform:uppercase;color:var(--ov-muted);'>Change</span>"
+            f"<div style='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+            f"font-size:12px;color:var(--ov-text);margin-top:2px;'>"
+            f"{html.escape(j.where)}</div></div>"
+            "<div style='margin-top:8px;padding:8px 10px;background:var(--ov-bg);"
+            "border-radius:4px;'>"
+            "<div style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
+            "text-transform:uppercase;color:var(--ov-muted);margin-bottom:4px;'>"
+            f"Fix <span style='font-weight:500;letter-spacing:0;text-transform:none;"
+            f"color:var(--ov-muted);'>({conf})</span></div>"
+            f"<div style='font-size:13px;line-height:1.4;color:var(--ov-text);'>"
+            f"{html.escape(j.fix)}</div>"
+            f"{also_html}</div>"
+        )
 
     why_html = ""
     if issue.why:
@@ -200,17 +249,25 @@ def _issue_card(issue: OverviewIssue) -> str:
         f"<span style='font-size:12px;color:var(--ov-muted);'>{detail}</span>"
         f"</div>"
         f"{steps_html}"
+        f"{judgment_html}"
         f"{why_html}"
         f"</div>"
     )
 
 
-def render_overview_issues_html(issues: list[OverviewIssue]) -> str:
-    """Render a foldable Issues panel (healthy empty state when *issues* is empty).
+def render_overview_issues_html(
+    issues: list[OverviewIssue],
+    *,
+    banner: str = "",
+) -> str:
+    """Render a foldable Issues panel (healthy empty state when *issues* is empty)."""
+    banner_html = ""
+    if banner:
+        banner_html = (
+            f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>"
+            f"{html.escape(banner)}</div>"
+        )
 
-    Uses ``<details>`` so the panel can be collapsed without Gradio rewiring.
-    Non-empty panels start expanded; empty stays collapsed.
-    """
     if not issues:
         return (
             "<details class='overview-issues-panel' id='overview-issues'>"
@@ -219,13 +276,23 @@ def render_overview_issues_html(issues: list[OverviewIssue]) -> str:
             "<span class='overview-issues-summary-meta'>none detected</span>"
             "</summary>"
             "<div class='overview-issues-body'>"
+            f"{banner_html}"
             "<div style='padding:8px 0 4px;color:var(--ov-muted);text-align:center;font-size:13px;'>"
             "No major workflow issues detected."
             "</div></div></details>"
         )
 
     count = len(issues)
+    judged = sum(1 for i in issues if i.judgment is not None)
     count_label = f"{count} issue{'s' if count != 1 else ''}"
+    if judged:
+        count_label += f" · {judged} with LLM fix"
+
+    hint = (
+        "LLM Change/Fix attached — click a step to open Workflow"
+        if judged
+        else "Ranked workflow problems — click a step to open Workflow, or Suggest fixes"
+    )
     return (
         "<details class='overview-issues-panel' id='overview-issues' open>"
         "<summary class='overview-issues-summary'>"
@@ -233,14 +300,22 @@ def render_overview_issues_html(issues: list[OverviewIssue]) -> str:
         f"<span class='overview-issues-summary-meta'>{html.escape(count_label)}</span>"
         "</summary>"
         "<div class='overview-issues-body'>"
-        "<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>"
-        "Ranked workflow problems — click a step to open Workflow"
-        "</div>"
+        f"{banner_html}"
+        f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>{hint}</div>"
         + "".join(_issue_card(issue) for issue in issues)
         + "</div></details>"
     )
 
 
-def build_overview_issues_html(session: LoadedSession) -> str:
+def build_overview_issues_html(
+    session: LoadedSession,
+    *,
+    issues: list[OverviewIssue] | None = None,
+    banner: str = "",
+) -> str:
     """Collect, rank, and render Overview Issues for *session*."""
-    return render_overview_issues_html(rank_issues(collect_overview_issues(session)))
+    if issues is None:
+        ranked = rank_issues(collect_overview_issues(session))
+    else:
+        ranked = list(issues)
+    return render_overview_issues_html(ranked, banner=banner)
