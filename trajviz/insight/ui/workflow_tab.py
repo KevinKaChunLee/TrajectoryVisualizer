@@ -55,17 +55,32 @@ WORKFLOW_JS = """
                                 if (!root) return;
                                 var roles = Array.from(root.querySelectorAll(
                                     '[data-filter-group="role"].chip-active'
-                                )).map(function(c) { return c.dataset.filter; });
+                                )).map(function(c) { return c.textContent; });
                                 var features = Array.from(root.querySelectorAll(
                                     '[data-filter-group="feature"].chip-active'
-                                )).map(function(c) { return c.dataset.filter; });
+                                )).map(function(c) { return c.textContent; });
                                 var query = root.querySelector('#wf-filter-query');
                                 if (!query) return;
                                 var featureText = features.indexOf('All') >= 0
                                     ? 'All'
                                     : features.join(' or ');
-                                query.textContent = 'Role: ' + roles.join(' or ')
-                                    + ' · Step feature: ' + featureText;
+                                var parts = [
+                                    'Role: ' + roles.join(' or '),
+                                    'Step feature: ' + featureText
+                                ];
+                                var agents = Array.from(root.querySelectorAll(
+                                    '[data-filter-group="agent"].chip-active'
+                                ));
+                                if (root.querySelector('[data-filter-group="agent"]')) {
+                                    var agentAll = agents.some(function(c) {
+                                        return c.dataset.filter === 'agent:All';
+                                    });
+                                    var agentText = agentAll
+                                        ? 'All'
+                                        : agents.map(function(c) { return c.textContent; }).join(' or ');
+                                    parts.push('Agent: ' + agentText);
+                                }
+                                query.textContent = parts.join(' · ');
                             };
                             /* Pure chip state machine, unit-tested in
                                tests/test_workflow_filtering.py by executing this
@@ -74,12 +89,29 @@ WORKFLOW_JS = """
                             window.__wfComputeChipState = function(state, action) {
                                 var roles = {};
                                 var features = {};
+                                var agents = {};
                                 Object.keys(state.roles).forEach(function(k) { roles[k] = !!state.roles[k]; });
                                 Object.keys(state.features).forEach(function(k) { features[k] = !!state.features[k]; });
+                                Object.keys(state.agents).forEach(function(k) { agents[k] = !!state.agents[k]; });
                                 var rejected = false;
+                                var toggleExclusiveAll = function(group, allKey, name) {
+                                    if (name === allKey) {
+                                        Object.keys(group).forEach(function(k) { group[k] = (k === allKey); });
+                                        return;
+                                    }
+                                    group[name] = !group[name];
+                                    group[allKey] = false;
+                                    var anySpecific = Object.keys(group).some(function(k) {
+                                        return k !== allKey && group[k];
+                                    });
+                                    if (!anySpecific) {
+                                        group[allKey] = true;
+                                    }
+                                };
                                 if (action.type === 'reset') {
                                     Object.keys(roles).forEach(function(k) { roles[k] = true; });
                                     Object.keys(features).forEach(function(k) { features[k] = (k === 'All'); });
+                                    Object.keys(agents).forEach(function(k) { agents[k] = (k === 'agent:All'); });
                                 } else if (action.group === 'role') {
                                     var activeRoles = Object.keys(roles).filter(function(k) { return roles[k]; });
                                     if (roles[action.name] && activeRoles.length === 1) {
@@ -88,30 +120,24 @@ WORKFLOW_JS = """
                                     } else {
                                         roles[action.name] = !roles[action.name];
                                     }
-                                } else if (action.name === 'All') {
-                                    /* 'All' is exclusive with specific features. */
-                                    Object.keys(features).forEach(function(k) { features[k] = (k === 'All'); });
-                                } else {
-                                    features[action.name] = !features[action.name];
-                                    features['All'] = false;
-                                    var anySpecific = Object.keys(features).some(function(k) {
-                                        return k !== 'All' && features[k];
-                                    });
-                                    if (!anySpecific) {
-                                        /* Auto-restore 'All' when nothing specific is left. */
-                                        features['All'] = true;
-                                    }
+                                } else if (action.group === 'feature') {
+                                    toggleExclusiveAll(features, 'All', action.name);
+                                } else if (action.group === 'agent') {
+                                    toggleExclusiveAll(agents, 'agent:All', action.name);
                                 }
-                                return {roles: roles, features: features, rejected: rejected};
+                                return {roles: roles, features: features, agents: agents, rejected: rejected};
                             };
                             /* __WF_CHIP_STATE_END__ */
                             window.__wfReadChipState = function(bar) {
-                                var state = {roles: {}, features: {}};
+                                var state = {roles: {}, features: {}, agents: {}};
                                 bar.querySelectorAll('[data-filter-group="role"]').forEach(function(c) {
                                     state.roles[c.dataset.filter] = c.classList.contains('chip-active');
                                 });
                                 bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
                                     state.features[c.dataset.filter] = c.classList.contains('chip-active');
+                                });
+                                bar.querySelectorAll('[data-filter-group="agent"]').forEach(function(c) {
+                                    state.agents[c.dataset.filter] = c.classList.contains('chip-active');
                                 });
                                 return state;
                             };
@@ -121,6 +147,9 @@ WORKFLOW_JS = """
                                 });
                                 bar.querySelectorAll('[data-filter-group="feature"]').forEach(function(c) {
                                     window.__setWorkflowChipActive(c, !!state.features[c.dataset.filter]);
+                                });
+                                bar.querySelectorAll('[data-filter-group="agent"]').forEach(function(c) {
+                                    window.__setWorkflowChipActive(c, !!state.agents[c.dataset.filter]);
                                 });
                             };
                             if (!window.__wfChipHandlerAttached) {

@@ -35,15 +35,18 @@ def _run_chip_state(scenarios):
     return json.loads(proc.stdout)
 
 
-def _chip_state(roles=None, features=None):
+def _chip_state(roles=None, features=None, agents=None):
     state = {
         "roles": {"Assistant": True, "User": True},
         "features": {"All": True, "Tool Calls": False, "Errors": False, "Reasoning": False},
+        "agents": {},
     }
     if roles:
         state["roles"].update(roles)
     if features:
         state["features"].update(features)
+    if agents is not None:
+        state["agents"] = dict(agents)
     return state
 
 
@@ -185,15 +188,42 @@ class WorkflowFilteringTests(unittest.TestCase):
         )
         self.assertIn(5, filter_workflow_steps(steps, ["Assistant", "All"]))
 
-    def test_agent_tokens_do_not_apply_a_hidden_filter(self):
+    def test_agent_tokens_filter_by_timeline_agent_id(self):
         from trajviz.insight.presenters import filter_workflow_steps
+        from trajviz.insight.rendering import MAIN_AGENT_FILTER, agent_filter_token
 
         self.assertEqual(
             filter_workflow_steps(
                 self.steps,
-                ["Assistant", "All", "agent:sub-agent"],
+                ["Assistant", "All", agent_filter_token("sub-agent")],
+            ),
+            [2, 3, 4],
+        )
+        self.assertEqual(
+            filter_workflow_steps(
+                self.steps,
+                ["Assistant", "All", MAIN_AGENT_FILTER],
+            ),
+            [1],
+        )
+        self.assertEqual(
+            filter_workflow_steps(
+                self.steps,
+                ["Assistant", "All", "agent:All"],
             ),
             [1, 2, 3, 4],
+        )
+
+    def test_agent_and_feature_groups_are_combined_with_and(self):
+        from trajviz.insight.presenters import filter_workflow_steps
+        from trajviz.insight.rendering import agent_filter_token
+
+        self.assertEqual(
+            filter_workflow_steps(
+                self.steps,
+                ["Assistant", "Tool Calls", agent_filter_token("sub-agent")],
+            ),
+            [3],
         )
 
     def test_keyword_is_anded_with_role_and_features(self):
@@ -230,6 +260,7 @@ class WorkflowFilteringTests(unittest.TestCase):
 
         self.assertIn("data-filter-group-container='role'", chips)
         self.assertIn("data-filter-group-container='feature'", chips)
+        self.assertNotIn("data-filter-group-container='agent'", chips)
         self.assertIn("data-filter='All'", chips)
         self.assertIn("data-wf-action='reset-filters'", chips)
         self.assertIn("select at least one", chips)
@@ -237,6 +268,25 @@ class WorkflowFilteringTests(unittest.TestCase):
         self.assertNotIn("agent:", chips)
         self.assertNotIn("Clear all", chips)
         self.assertNotIn("onclick=", chips)
+
+    def test_filter_chips_render_agent_group_for_multi_agent_steps(self):
+        from trajviz.insight.rendering import (
+            AGENT_ALL_FILTER,
+            MAIN_AGENT_FILTER,
+            agent_filter_token,
+            render_filter_chips,
+            workflow_agent_chip_options,
+        )
+
+        options = workflow_agent_chip_options(self.steps)
+        self.assertGreater(len(options), 1)
+        chips = render_filter_chips(agent_options=options)
+
+        self.assertIn("data-filter-group-container='agent'", chips)
+        self.assertIn(f"data-filter='{AGENT_ALL_FILTER}'", chips)
+        self.assertIn(f"data-filter='{MAIN_AGENT_FILTER}'", chips)
+        self.assertIn(f"data-filter='{agent_filter_token('sub-agent')}'", chips)
+        self.assertIn("Agent: All", chips)
 
     def test_default_chips_select_both_roles_and_all_only(self):
         from trajviz.insight.rendering import render_filter_chips
@@ -430,6 +480,56 @@ class WorkflowChipStateMachineTests(unittest.TestCase):
         self.assertEqual(
             result["features"],
             {"All": True, "Tool Calls": False, "Errors": False, "Reasoning": False},
+        )
+        self.assertEqual(result["agents"], {})
+
+    def test_agent_all_is_exclusive_like_features(self):
+        agents = {
+            "agent:All": True,
+            "agent:__main__": False,
+            "agent:sub-agent": False,
+        }
+        (selected,) = _run_chip_state([{
+            "state": _chip_state(agents=agents),
+            "action": {"type": "toggle", "group": "agent", "name": "agent:sub-agent"},
+        }])
+        self.assertFalse(selected["rejected"])
+        self.assertFalse(selected["agents"]["agent:All"])
+        self.assertTrue(selected["agents"]["agent:sub-agent"])
+        self.assertFalse(selected["agents"]["agent:__main__"])
+        self.assertTrue(selected["features"]["All"])
+
+        (restored,) = _run_chip_state([{
+            "state": _chip_state(agents={
+                "agent:All": False,
+                "agent:__main__": False,
+                "agent:sub-agent": True,
+            }),
+            "action": {"type": "toggle", "group": "agent", "name": "agent:sub-agent"},
+        }])
+        self.assertTrue(restored["agents"]["agent:All"])
+        self.assertFalse(restored["agents"]["agent:sub-agent"])
+
+    def test_reset_restores_agent_all(self):
+        (result,) = _run_chip_state([{
+            "state": _chip_state(
+                features={"All": False, "Errors": True},
+                agents={
+                    "agent:All": False,
+                    "agent:__main__": False,
+                    "agent:sub-agent": True,
+                },
+            ),
+            "action": {"type": "reset"},
+        }])
+        self.assertTrue(result["features"]["All"])
+        self.assertEqual(
+            result["agents"],
+            {
+                "agent:All": True,
+                "agent:__main__": False,
+                "agent:sub-agent": False,
+            },
         )
 
 

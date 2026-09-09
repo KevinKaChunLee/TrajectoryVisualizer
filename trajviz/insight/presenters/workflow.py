@@ -5,11 +5,16 @@ from __future__ import annotations
 import base64
 import json
 
+from ..charts import timeline_agent_id_of
 from ..rendering import (
+    AGENT_ALL_FILTER,
+    AGENT_FILTER_PREFIX,
+    agent_id_from_filter_token,
     format_step_detail,
     render_filter_chips,
     render_toc_sidebar,
     render_workflow_html,
+    workflow_agent_chip_options,
     workflow_role,
 )
 from ..step_errors import step_error_kind
@@ -60,12 +65,13 @@ def filter_workflow_steps(
     active_filters: list[str],
     keyword: str = "",
 ) -> list[int]:
-    """Return positions matching required roles, optional features, and search.
+    """Return positions matching required roles, optional features/agents, and search.
 
     Roles are ORed with each other, selected features are ORed with each other,
-    and the two groups are ANDed. ``All`` (or an omitted feature selection)
-    means that no feature predicate is applied. Agent filtering is intentionally
-    not exposed until its interaction with role-less/user steps is made explicit.
+    selected agents are ORed with each other, and the groups are ANDed.
+    ``All`` / ``agent:All`` (or an omitted selection for that group) means that
+    group imposes no predicate. Agent identity matches Workflow card coloring
+    via :func:`timeline_agent_id_of`.
     """
     if not steps:
         return []
@@ -78,12 +84,28 @@ def filter_workflow_steps(
     feature_filters = active & set(FEATURE_FILTERS)
     restrict_features = ALL_FEATURE_FILTER not in active and bool(feature_filters)
 
+    agent_tokens = {t for t in active if t.startswith(AGENT_FILTER_PREFIX)}
+    restrict_agents = AGENT_ALL_FILTER not in agent_tokens and bool(agent_tokens)
+    selected_agent_ids: set[str] = set()
+    agent_id_of = None
+    if restrict_agents:
+        selected_agent_ids = {
+            aid
+            for token in agent_tokens
+            if (aid := agent_id_from_filter_token(token)) is not None
+        }
+        if not selected_agent_ids:
+            return []
+        agent_id_of = timeline_agent_id_of(steps)
+
     filtered: list[int] = []
     for position, step in enumerate(steps):
         labels = _workflow_step_labels(step)
         if not (labels & role_filters):
             continue
         if restrict_features and not (labels & feature_filters):
+            continue
+        if agent_id_of is not None and agent_id_of(step) not in selected_agent_ids:
             continue
 
         if keyword:
@@ -147,8 +169,12 @@ def build_workflow_outputs(steps: list[dict]) -> dict:
     toc_html_val = render_toc_sidebar(steps)
     detail_store_val = _prerender_step_details(steps)
 
-    wf_chips = render_filter_chips()
-    wf_filter_val = ",".join(FILTER_CHIPS_DEFAULT)
+    agent_options = workflow_agent_chip_options(steps)
+    active = list(FILTER_CHIPS_DEFAULT)
+    if agent_options:
+        active.append(AGENT_ALL_FILTER)
+    wf_chips = render_filter_chips(active, agent_options=agent_options)
+    wf_filter_val = ",".join(active)
 
     return {
         "wf_chips": wf_chips,
