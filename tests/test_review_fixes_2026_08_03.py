@@ -320,9 +320,25 @@ class XssTests(unittest.TestCase):
 
     def test_todowrite_content_escaped(self):
         out = rendering.build_antipattern_summary_html(
-            [], [], {"stalled": [{"content": "</span>" + self.PAYLOAD}]}, 0)
+            [], [], {"stalled": [{"content": "</span>" + self.PAYLOAD, "start_step": 4}]}, 0)
         self.assertNotIn("<img", out)
         self.assertIn("&lt;", out)
+        self.assertIn("tvGotoWorkflowStep(4)", out)
+        self.assertIn("#4", out)
+
+    def test_antipattern_summary_links_workflow_steps(self):
+        out = rendering.build_antipattern_summary_html(
+            [{"start_step": 10, "end_step": 12, "length": 3, "tools": ["Grep"]}],
+            [{"step": 7, "command": "cat /tmp/x", "pattern": "cat"}],
+            {"stalled": []},
+            error_count=2,
+            error_steps=[3, 9],
+        )
+        self.assertIn("Anti-pattern summary", out)
+        self.assertIn("insight-step-link", out)
+        for idx in (3, 7, 9, 10, 11, 12):
+            self.assertIn(f"tvGotoWorkflowStep({idx})", out)
+            self.assertIn(f"#{idx}", out)
 
     def test_metric_chip_escaped(self):
         chip = formatting._metric_chip(self.PAYLOAD, self.PAYLOAD)
@@ -340,6 +356,7 @@ class MetricsTests(unittest.TestCase):
         v = self._verdicts(m)["Throughput"]
         self.assertEqual(v["status"], "warn")
         self.assertIn("48.3", v["label"])
+        self.assertIn("gen tok/s", v["label"])
 
     def test_verdicts_na_on_missing_token_data(self):
         m = {"tokens": {"total": 0}, "avg_cache_ratio": 0, "output_tokens_per_sec": None,

@@ -332,7 +332,7 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
         parts.append(f"{total_tokens:,} tokens &middot; ")
         output_rate = metrics.get("output_tokens_per_sec")
         if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
-            parts.append(f"{output_rate} output tok/s &middot; ")
+            parts.append(f"{output_rate} gen tok/s &middot; ")
         else:
             parts.append(f"{metrics['tokens_per_second']} total processed tok/s &middot; ")
     parts.append(f"{wall_fmt} wall-clock")

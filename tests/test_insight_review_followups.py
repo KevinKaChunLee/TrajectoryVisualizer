@@ -57,7 +57,7 @@ class OutputThroughputTests(unittest.TestCase):
             for verdict in compute_health_verdict(metrics, [])
         }["Throughput"]
         self.assertEqual(throughput["status"], "bad")
-        self.assertEqual(throughput["label"], "10.0 output tok/s")
+        self.assertEqual(throughput["label"], "10.0 gen tok/s")
         self.assertIn("1/2 assistant steps with timing", throughput["detail"])
 
     def test_complete_timing_reports_full_coverage(self):
@@ -87,6 +87,27 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertEqual(metrics["output_throughput_timed_seconds"], 100.0)
         self.assertEqual(metrics["output_tokens_per_sec"], 5.0)
 
+    def test_tool_wait_excluded_from_throughput_denominator(self):
+        """Long Bash/script waits must not look like near-zero gen throughput."""
+        step = _assistant_step(0, output_tokens=100, duration=1210.0)
+        step["tool_calls"] = [
+            {"tool_name": "Bash", "status": "success", "duration_ms": 1_200_000},
+        ]
+        step["tool_call_count"] = 1
+
+        metrics = compute_metrics([step], {})
+
+        self.assertEqual(metrics["output_throughput_timed_seconds"], 10.0)
+        self.assertEqual(metrics["output_throughput_tool_wait_seconds"], 1200.0)
+        self.assertEqual(metrics["output_tokens_per_sec"], 10.0)
+
+        throughput = {
+            verdict["metric"]: verdict
+            for verdict in compute_health_verdict(metrics, [])
+        }["Throughput"]
+        self.assertEqual(throughput["label"], "10.0 gen tok/s")
+        self.assertIn("tool wait excluded", throughput["detail"])
+
     def test_overview_labels_generation_rate_as_output_throughput(self):
         # Import here because this UI module loads optional Gradio dependencies.
         from trajviz.insight.presenters import build_overview_kpi_html
@@ -106,18 +127,20 @@ class OutputThroughputTests(unittest.TestCase):
             "output_throughput_timed_steps": 1,
             "output_throughput_total_steps": 2,
             "output_throughput_incomplete": True,
+            "output_throughput_tool_wait_seconds": 1200.0,
             "tool_success_rate": 0,
             "tool_call_count": 0,
         }
 
         html = build_overview_kpi_html(metrics, "10s")
 
-        self.assertIn("10.0 output tok/s", html)
+        self.assertIn("10.0 gen tok/s", html)
+        self.assertIn("excl. tools", html)
         self.assertIn("1/2 timed", html)
         self.assertNotIn("100.0 tok/s", html)
 
         banner = format_banner_html("trace.json", metrics, "10s")
-        self.assertIn("10.0 output tok/s", banner)
+        self.assertIn("10.0 gen tok/s", banner)
         self.assertNotIn("100.0 tok/s", banner)
 
         computed_metrics = compute_metrics([

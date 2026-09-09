@@ -25,6 +25,7 @@ from .presenters.overview import (
 )
 from .presenters.patterns import (
     build_antipattern_html,
+    build_failure_patterns_html,
     render_failure_patterns_html,
     render_tool_sequences_html,
 )
@@ -59,6 +60,7 @@ def build_report_html(
     pat_tool = render_tool_sequences_html(session.tool_sequences)
     pat_fail = render_failure_patterns_html(session.failure_patterns)
     antipattern = build_antipattern_html(session)
+    failure_panel = build_failure_patterns_html(session)
 
     figures: list[tuple[str, go.Figure]] = [
         ("Token usage", ch["tok_fig"]),
@@ -89,9 +91,14 @@ def build_report_html(
     theme_class = "tv-theme-dark" if dark else "tv-theme-light"
     sections: list[str] = [
         _header_html(title, basename, fmt_label, generated, load_warnings_html(session)),
-        _section("Summary", ov["banner"] + ov["anomaly_html"] + ov["kpi_html"] + ov["session_detail"]),
-        _section("Performance", _mixed_md_to_html(ov["metrics_text"])),
+        _section(
+            "Summary",
+            ov["banner"] + ov["anomaly_html"] + ov["kpi_html"] + ov["session_detail"]
+            + _mixed_md_to_html(ov["metrics_text"]),
+        ),
         charts(figures[:2]),
+        failure_panel,
+        antipattern,
         _section("Context utilization", dg["diag_pressure_html"]),
         charts(figures[2:3]),
         _section("Tools", _mixed_md_to_html(ov["behavior_text"])),
