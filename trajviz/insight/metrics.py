@@ -765,16 +765,11 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
 def compute_diagnostic_metrics(
     steps: list[dict],
     trajectory: list[dict],
-    step_labels: dict[int, dict[str, str]] | None = None,
 ) -> dict:
     """Compute diagnostic metrics from trajectory analysis.
 
     These metrics require the raw trajectory data (not just parsed steps)
     for sub-agent detection, fruitless streak analysis, etc.
-
-    Args:
-        step_labels: Optional mapping from step index to {phase, action}
-            from the step labeler. Enables semantic anti-pattern detection.
     """
     from .patterns import (
         extract_plan_history, compute_plan_metrics as _plan_metrics,
@@ -782,7 +777,6 @@ def compute_diagnostic_metrics(
         detect_fruitless_streaks, compute_autonomy_ratio,
         detect_tool_selection_antipatterns,
         build_structural_phase_segments, detect_phase_anomalies,
-        detect_semantic_antipatterns,
     )
 
     plan_history = extract_plan_history(steps)
@@ -846,10 +840,7 @@ def compute_diagnostic_metrics(
     structural_phases = build_structural_phase_segments(steps)
     structural_regressions = detect_phase_anomalies(steps, structural_phases)
 
-    # Semantic anti-patterns (requires step labels from the step labeler)
-    sem = detect_semantic_antipatterns(steps, step_labels or {})
-
-    result = {
+    return {
         "plan_stall_count": len(plan_m.get("stalled", [])),
         "plan_reset_count": plan_m.get("plan_resets", 0),
         "plan_total_items": plan_m.get("total_items", 0),
@@ -871,18 +862,6 @@ def compute_diagnostic_metrics(
         "structural_phases": structural_phases,
         "structural_phase_regressions": structural_regressions,
     }
-
-    # Append semantic anti-pattern counts when labels are available
-    if step_labels:
-        result["phase_oscillation_count"] = len(sem["phase_oscillation"])
-        result["premature_implementation"] = len(sem["premature_implementation"]) > 0
-        result["semantic_fruitless_exploration_count"] = len(sem["semantic_fruitless_exploration"])
-        result["validation_avoidance"] = len(sem["validation_avoidance"]) > 0
-        result["debug_without_hypothesis_count"] = len(sem["debug_without_hypothesis"])
-        result["semantic_plan_stall_count"] = len(sem["semantic_plan_stall"])
-        result["semantic_antipatterns"] = sem
-
-    return result
 
 
 def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[dict]:

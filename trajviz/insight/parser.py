@@ -1,42 +1,6 @@
 """Data loading, parsing, and aggregate metrics."""
 
-# Re-export loader functions for backward compatibility
-from .loaders import (  # noqa: F401
-    safe_get,
-    detect_format,
-    load_trajectory,
-)
-
-# Re-export metric functions for backward compatibility
-from .metrics import (  # noqa: F401
-    build_message_metrics,
-    compute_metrics,
-    compute_health_verdict,
-    validate_token_integrity,
-    extract_agent_info,
-    compute_agent_summary,
-    generate_agent_insights,
-    effective_agent,
-)
-
-# Re-export formatting functions for backward compatibility
-from .formatting import (  # noqa: F401
-    format_performance_md,
-    format_behavioral_md,
-    format_banner_html,
-    wall_clock_fmt,
-    _build_hotspots_md,
-    _build_per_message_md,
-    _friendly_finish,
-)
-
-# Re-export label functions for backward compatibility
-from .labels import (  # noqa: F401
-    LABEL_PHASE_COLORS,
-    load_labeled_json,
-    aggregate_labels,
-)
-
+from .loaders import safe_get
 
 # Fields whose absence makes the whole Metrics table unavailable. Reasoning is
 # optional: many formats never report it (show per-row N/A instead of fake 0).

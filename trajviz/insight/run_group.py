@@ -31,7 +31,8 @@ from trajviz.insight.context_usage import (
 )
 from trajviz.insight.formatting import wall_clock_fmt
 from trajviz.insight.loaders import detect_format, load_trajectory
-from trajviz.insight.parser import build_message_metrics, compute_metrics, parse_steps
+from trajviz.insight.metrics import build_message_metrics, compute_metrics
+from trajviz.insight.parser import parse_steps
 from trajviz.tool_vocab import parse_skill_name as _parse_skill_name
 
 # Pattern labels shown in the UI (omit low-signal names when empty).

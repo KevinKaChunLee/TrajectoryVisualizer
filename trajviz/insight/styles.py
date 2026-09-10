@@ -187,11 +187,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 #wf-detail-content {
     text-align: left;
 }
-/* Insight sidebar in accordion two-column layouts */
-.insight-sidebar {
-    position: sticky; top: 12px;
-    min-height: auto;
-}
 /* Anomaly strip */
 .anomaly-strip {
     display: flex;
@@ -554,11 +549,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
         position: relative !important;
         top: auto !important;
         max-height: none !important;
-    }
-    /* De-sticky insight sidebars */
-    .insight-sidebar {
-        position: relative !important;
-        top: auto !important;
     }
     /* KPI grid: 2 columns on tablet */
     .ov-kpi-grid {
@@ -958,13 +948,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 }
 
 /* ===== Trajectory Quality Score ===== */
-.score-section {
-    margin: 12px 0 16px; padding: 0;
-}
-.score-section-header {
-    font-size: 14px; font-weight: 700; color: var(--ov-text);
-    margin-bottom: 8px;
-}
 .score-dim-grid {
     display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
 }
@@ -1058,10 +1041,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 }
 .judge-reasoning {
     padding: 8px 12px; font-size: 12px; color: var(--ov-muted); line-height: 1.5;
-    border-top: 1px solid var(--ov-border);
-}
-.judge-flagged {
-    padding: 6px 12px; font-size: 12px; color: var(--ov-text);
     border-top: 1px solid var(--ov-border);
 }
 
