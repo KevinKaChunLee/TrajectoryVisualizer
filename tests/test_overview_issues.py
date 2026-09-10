@@ -173,7 +173,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("overview-issues-progress", html)
         self.assertIn("Thinking…", html)
         self.assertIn("overview-issues-progress-dot", html)
-        self.assertIn("overview-issues-spin", html)
+        self.assertIn("animateTransform", html)
         self.assertIn("Suggesting fixes 1/3", html)
         self.assertIn("suggesting fixes…", html)
         self.assertNotIn(">Change<", html)

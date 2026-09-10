@@ -425,24 +425,22 @@ def render_overview_issues_html(
 
     progress_html = ""
     if progress:
-        # Inline keyframes + SVG so the spinner still moves even if APP_CSS
-        # animation rules fail to apply inside Gradio's HTML updates.
+        # SMIL SVG spinner — CSS @keyframes are often disabled by OS/browser
+        # prefers-reduced-motion (Windows "Animation effects"), and Gradio
+        # HTML swaps can also leave a CSS ring looking frozen. SMIL still
+        # rotates for this essential in-progress cue.
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
-            "<style>"
-            "@keyframes overview-issues-spin{to{transform:rotate(360deg)}}"
-            ".overview-issues-progress-dot{"
-            "box-sizing:border-box;display:inline-block;width:12px;height:12px;"
-            "border-radius:50%;"
-            "border:2px solid rgba(29,78,216,0.25);border-top-color:#1d4ed8;"
-            "flex-shrink:0;animation:overview-issues-spin .7s linear infinite"
-            "}"
-            "@media (prefers-reduced-motion:reduce){"
-            ".overview-issues-progress-dot{animation:none;border-color:#1d4ed8}"
-            "}"
-            "</style>"
             "<span class='overview-issues-progress-label'>Thinking…</span>"
-            "<span class='overview-issues-progress-dot' aria-hidden='true'></span>"
+            "<svg class='overview-issues-progress-dot' width='14' height='14' "
+            "viewBox='0 0 24 24' aria-hidden='true'>"
+            "<circle cx='12' cy='12' r='10' fill='none' "
+            "stroke='rgba(29,78,216,0.25)' stroke-width='3'/>"
+            "<path d='M12 2a10 10 0 0 1 10 10' fill='none' stroke='#1d4ed8' "
+            "stroke-width='3' stroke-linecap='round'>"
+            "<animateTransform attributeName='transform' type='rotate' "
+            "from='0 12 12' to='360 12 12' dur='0.7s' repeatCount='indefinite'/>"
+            "</path></svg>"
             f"<span>{html.escape(progress)}</span>"
             "</div>"
         )

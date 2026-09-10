@@ -1052,26 +1052,11 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 .overview-issues-progress-label {
     flex-shrink: 0;
 }
-/* Spinning ring — more visible than opacity pulse; survives Gradio HTML swaps better to notice. */
+/* Size only — rotation is SMIL on the SVG path (see issues.py), so OS
+   prefers-reduced-motion / Gradio CSS scoping cannot freeze the indicator. */
 .overview-issues-progress-dot {
-    box-sizing: border-box;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    border: 2px solid color-mix(in srgb, var(--ov-accent, #1d4ed8) 28%, transparent);
-    border-top-color: var(--ov-accent, #1d4ed8);
     flex-shrink: 0;
-    animation: overview-issues-spin 0.7s linear infinite;
-}
-@keyframes overview-issues-spin {
-    to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-    .overview-issues-progress-dot {
-        animation: none;
-        border-color: var(--ov-accent, #1d4ed8);
-        opacity: 0.85;
-    }
+    display: block;
 }
 .judge-badge {
     display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px;
