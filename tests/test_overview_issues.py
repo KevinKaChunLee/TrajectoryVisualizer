@@ -62,11 +62,12 @@ class OverviewIssuesTests(unittest.TestCase):
         issues = collect_overview_issues(
             _session(
                 failure_patterns=[{
-                    "cluster_label": "Bash: exit 1",
+                    "cluster_label": "npm: exit code 1",
                     "count": 2,
                     "example_error": "command failed",
                     "recovery_path": ["Read", "Edit"],
                     "steps": [5, 9],
+                    "error_class": "tool",
                 }],
                 fruitless_streaks=[{
                     "start_step": 4,
@@ -87,6 +88,42 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(shown[0].kind, "error")
         self.assertEqual(shown[1].kind, "antipattern")
         self.assertEqual(shown[2].kind, "bottleneck")
+
+    def test_system_scaffold_miss_is_low_risk_antipattern(self):
+        issues = collect_overview_issues(
+            _session(
+                failure_patterns=[{
+                    "cluster_label": "Grep: No matches found",
+                    "count": 2,
+                    "example_error": "No matches found",
+                    "recovery_path": None,
+                    "steps": [3, 4],
+                    "error_class": "system",
+                }],
+            )
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].kind, "antipattern")
+        self.assertIn("Scaffold miss", issues[0].title)
+        self.assertIn("low risk", issues[0].why)
+
+    def test_frequent_system_errors_call_out_volume(self):
+        issues = collect_overview_issues(
+            _session(
+                failure_patterns=[{
+                    "cluster_label": "Read: ENOENT",
+                    "count": 6,
+                    "example_error": "ENOENT",
+                    "recovery_path": None,
+                    "steps": [1, 2, 3, 4, 5, 6],
+                    "error_class": "system",
+                }],
+            )
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].kind, "antipattern")
+        self.assertIn("Frequent scaffold", issues[0].title)
+        self.assertIn("volume", issues[0].why)
 
     def test_bottleneck_issue_from_performance_bottlenecks(self):
         issues = collect_overview_issues(

@@ -319,6 +319,7 @@ def detect_failure_patterns(steps: list[dict]) -> list[dict]:
             "example_error": cluster["pattern"],
             "recovery_path": recovery_path,
             "steps": list(cluster.get("steps", [])),
+            "error_class": cluster.get("error_class", "tool"),
         })
 
     return results

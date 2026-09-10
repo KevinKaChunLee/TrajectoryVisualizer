@@ -452,11 +452,20 @@ def _error_pattern(tc: dict) -> str:
 
 
 def cluster_errors(steps: list[dict]) -> list[dict]:
-    """Group error tool calls by (tool_name, error_pattern).
+    """Group error tool calls by (display tool, error_pattern).
+
+    Bash/shell calls are labeled with the peeled base command (via
+    :func:`trajviz.insight.patterns.tool_chart_name`) so ``npm test`` failures
+    do not collapse into a generic ``Bash: exit code`` cluster.
 
     Returns sorted list of cluster dicts:
-    {tool, pattern, count, steps: [step_indices], first_step, last_step}
+    ``{tool, error_class, pattern, count, steps, first_step, last_step}``
+    where ``error_class`` is ``"system"`` (scaffold) or ``"tool"`` (agentic).
     """
+    # Local import: patterns.detect_failure_patterns lazy-imports cluster_errors.
+    from .patterns import tool_chart_name
+    from .step_errors import tool_call_error_kind
+
     clusters: dict[tuple[str, str], dict] = {}
 
     for step in steps:
@@ -468,13 +477,14 @@ def cluster_errors(steps: list[dict]) -> list[dict]:
             if not is_error:
                 continue
 
-            tool = tc.get("tool_name", "unknown")
+            display = tool_chart_name(tc)
             pattern = _error_pattern(tc)
-            key = (tool, pattern)
+            key = (display, pattern)
 
             if key not in clusters:
                 clusters[key] = {
-                    "tool": tool,
+                    "tool": display,
+                    "error_class": tool_call_error_kind(tc),
                     "pattern": pattern,
                     "count": 0,
                     "steps": [],

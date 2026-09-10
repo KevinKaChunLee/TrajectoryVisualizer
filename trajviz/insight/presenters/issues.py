@@ -78,6 +78,13 @@ def collect_overview_issues(session: LoadedSession) -> list[OverviewIssue]:
     return issues
 
 
+_SYSTEM_ERROR_HIGH = 5
+
+
+def _count_label(label: str, count: int) -> str:
+    return f"{label} ({count}×)" if count else label
+
+
 def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
     out: list[OverviewIssue] = []
     for i, pat in enumerate(session.failure_patterns or []):
@@ -85,15 +92,43 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
         count = int(pat.get("count") or 0)
         example = str(pat.get("example_error") or "")[:200]
         recovery = pat.get("recovery_path")
+        steps = tuple(int(s) for s in (pat.get("steps") or []) if s is not None)
+        error_class = str(pat.get("error_class") or "tool").lower()
+
+        if error_class == "system":
+            if count >= _SYSTEM_ERROR_HIGH:
+                title = f"Frequent scaffold errors: {_count_label(label, count)}"
+                why = (
+                    "Many Read/Grep/Edit-style failures in one run — each is usually "
+                    "low risk, but volume suggests path, permission, or harness setup "
+                    "problems worth checking."
+                )
+            else:
+                title = f"Scaffold miss: {_count_label(label, count)}"
+                why = (
+                    "Scaffold/tooling miss (search, read, or write) — usually low risk; "
+                    "the agent can often recover without an author change."
+                )
+            out.append(
+                OverviewIssue(
+                    kind="antipattern",
+                    title=title,
+                    detail=example or "scaffold tool failure",
+                    why=why,
+                    steps=steps,
+                    source_id=f"fail:system:{i}:{label}",
+                )
+            )
+            continue
+
         if recovery and isinstance(recovery, (list, tuple)):
             why = "Typical recovery: " + " → ".join(str(t) for t in recovery)
         else:
             why = "No recovery path found after this error cluster."
-        steps = tuple(int(s) for s in (pat.get("steps") or []) if s is not None)
         out.append(
             OverviewIssue(
                 kind="error",
-                title=f"{label} ({count}×)" if count else label,
+                title=_count_label(label, count),
                 detail=example,
                 why=why,
                 steps=steps,
