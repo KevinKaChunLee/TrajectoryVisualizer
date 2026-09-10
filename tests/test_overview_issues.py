@@ -24,7 +24,6 @@ def _session(**kwargs):
         edit_thrash=[],
         repeated_searches=[],
         phase_regressions=[],
-        bottleneck_explanations=[],
         performance_bottlenecks=[],
         file_interactions=[],
         format="",
@@ -145,16 +144,8 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("npm test", issues[0].detail)
 
     def test_top_n_hotspot_explanations_are_not_issues(self):
-        # Vanity top-N slow steps must not become Issues without performance_bottlenecks.
-        issues = collect_overview_issues(
-            _session(
-                bottleneck_explanations=[{
-                    "step_idx": 12,
-                    "duration": 18.2,
-                    "explanation": "Step 12: 18.2s — slow",
-                }],
-            )
-        )
+        # Only performance_bottlenecks feed Issues — bare duration hotspots do not.
+        issues = collect_overview_issues(_session())
         self.assertEqual(issues, [])
 
     def test_progress_banner_visible_while_judging(self):

@@ -766,26 +766,19 @@ def compute_diagnostic_metrics(
     steps: list[dict],
     trajectory: list[dict],
 ) -> dict:
-    """Compute diagnostic metrics from trajectory analysis.
+    """Compute chip-level diagnostic metrics (sub-agents, tool errors, edit precision).
 
-    These metrics require the raw trajectory data (not just parsed steps)
-    for sub-agent detection, fruitless streak analysis, etc.
+    Plan / fruitless / phase detectors live on ``LoadedSession`` already — do not
+    re-run them here. Behavioral chips only need sub-agent + error counts; edit
+    precision is kept for analysis/tests.
     """
     from .patterns import (
-        extract_plan_history, compute_plan_metrics as _plan_metrics,
-        extract_subagent_sessions, compute_subagent_metrics,
-        detect_fruitless_streaks, compute_autonomy_ratio,
-        detect_tool_selection_antipatterns,
-        build_structural_phase_segments, detect_phase_anomalies,
+        extract_subagent_sessions,
+        compute_subagent_metrics,
     )
 
-    plan_history = extract_plan_history(steps)
-    plan_m = _plan_metrics(plan_history)
     sessions = extract_subagent_sessions(steps, trajectory)
     sa_metrics = compute_subagent_metrics(sessions, steps)
-    streaks = detect_fruitless_streaks(steps)
-    autonomy = compute_autonomy_ratio(steps)
-    tool_sel = detect_tool_selection_antipatterns(steps)
     error_count = sum(
         1 for s in steps for tc in s.get("tool_calls", []) if tool_call_failed(tc)
     )
@@ -802,65 +795,14 @@ def compute_diagnostic_metrics(
                 if not tool_call_failed(tc):
                     edit_success += 1
 
-    # Search-to-action ratio: read/search calls per edit/write call
-    search_tools = {"Read", "read", "Grep", "grep", "Glob", "glob",
-                    "WebFetch", "WebSearch"}
-    search_count = sum(1 for s in steps for tc in s.get("tool_calls", [])
-                       if tc.get("tool_name") in search_tools)
-
-    # Context compression events — deduplicate between part scan and token drop
-    compression_steps: set[int] = set()
-    for i, s in enumerate(steps):
-        for p in s.get("parts", []):
-            if (p.get("type") in ("step_start", "step_finish")
-                    and "compress" in p.get("name", "").lower()):
-                compression_steps.add(i)
-    # Token-drop heuristic: only applies when tokens grow cumulatively across
-    # steps (e.g., Claude Code context window).  For formats with per-step
-    # deltas, tokens naturally vary, so drops are not compressions.
-    # Detect cumulative pattern: tokens should generally be non-decreasing.
-    asst_tokens = [s.get("tokens", {}).get("total", 0) or 0
-                   for s in steps if s.get("role") == "assistant"]
-    if len(asst_tokens) >= 5:
-        increasing = sum(1 for a, b in zip(asst_tokens, asst_tokens[1:], strict=False) if b >= a)
-        is_cumulative = increasing / (len(asst_tokens) - 1) > 0.7
-    else:
-        is_cumulative = False
-    if is_cumulative:
-        for i in range(1, len(steps)):
-            if steps[i].get("role") != "assistant":
-                continue
-            prev_tok = steps[i - 1].get("tokens", {}).get("total", 0) or 0
-            curr_tok = steps[i].get("tokens", {}).get("total", 0) or 0
-            if prev_tok > 0 and curr_tok > 0 and curr_tok < prev_tok * 0.3:
-                if i not in compression_steps:
-                    compression_steps.add(i)
-    compression_count = len(compression_steps)
-
-    structural_phases = build_structural_phase_segments(steps)
-    structural_regressions = detect_phase_anomalies(steps, structural_phases)
-
     return {
-        "plan_stall_count": len(plan_m.get("stalled", [])),
-        "plan_reset_count": plan_m.get("plan_resets", 0),
-        "plan_total_items": plan_m.get("total_items", 0),
         "subagent_session_count": len(sessions),
         "subagent_total_steps": sum(s.get("step_count", 0) for s in sa_metrics),
         "subagent_total_tokens": sum(s.get("total_tokens", 0) for s in sa_metrics),
-        "fruitless_streak_count": len(streaks),
-        "fruitless_streak_max": max((s["length"] for s in streaks), default=0),
-        "autonomy_ratio": autonomy,
-        "tool_selection_flags": len(tool_sel),
         "classified_error_count": error_count,
         "edit_total": edit_total,
         "edit_success": edit_success,
         "edit_precision": round(edit_success / edit_total * 100, 1) if edit_total else None,
-        "search_to_action": round(search_count / edit_total, 1) if edit_total else None,
-        "compression_count": compression_count,
-        "structural_phase_count": len(structural_phases),
-        "structural_phase_regression_count": len(structural_regressions),
-        "structural_phases": structural_phases,
-        "structural_phase_regressions": structural_regressions,
     }
 
 

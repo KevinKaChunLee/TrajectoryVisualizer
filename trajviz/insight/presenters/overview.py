@@ -31,7 +31,7 @@ from ..formatting import (
 )
 from ..help import HELP_TEXT
 from ..loaders import FORMAT_LABELS
-from ..metrics import compute_diagnostic_metrics, extract_agent_info
+from ..metrics import extract_agent_info
 from ..rendering import (
     _diag_jump_onclick,
     build_root_cause_html,
@@ -262,9 +262,7 @@ def build_overview_outputs(session: LoadedSession) -> dict:
     kpi_html = build_overview_kpi_html(metrics, wfmt, verdicts=verdicts, message_rows=message_rows)
     metrics_text = format_performance_md(metrics, wfmt)
 
-    traj = raw.get("trajectory") or raw.get("messages") or []
-    diag_metrics = compute_diagnostic_metrics(steps, traj) if traj else None
-    behavior_text = format_behavioral_md(metrics, diag_metrics=diag_metrics)
+    behavior_text = format_behavioral_md(metrics, diag_metrics=session.diagnostic_metrics)
     hotspots_text = _build_hotspots_md(message_rows)
     per_message_text = _build_per_message_md(message_rows)
 
@@ -354,8 +352,8 @@ def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dic
         parts.append(f"{chain_metrics['total_chains']} failure chain(s)")
     if session.clusters:
         parts.append(f"{len(session.clusters)} root cause(s)")
-    if session.bottleneck_explanations:
-        parts.append(f"{len(session.bottleneck_explanations)} hotspot(s)")
+    if session.performance_bottlenecks:
+        parts.append(f"{len(session.performance_bottlenecks)} bottleneck(s)")
     if interactions:
         unique_files = len({i["path"] for i in interactions})
         parts.append(f"{unique_files} file(s) touched · {len(target_files)} edited")

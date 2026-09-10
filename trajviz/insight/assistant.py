@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
 from .analytics import compute_step_analytics
 from .diagnostics import (
-    compute_bottleneck_explanations,
     compute_failure_chain_metrics,
     detect_failure_chains,
+    detect_performance_bottlenecks,
     extract_file_interactions,
 )
 from .formatting import wall_clock_fmt
@@ -33,6 +33,9 @@ from .patterns import (
     detect_tool_sequences,
 )
 from .tool_failure import tool_call_failed
+
+if TYPE_CHECKING:
+    from .session import LoadedSession
 
 _BRIEF_CHAR_LIMIT = 28_000
 _OUTPUT_CLIP = 180
@@ -210,8 +213,7 @@ def _metrics_lines(metrics: dict, steps: list[dict]) -> list[str]:
     return lines
 
 
-def _file_lines(steps: list[dict]) -> list[str]:
-    interactions = extract_file_interactions(steps)
+def _file_lines_from_interactions(interactions: list[dict]) -> list[str]:
     if not interactions:
         return ["(none)"]
     unique = {item.get("path") for item in interactions if item.get("path")}
@@ -224,6 +226,10 @@ def _file_lines(steps: list[dict]) -> list[str]:
         f"write_count: {writes}",
         f"search_count: {searches}",
     ]
+
+
+def _file_lines(steps: list[dict]) -> list[str]:
+    return _file_lines_from_interactions(extract_file_interactions(steps))
 
 
 def _tool_sequence_lines(sequences: list[dict]) -> list[str]:
@@ -270,10 +276,23 @@ def _bottleneck_lines(bottlenecks: list[dict]) -> list[str]:
         return ["(none)"]
     lines = []
     for item in bottlenecks:
-        lines.append(
-            f"- step {item.get('step_idx')}: {item.get('duration')}s — "
-            f"{_clip(str(item.get('explanation') or ''), 240)}"
-        )
+        title = item.get("title")
+        detail = item.get("detail") or item.get("explanation") or ""
+        if title:
+            lines.append(
+                f"- step {item.get('step_idx')}: {item.get('duration')}s — "
+                f"{_clip(str(title), 120)}"
+            )
+            if detail:
+                lines.append(f"  {_clip(str(detail), 200)}")
+            why = item.get("why")
+            if why:
+                lines.append(f"  why: {_clip(str(why), 160)}")
+        else:
+            lines.append(
+                f"- step {item.get('step_idx')}: {item.get('duration')}s — "
+                f"{_clip(str(detail), 240)}"
+            )
     return lines
 
 
@@ -379,32 +398,34 @@ def _timeline_lines(steps: list[dict], limit: int = 80) -> list[str]:
     return rows[:head] + [f"… {len(rows) - limit} steps omitted …"] + rows[-tail:]
 
 
-def build_analysis_brief(steps: list[dict], raw: dict | None = None) -> str:
-    """Pack dashboard statistics into a compact text brief for the LLM."""
-    raw = raw if isinstance(raw, dict) else {}
-    if not steps:
-        return ""
-    message_rows = build_message_metrics(steps)
-    metrics = compute_metrics(steps, raw, message_rows=message_rows)
-    _, wall_fmt = wall_clock_fmt(metrics)
-    analytics = compute_step_analytics(steps)
-    verdicts = compute_health_verdict(metrics, analytics)
-    agents = compute_agent_summary(steps, raw)
-    bottlenecks = compute_bottleneck_explanations(steps, analytics)
-    fail_pats = detect_failure_patterns(steps)
-    chains = detect_failure_chains(steps)
-    assistant_n = sum(1 for step in steps if step.get("role") == "assistant")
-    chain_metrics = compute_failure_chain_metrics(chains, assistant_n)
-    streaks = detect_fruitless_streaks(steps)
-    bash_flags = detect_tool_selection_antipatterns(steps)
-    tool_seqs = detect_tool_sequences(steps)
-
+def _compose_brief(
+    *,
+    raw: dict,
+    steps: list[dict],
+    metrics: dict,
+    wall_fmt: str,
+    verdicts: list[dict],
+    agents: list[dict],
+    bottlenecks: list[dict],
+    fail_pats: list[dict],
+    chains: list,
+    chain_metrics: dict,
+    streaks: list[dict],
+    bash_flags: list[dict],
+    tool_seqs: list[dict],
+    file_interactions: list[dict] | None = None,
+) -> str:
     sections = [
         ("SESSION", _session_header(raw, steps, metrics, wall_fmt)),
         ("HEALTH", _verdict_lines(verdicts)),
         ("PERFORMANCE", _metrics_lines(metrics, steps)),
         ("AGENTS", _agent_lines(agents)),
-        ("FILES", _file_lines(steps)),
+        (
+            "FILES",
+            _file_lines_from_interactions(file_interactions)
+            if file_interactions is not None
+            else _file_lines(steps),
+        ),
         ("TOOL_SEQUENCES", _tool_sequence_lines(tool_seqs)),
         ("BOTTLENECKS", _bottleneck_lines(bottlenecks)),
         ("FAILURES", _failure_lines(fail_pats, chains, chain_metrics)),
@@ -421,6 +442,65 @@ def build_analysis_brief(steps: list[dict], raw: dict | None = None) -> str:
     if len(brief) > _BRIEF_CHAR_LIMIT:
         brief = brief[: _BRIEF_CHAR_LIMIT - 20] + "\n…[truncated]\n"
     return brief
+
+
+def build_analysis_brief(steps: list[dict], raw: dict | None = None) -> str:
+    """Pack dashboard statistics into a compact text brief for the LLM."""
+    raw = raw if isinstance(raw, dict) else {}
+    if not steps:
+        return ""
+    message_rows = build_message_metrics(steps)
+    metrics = compute_metrics(steps, raw, message_rows=message_rows)
+    _, wall_fmt = wall_clock_fmt(metrics)
+    analytics = compute_step_analytics(steps)
+    verdicts = compute_health_verdict(metrics, analytics)
+    agents = compute_agent_summary(steps, raw)
+    bottlenecks = detect_performance_bottlenecks(steps, analytics)
+    fail_pats = detect_failure_patterns(steps)
+    chains = detect_failure_chains(steps)
+    assistant_n = sum(1 for step in steps if step.get("role") == "assistant")
+    chain_metrics = compute_failure_chain_metrics(chains, assistant_n)
+    streaks = detect_fruitless_streaks(steps)
+    bash_flags = detect_tool_selection_antipatterns(steps)
+    tool_seqs = detect_tool_sequences(steps)
+
+    return _compose_brief(
+        raw=raw,
+        steps=steps,
+        metrics=metrics,
+        wall_fmt=wall_fmt,
+        verdicts=verdicts,
+        agents=agents,
+        bottlenecks=bottlenecks,
+        fail_pats=fail_pats,
+        chains=chains,
+        chain_metrics=chain_metrics,
+        streaks=streaks,
+        bash_flags=bash_flags,
+        tool_seqs=tool_seqs,
+    )
+
+
+def build_analysis_brief_from_session(session: LoadedSession) -> str:
+    """Build the analysis brief from a ``LoadedSession`` (no re-detection)."""
+    if not session.steps:
+        return ""
+    return _compose_brief(
+        raw=session.raw if isinstance(session.raw, dict) else {},
+        steps=session.steps,
+        metrics=session.metrics,
+        wall_fmt=session.wall_clock,
+        verdicts=session.verdicts,
+        agents=session.agent_summaries,
+        bottlenecks=session.performance_bottlenecks,
+        fail_pats=session.failure_patterns,
+        chains=session.failure_chains,
+        chain_metrics=session.chain_metrics,
+        streaks=session.fruitless_streaks,
+        bash_flags=session.tool_selection,
+        tool_seqs=session.tool_sequences,
+        file_interactions=session.file_interactions,
+    )
 
 
 def _message_text(content: Any) -> str:
@@ -577,13 +657,20 @@ def analyze_loaded_trajectory(
     steps: list[dict],
     raw: dict | None = None,
     *,
+    session: LoadedSession | None = None,
     config: AnalysisLLMConfig | None = None,
     chat_fn: ChatFn | None = None,
 ) -> tuple[str, list[dict]]:
     """Pack dashboard stats and run the first analysis pass for a loaded run."""
+    if session is not None:
+        brief = build_analysis_brief_from_session(session)
+        steps = session.steps
+    else:
+        if not steps:
+            return "", []
+        brief = build_analysis_brief(steps, raw if isinstance(raw, dict) else {})
     if not steps:
         return "", []
-    brief = build_analysis_brief(steps, raw if isinstance(raw, dict) else {})
     history = answer_question(
         AUTO_ANALYSIS_QUESTION,
         [],

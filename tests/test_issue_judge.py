@@ -44,7 +44,7 @@ def _session(**kwargs):
         edit_thrash=[],
         repeated_searches=[],
         phase_regressions=[],
-        bottleneck_explanations=[],
+        performance_bottlenecks=[],
         file_interactions=[],
         format="claude_code",
     )

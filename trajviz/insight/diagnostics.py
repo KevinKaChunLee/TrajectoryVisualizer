@@ -643,46 +643,8 @@ def explain_hotspot(step: dict, decomposition: dict) -> str:
     return f"Step {idx}: {dur:.1f}s \u2014 {', '.join(parts)}{incomplete}"
 
 
-def compute_bottleneck_explanations(
-    steps: list[dict],
-    step_analytics: list[dict],
-    n: int = 5,
-) -> list[dict]:
-    """Compute duration decomposition and explanation for top-N hotspot steps.
-
-    Returns list of {step_idx, duration, decomposition, explanation} dicts.
-    This is a Hotspots-style ranking (vanity top-N). For Issues triage use
-    :func:`detect_performance_bottlenecks` instead.
-    """
-    # Find top-N assistant steps by duration
-    asst = [s for s in steps if s.get("role") == "assistant" and s.get("duration")]
-    asst.sort(key=lambda s: -(s.get("duration") or 0))
-    hotspots = asst[:n]
-
-    # Build analytics lookup
-    analytics_map = {a["index"]: a for a in step_analytics}
-
-    results: list[dict] = []
-    for step in hotspots:
-        idx = step["index"]
-        analytics_row = analytics_map.get(idx)
-        idle_gap = analytics_row.get("idle_before_s") if analytics_row else None
-
-        decomp = decompose_hotspot_duration(step, analytics_row, idle_gap)
-        explanation = explain_hotspot(step, decomp)
-
-        results.append({
-            "step_idx": idx,
-            "duration": step.get("duration", 0),
-            "decomposition": decomp,
-            "explanation": explanation,
-        })
-
-    return results
-
-
 # ---------------------------------------------------------------------------
-# 4b. Real performance bottlenecks (outlier + actionable cause)
+# 4b. Performance bottlenecks (outlier + actionable cause)
 # ---------------------------------------------------------------------------
 
 _BN_MIN_ABS_S = 8.0
@@ -761,9 +723,9 @@ def detect_performance_bottlenecks(
 ) -> list[dict]:
     """Detect real performance bottlenecks (outlier + clear cause).
 
-    Unlike :func:`compute_bottleneck_explanations` (top-N by duration), this
-    requires the step to exceed a session-relative duration floor **and** have
+    Requires the step to exceed a session-relative duration floor **and** have
     a dominant actionable cause: idle/queue, tool wait, or context/inference.
+    Prefer this over duration top-N rankings for Issues, KPI, and analysis.
 
     Returns
     -------
