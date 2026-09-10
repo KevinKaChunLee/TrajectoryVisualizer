@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from trajviz.insight.issue_judge import (
     judge_issue_fix,
     judge_overview_issues,
+    iter_judge_overview_issues,
     pack_issue_judge_context,
     parse_issue_judgment,
 )
@@ -187,6 +188,43 @@ class JudgeMockTests(unittest.TestCase):
         self.assertIn("CLAUDE.md", html)
         self.assertIn("空搜索超过 N 次后停止", html)
         self.assertIn("with LLM fix", html)
+
+    def test_iter_judge_yields_before_each_and_finished(self):
+        session = _session(steps=[{"index": 1, "role": "assistant", "tool_calls": []}])
+        issues = [
+            OverviewIssue(
+                kind="error",
+                title=f"Issue {i}",
+                detail="d",
+                why="w",
+                steps=(1,),
+                source_id=f"t:{i}",
+            )
+            for i in range(2)
+        ]
+        calls = {"n": 0}
+
+        def chat_fn(config, system, messages):
+            calls["n"] += 1
+            return (
+                '{"where":"CLAUDE.md","fix":"修复",'
+                '"also":"","confidence":"high"}'
+            )
+
+        snaps = list(iter_judge_overview_issues(
+            session, issues, config=_cfg(), chat_fn=chat_fn,
+        ))
+        self.assertEqual(len(snaps), 3)  # before #1, before #2, finished
+        self.assertFalse(snaps[0].finished)
+        self.assertEqual(snaps[0].current, 1)
+        self.assertEqual(snaps[0].current_title, "Issue 0")
+        self.assertIsNone(snaps[0].issues[0].judgment)
+        self.assertFalse(snaps[1].finished)
+        self.assertEqual(snaps[1].current, 2)
+        self.assertIsNotNone(snaps[1].issues[0].judgment)  # first done
+        self.assertTrue(snaps[2].finished)
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(all(i.judgment for i in snaps[2].issues))
 
     def test_render_without_judgment_has_no_change_fix(self):
         html = render_overview_issues_html([

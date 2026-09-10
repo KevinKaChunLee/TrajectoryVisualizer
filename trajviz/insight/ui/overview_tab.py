@@ -32,7 +32,7 @@ from ..presenters.overview import (
     build_overview_outputs,
     empty_plotly_fig,
 )
-from ..issue_judge import JUDGE_ISSUE_CAP, judge_overview_issues
+from ..issue_judge import JUDGE_ISSUE_CAP, iter_judge_overview_issues
 from ..llm_config import resolve_analysis_config
 from ..session import LoadedSession, build_loaded_session
 from .shared import SharedState
@@ -438,7 +438,7 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
     )
 
     def on_suggest_fixes(steps, raw):
-        """On-demand LLM judge for Overview Issues."""
+        """On-demand LLM judge for Overview Issues — yields per-issue progress."""
         from ..presenters.issues import render_overview_issues_html
 
         idle = (
@@ -446,7 +446,8 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
             "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
         )
         if not steps:
-            return render_overview_issues_html([]), idle
+            yield render_overview_issues_html([]), idle
+            return
 
         cfg = resolve_analysis_config()
         raw_dict = raw if isinstance(raw, dict) else {}
@@ -458,44 +459,70 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
                 f"<span style='font-size:12px;color:var(--ov-warn);'>"
                 f"Configure {html.escape(missing)} in .env</span>"
             )
-            return build_overview_issues_html(session), status
+            yield build_overview_issues_html(session), status
+            return
 
         ranked = rank_issues(collect_overview_issues(session))
         if not ranked:
-            return build_overview_issues_html(session, issues=ranked), (
+            yield build_overview_issues_html(session, issues=ranked), (
                 "<span style='font-size:12px;color:var(--ov-muted);'>No issues to judge</span>"
             )
+            return
 
-        judged, errors = judge_overview_issues(
+        judged = ranked
+        errors: list[str] = []
+        for progress in iter_judge_overview_issues(
             session, ranked, config=cfg, limit=JUDGE_ISSUE_CAP,
-        )
-        ok = sum(1 for i in judged if i.judgment is not None)
-        if errors and ok == 0:
-            banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
-            status = (
-                f"<span style='font-size:12px;color:var(--ov-warn);'>"
-                f"{html.escape(banner)}</span>"
-            )
-            return build_overview_issues_html(session, issues=ranked, banner=banner), status
+        ):
+            judged = progress.issues
+            errors = progress.errors
+            if not progress.finished:
+                short = progress.current_title
+                if len(short) > 48:
+                    short = short[:45] + "…"
+                status = (
+                    f"<span style='font-size:12px;color:var(--ov-muted);'>"
+                    f"Judging {progress.current}/{progress.total} — "
+                    f"{html.escape(short)}</span>"
+                )
+                yield build_overview_issues_html(session, issues=judged), status
+                continue
 
-        status_bits = [f"Judged {ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} issue(s)"]
-        if errors:
-            status_bits.append(f"{len(errors)} failed")
-        if len(ranked) > JUDGE_ISSUE_CAP:
-            status_bits.append(f"capped at {JUDGE_ISSUE_CAP}")
-        status = (
-            f"<span style='font-size:12px;color:var(--ov-muted);'>"
-            f"{html.escape(' · '.join(status_bits))}</span>"
-        )
-        banner = ""
-        if errors:
-            banner = f"{len(errors)} issue(s) could not be judged (see status)."
-        return build_overview_issues_html(session, issues=judged, banner=banner), status
+            ok = sum(1 for i in judged if i.judgment is not None)
+            if errors and ok == 0:
+                banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
+                status = (
+                    f"<span style='font-size:12px;color:var(--ov-warn);'>"
+                    f"{html.escape(banner)}</span>"
+                )
+                yield build_overview_issues_html(
+                    session, issues=ranked, banner=banner,
+                ), status
+                return
+
+            status_bits = [
+                f"Judged {ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} issue(s)"
+            ]
+            if errors:
+                status_bits.append(f"{len(errors)} failed")
+            if len(ranked) > JUDGE_ISSUE_CAP:
+                status_bits.append(f"capped at {JUDGE_ISSUE_CAP}")
+            status = (
+                f"<span style='font-size:12px;color:var(--ov-muted);'>"
+                f"{html.escape(' · '.join(status_bits))}</span>"
+            )
+            banner = ""
+            if errors:
+                banner = f"{len(errors)} issue(s) could not be judged (see status)."
+            yield build_overview_issues_html(
+                session, issues=judged, banner=banner,
+            ), status
 
     refs.issues_suggest_btn.click(
         fn=on_suggest_fixes,
         inputs=[shared.state_steps, shared.state_raw],
         outputs=[refs.issues_html, refs.issues_judge_status],
+        show_progress="minimal",
     )
 
     def _rebuild_utilization(agent_key, window_limit, snapshot_key, steps, raw, dark):

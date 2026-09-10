@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 
 from .assistant import ChatFn, complete_chat, _first_user_task
 from .llm_config import AnalysisLLMConfig, resolve_analysis_config
@@ -214,6 +215,64 @@ def judge_issue_fix(
     return parse_issue_judgment(raw)
 
 
+@dataclass(frozen=True)
+class JudgeProgress:
+    """One progressive snapshot while judging Overview Issues."""
+
+    issues: list[OverviewIssue]
+    errors: list[str]
+    # 1-based index of the issue currently being judged; 0 when finished.
+    current: int
+    total: int
+    current_title: str
+    finished: bool
+
+
+def iter_judge_overview_issues(
+    session: LoadedSession,
+    issues: list[OverviewIssue],
+    *,
+    config: AnalysisLLMConfig | None = None,
+    chat_fn: ChatFn | None = None,
+    limit: int = JUDGE_ISSUE_CAP,
+):
+    """Yield :class:`JudgeProgress` before each call and once at the end.
+
+    Before judging issue *i*, yields ``current=i+1`` with that issue's title.
+    After all attempts, yields ``finished=True`` with ``current=0``.
+    """
+    cfg = config or resolve_analysis_config()
+    working = list(issues)
+    errors: list[str] = []
+    total = min(len(working), max(0, limit))
+
+    for i in range(total):
+        yield JudgeProgress(
+            issues=list(working),
+            errors=list(errors),
+            current=i + 1,
+            total=total,
+            current_title=working[i].title,
+            finished=False,
+        )
+        try:
+            judgment = judge_issue_fix(
+                session, working[i], config=cfg, chat_fn=chat_fn,
+            )
+            working[i] = working[i].with_judgment(judgment)
+        except Exception as exc:  # noqa: BLE001 — keep other issues judging
+            errors.append(f"{working[i].title}: {exc}")
+
+    yield JudgeProgress(
+        issues=list(working),
+        errors=list(errors),
+        current=0,
+        total=total,
+        current_title="",
+        finished=True,
+    )
+
+
 def judge_overview_issues(
     session: LoadedSession,
     issues: list[OverviewIssue],
@@ -223,19 +282,11 @@ def judge_overview_issues(
     limit: int = JUDGE_ISSUE_CAP,
 ) -> tuple[list[OverviewIssue], list[str]]:
     """Judge up to *limit* issues; return updated issues and error notes."""
-    cfg = config or resolve_analysis_config()
-    errors: list[str] = []
     out: list[OverviewIssue] = []
-    for i, issue in enumerate(issues):
-        if i >= limit:
-            out.append(issue)
-            continue
-        try:
-            judgment = judge_issue_fix(
-                session, issue, config=cfg, chat_fn=chat_fn,
-            )
-            out.append(issue.with_judgment(judgment))
-        except Exception as exc:  # noqa: BLE001 — keep other issues judging
-            errors.append(f"{issue.title}: {exc}")
-            out.append(issue)
+    errors: list[str] = []
+    for progress in iter_judge_overview_issues(
+        session, issues, config=config, chat_fn=chat_fn, limit=limit,
+    ):
+        out = progress.issues
+        errors = progress.errors
     return out, errors
