@@ -1052,12 +1052,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 .overview-issues-progress-label {
     flex-shrink: 0;
 }
-/* Size only — rotation is SMIL on the SVG path (see issues.py), so OS
-   prefers-reduced-motion / Gradio CSS scoping cannot freeze the indicator. */
-.overview-issues-progress-dot {
-    flex-shrink: 0;
-    display: block;
-}
 .judge-badge {
     display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px;
     border-radius: 4px; color: white; text-transform: uppercase;

@@ -425,18 +425,16 @@ def render_overview_issues_html(
 
     progress_html = ""
     if progress:
-        # SMIL SVG spinner — CSS @keyframes are often disabled by OS/browser
-        # prefers-reduced-motion (Windows "Animation effects"), and Gradio
-        # HTML swaps can also leave a CSS ring looking frozen. SMIL still
-        # rotates for this essential in-progress cue.
+        # SMIL (not CSS) so prefers-reduced-motion / Gradio HTML swaps don't freeze it.
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
             "<span class='overview-issues-progress-label'>Thinking…</span>"
-            "<svg class='overview-issues-progress-dot' width='14' height='14' "
-            "viewBox='0 0 24 24' aria-hidden='true'>"
+            "<svg class='overview-issues-progress-spinner' width='14' height='14' "
+            "viewBox='0 0 24 24' aria-hidden='true' "
+            "style='flex-shrink:0;display:block'>"
             "<circle cx='12' cy='12' r='10' fill='none' "
-            "stroke='rgba(29,78,216,0.25)' stroke-width='3'/>"
-            "<path d='M12 2a10 10 0 0 1 10 10' fill='none' stroke='#1d4ed8' "
+            "stroke='currentColor' stroke-opacity='0.25' stroke-width='3'/>"
+            "<path d='M12 2a10 10 0 0 1 10 10' fill='none' stroke='currentColor' "
             "stroke-width='3' stroke-linecap='round'>"
             "<animateTransform attributeName='transform' type='rotate' "
             "from='0 12 12' to='360 12 12' dur='0.7s' repeatCount='indefinite'/>"
