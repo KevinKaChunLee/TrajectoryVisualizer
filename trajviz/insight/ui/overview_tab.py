@@ -38,11 +38,6 @@ from ..session import LoadedSession, build_loaded_session
 from .shared import SharedState
 from .upload import UploadRefs
 
-_ISSUES_JUDGE_IDLE = (
-    "<span style='font-size:12px;color:var(--ov-muted);'>"
-    "Auto-suggests fixes when ANALYZE_/LABEL_ LLM is configured</span>"
-)
-
 
 @dataclass
 class OverviewRefs:
@@ -57,8 +52,6 @@ class OverviewRefs:
     deep_dive_section: gr.Column
     labels_section: gr.Column
     issues_html: gr.HTML
-    issues_suggest_btn: gr.Button
-    issues_judge_status: gr.HTML
     metrics_md: gr.Markdown
     token_chart: gr.Plot
     duration_chart: gr.Plot
@@ -123,16 +116,6 @@ def layout() -> OverviewRefs:
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_summary'])}</div>")
-                    with gr.Row():
-                        issues_suggest_btn = gr.Button(
-                            "Re-run fixes",
-                            size="sm",
-                            variant="secondary",
-                        )
-                        issues_judge_status = gr.HTML(
-                            "<span style='font-size:12px;color:var(--ov-muted);'>"
-                            "Auto-suggests fixes when ANALYZE_/LABEL_ LLM is configured</span>"
-                        )
                     issues_html = gr.HTML("")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
@@ -249,8 +232,6 @@ def layout() -> OverviewRefs:
         deep_dive_section=deep_dive_section,
         labels_section=labels_section,
         issues_html=issues_html,
-        issues_suggest_btn=issues_suggest_btn,
-        issues_judge_status=issues_judge_status,
         metrics_md=metrics_md,
         token_chart=token_chart,
         duration_chart=duration_chart,
@@ -291,7 +272,6 @@ def load_slots(refs: OverviewRefs) -> dict:
         "overview_kpi_html": refs.overview_kpi_html,
         "session_detail_html": refs.session_detail_html,
         "issues_html": refs.issues_html,
-        "issues_judge_status": refs.issues_judge_status,
         "metrics_md": refs.metrics_md,
         "token_chart": refs.token_chart,
         "duration_chart": refs.duration_chart,
@@ -326,7 +306,6 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "overview_kpi_html": "",
             "session_detail_html": "",
             "issues_html": "",
-            "issues_judge_status": _ISSUES_JUDGE_IDLE,
             "metrics_md": "",
             "token_chart": fig,
             "duration_chart": fig,
@@ -366,7 +345,6 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "overview_kpi_html": ov["kpi_html"],
         "session_detail_html": ov["session_detail"],
         "issues_html": build_overview_issues_html(session),
-        "issues_judge_status": _ISSUES_JUDGE_IDLE,
         "metrics_md": ov["metrics_text"],
         "token_chart": ch["tok_fig"],
         "duration_chart": ch["dur_fig"],
@@ -442,11 +420,11 @@ def bind(
     )
 
     def on_suggest_fixes(steps, raw):
-        """LLM Issues judge — yields per-issue progress (load auto-run + button re-run)."""
+        """Auto-run LLM Issues judge after load; progress shows inside the panel."""
         from ..presenters.issues import render_overview_issues_html
 
         if not steps:
-            yield render_overview_issues_html([]), _ISSUES_JUDGE_IDLE
+            yield render_overview_issues_html([])
             return
 
         cfg = resolve_analysis_config()
@@ -455,18 +433,13 @@ def bind(
 
         if not cfg.ready:
             missing = ", ".join(cfg.missing)
-            status = (
-                f"<span style='font-size:12px;color:var(--ov-warn);'>"
-                f"Configure {html.escape(missing)} in .env to auto-suggest fixes</span>"
-            )
-            yield build_overview_issues_html(session), status
+            banner = f"Configure {missing} in .env to auto-suggest fixes"
+            yield build_overview_issues_html(session, banner=banner)
             return
 
         ranked = rank_issues(collect_overview_issues(session))
         if not ranked:
-            yield build_overview_issues_html(session, issues=ranked), (
-                "<span style='font-size:12px;color:var(--ov-muted);'>No issues to judge</span>"
-            )
+            yield build_overview_issues_html(session, issues=ranked)
             return
 
         judged = ranked
@@ -483,53 +456,38 @@ def bind(
                 progress_line = (
                     f"Suggesting fixes {progress.current}/{progress.total} — {short}"
                 )
-                status = (
-                    f"<span style='font-size:12px;font-weight:600;color:var(--ov-accent);'>"
-                    f"{html.escape(progress_line)}</span>"
-                )
                 yield build_overview_issues_html(
                     session, issues=judged, progress=progress_line,
-                ), status
+                )
                 continue
 
             ok = sum(1 for i in judged if i.judgment is not None)
             if errors and ok == 0:
                 banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
-                status = (
-                    f"<span style='font-size:12px;color:var(--ov-warn);'>"
-                    f"{html.escape(banner)}</span>"
-                )
                 yield build_overview_issues_html(
                     session, issues=ranked, banner=banner,
-                ), status
+                )
                 return
 
-            status_bits = [
-                f"Judged {ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} issue(s)"
-            ]
-            if errors:
-                status_bits.append(f"{len(errors)} failed")
-            if len(ranked) > JUDGE_ISSUE_CAP:
-                status_bits.append(f"capped at {JUDGE_ISSUE_CAP}")
-            status = (
-                f"<span style='font-size:12px;color:var(--ov-muted);'>"
-                f"{html.escape(' · '.join(status_bits))}</span>"
-            )
             banner = ""
             if errors:
-                banner = f"{len(errors)} issue(s) could not be judged (see status)."
+                banner = (
+                    f"{len(errors)} issue(s) could not be judged"
+                    f" ({ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} ok)."
+                )
+            elif len(ranked) > JUDGE_ISSUE_CAP:
+                banner = f"Judged {ok}/{JUDGE_ISSUE_CAP} (capped)."
             yield build_overview_issues_html(
                 session, issues=judged, banner=banner,
-            ), status
+            )
 
     judge_event = dict(
         fn=on_suggest_fixes,
         inputs=[shared.state_steps, shared.state_raw],
-        outputs=[refs.issues_html, refs.issues_judge_status],
+        outputs=[refs.issues_html],
         show_progress="minimal",
         concurrency_id="issues_judge",
     )
-    refs.issues_suggest_btn.click(**judge_event)
     for ev in load_events:
         ev.then(**judge_event)
 
