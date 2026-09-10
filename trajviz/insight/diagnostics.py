@@ -13,10 +13,8 @@ import os
 import re
 import statistics
 
-# Tool-call statuses that open/continue a failure chain. Shared by
-# _step_has_error, classify_chain_steps, and cluster_errors so the chain
-# detector and the chain classifier can never drift apart again.
-_ERROR_STATUSES = ("error", "failed", "failure", "cancelled", "timeout")
+from .shell_cmd import tool_chart_name
+from .tool_failure import tool_call_error_kind, tool_call_failed
 
 
 # ---------------------------------------------------------------------------
@@ -274,17 +272,10 @@ def compute_file_targeting_metrics(
 # ---------------------------------------------------------------------------
 
 def _step_has_error(step: dict) -> bool:
-    """Check if a step has at least one error tool call or non-zero exit code."""
+    """Check if a step has at least one failed tool call."""
     if step.get("error_count", 0) > 0:
         return True
-    for tc in step.get("tool_calls", []):
-        status = tc.get("status", "")
-        if status in _ERROR_STATUSES:
-            return True
-        meta = tc.get("metadata", {})
-        if isinstance(meta, dict) and meta.get("exit") not in (None, 0):
-            return True
-    return False
+    return any(tool_call_failed(tc) for tc in step.get("tool_calls", []))
 
 
 def _error_tool_target(tc: dict) -> tuple[str, str]:
@@ -346,12 +337,10 @@ def classify_chain_steps(chain: dict, steps: list[dict]) -> list[dict]:
     first_step = step_map.get(chain_steps[0], {})
     first_error_sigs = set()
     for tc in first_step.get("tool_calls", []):
-        # Same status set as _step_has_error: a chain opened by a cancelled or
+        # Same predicate as _step_has_error: a chain opened by a cancelled or
         # timed-out call must still yield first-error signatures, or identical
         # retries would all be classified "cascade".
-        if tc.get("status") in _ERROR_STATUSES or (
-            isinstance(tc.get("metadata"), dict) and tc["metadata"].get("exit") not in (None, 0)
-        ):
+        if tool_call_failed(tc):
             first_error_sigs.add(_error_tool_target(tc))
 
     result = [{"step_idx": chain_steps[0], "classification": "first_error"}]
@@ -455,26 +444,18 @@ def cluster_errors(steps: list[dict]) -> list[dict]:
     """Group error tool calls by (display tool, error_pattern).
 
     Bash/shell calls are labeled with the peeled base command (via
-    :func:`trajviz.insight.patterns.tool_chart_name`) so ``npm test`` failures
+    :func:`trajviz.insight.shell_cmd.tool_chart_name`) so ``npm test`` failures
     do not collapse into a generic ``Bash: exit code`` cluster.
 
     Returns sorted list of cluster dicts:
     ``{tool, error_class, pattern, count, steps, first_step, last_step}``
     where ``error_class`` is ``"system"`` (scaffold) or ``"tool"`` (agentic).
     """
-    # Local import: patterns.detect_failure_patterns lazy-imports cluster_errors.
-    from .patterns import tool_chart_name
-    from .step_errors import tool_call_error_kind
-
     clusters: dict[tuple[str, str], dict] = {}
 
     for step in steps:
         for tc in step.get("tool_calls", []):
-            is_error = (
-                tc.get("status") in _ERROR_STATUSES
-                or (isinstance(tc.get("metadata"), dict) and tc["metadata"].get("exit") not in (None, 0))
-            )
-            if not is_error:
+            if not tool_call_failed(tc):
                 continue
 
             display = tool_chart_name(tc)

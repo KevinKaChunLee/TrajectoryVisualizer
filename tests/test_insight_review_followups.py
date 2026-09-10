@@ -3,6 +3,7 @@
 import unittest
 
 from trajviz.insight import patterns
+from trajviz.insight.shell_cmd import primary_shell_command
 from trajviz.insight.metrics import compute_health_verdict, compute_metrics
 
 
@@ -196,7 +197,7 @@ class WrappedShellSearchTests(unittest.TestCase):
         }
         for command, expected in cases.items():
             with self.subTest(command=command):
-                self.assertEqual(patterns.primary_shell_command(command), expected)
+                self.assertEqual(primary_shell_command(command), expected)
 
     def test_primary_shell_command_names_python_scripts(self):
         cases = {
@@ -220,13 +221,13 @@ class WrappedShellSearchTests(unittest.TestCase):
         }
         for command, expected in cases.items():
             with self.subTest(command=command):
-                self.assertEqual(patterns.primary_shell_command(command), expected)
+                self.assertEqual(primary_shell_command(command), expected)
 
     def test_primary_shell_command_empty_or_malformed(self):
-        self.assertIsNone(patterns.primary_shell_command(""))
-        self.assertIsNone(patterns.primary_shell_command("   "))
+        self.assertIsNone(primary_shell_command(""))
+        self.assertIsNone(primary_shell_command("   "))
         # Unclosed quote: fall back to first token rather than raising.
-        self.assertEqual(patterns.primary_shell_command("rg 'unterminated"), "rg")
+        self.assertEqual(primary_shell_command("rg 'unterminated"), "rg")
 
     def test_lowercase_bash_tool_name_is_recognized(self):
         self.assertTrue(patterns._is_search_call(

@@ -24,7 +24,7 @@ from ..metrics import (
     step_duration_excluding_spawn,
     tool_call_stats_duration_ms,
 )
-from ..patterns import tool_chart_name
+from ..shell_cmd import tool_chart_name
 from ..step_errors import step_error_kind
 
 

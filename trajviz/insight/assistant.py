@@ -32,6 +32,7 @@ from .patterns import (
     detect_tool_selection_antipatterns,
     detect_tool_sequences,
 )
+from .tool_failure import tool_call_failed
 
 _BRIEF_CHAR_LIMIT = 28_000
 _OUTPUT_CLIP = 180
@@ -334,12 +335,11 @@ def _error_step_lines(steps: list[dict], limit: int = 16) -> list[str]:
             if not isinstance(tool_call, dict):
                 continue
             status = str(tool_call.get("status") or "")
-            err_type = tool_call.get("error_type")
-            error = tool_call.get("error")
-            failed = status in {"error", "failed", "failure"} or err_type or error
-            if not failed:
+            if not tool_call_failed(tool_call):
                 continue
             preview = _tool_arg_preview(tool_call)
+            err_type = tool_call.get("error_type")
+            error = tool_call.get("error")
             output = _clip(str(tool_call.get("output") or error or ""), _OUTPUT_CLIP)
             lines.append(
                 f"- step {step.get('index')} {tool_call.get('tool_name', '?')} "

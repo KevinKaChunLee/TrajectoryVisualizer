@@ -5,11 +5,7 @@ import statistics
 
 from trajviz.tool_vocab import SPAWN_TOOL_NAMES
 
-# Statuses that mark a tool call as failed. Single definition shared by
-# tool_success_rate (_compute_tool_stats) and edit_precision
-# (compute_diagnostic_metrics) so the two can never disagree.
-_FAILURE_STATUSES = {"error", "failed", "failure", "cancelled", "canceled",
-                     "timeout", "timed_out"}
+from .tool_failure import tool_call_failed
 
 
 def effective_agent(s: dict) -> str:
@@ -407,7 +403,7 @@ def _compute_command_metrics(steps: list[dict]) -> dict:
             if "exit" in meta:
                 cmd_total += 1
                 # exit=None (cancelled/unfinished, no exit code recorded) is not
-                # a failure — matches _step_has_error/cluster_errors/_tool_failed.
+                # a failure — matches tool_call_failed / cluster_errors.
                 if meta["exit"] not in (None, 0):
                     cmd_failures += 1
     if cmd_total == 0:
@@ -599,14 +595,10 @@ def _compute_tool_stats(steps, total_tokens_total, message_rows, wait_denom: flo
             tool_breakdown[name] = tool_breakdown.get(name, 0) + 1
             status = tc.get("status", "unknown")
             tool_status_breakdown[status] = tool_status_breakdown.get(status, 0) + 1
-            if status in _FAILURE_STATUSES:
+            if tool_call_failed(tc):
                 tool_fail += 1
-            elif status in {"?", "unknown", ""}:
-                # Unknown status: treat as success unless it has a classified error_type
-                if tc.get("error_type"):
-                    tool_fail += 1
-                else:
-                    tool_success += 1
+            elif str(status).lower() in {"?", "unknown", ""}:
+                tool_success += 1
             else:
                 tool_success += 1
             v = tool_call_stats_duration_ms(tc)
@@ -800,7 +792,9 @@ def compute_diagnostic_metrics(
     streaks = detect_fruitless_streaks(steps)
     autonomy = compute_autonomy_ratio(steps)
     tool_sel = detect_tool_selection_antipatterns(steps)
-    error_count = sum(1 for s in steps for tc in s.get("tool_calls", []) if tc.get("error_type"))
+    error_count = sum(
+        1 for s in steps for tc in s.get("tool_calls", []) if tool_call_failed(tc)
+    )
 
     # Edit precision: successful edits / total edit attempts
     from trajviz.tool_vocab import WRITE_TOOL_NAMES as edit_tools
@@ -810,9 +804,8 @@ def compute_diagnostic_metrics(
         for tc in s.get("tool_calls", []):
             if tc.get("tool_name") in edit_tools:
                 edit_total += 1
-                # Same failure definition as tool_success_rate: cancelled and
-                # timed-out edits are failures, not successes.
-                if tc.get("status") not in _FAILURE_STATUSES:
+                # Same failure definition as tool_success_rate.
+                if not tool_call_failed(tc):
                     edit_success += 1
 
     # Search-to-action ratio: read/search calls per edit/write call

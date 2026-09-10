@@ -6,17 +6,18 @@ import html
 
 from ..rendering import _step_link_chip, build_antipattern_summary_html
 from ..session import LoadedSession
+from ..tool_failure import tool_call_failed
 
 
 def count_tool_errors(steps: list[dict]) -> tuple[int, list[int]]:
-    """Return ``(error_call_count, step_indices)`` for tools with ``error_type``."""
+    """Return ``(failed_call_count, step_indices)`` using :func:`tool_call_failed`."""
     error_steps: list[int] = []
     error_count = 0
     for step in steps:
-        errs = [tc for tc in (step.get("tool_calls") or []) if tc.get("error_type")]
-        if not errs:
+        failed = [tc for tc in (step.get("tool_calls") or []) if tool_call_failed(tc)]
+        if not failed:
             continue
-        error_count += len(errs)
+        error_count += len(failed)
         error_steps.append(int(step.get("index", 0)))
     return error_count, error_steps
 
