@@ -24,6 +24,14 @@ def tool_call_failed(tc: dict) -> bool:
     return bool(tc.get("error") or tc.get("error_type"))
 
 
+def tool_call_error_kind(tc: dict) -> StepErrorKind:
+    """Classify one failed tool call as scaffold (system) or agentic (tool)."""
+    name = tc.get("tool_name")
+    if isinstance(name, str) and name in SYSTEM_TOOL_NAMES:
+        return "system"
+    return "tool"
+
+
 def step_error_kind(step: dict) -> StepErrorKind | None:
     """Classify a step as system (scaffold) or tool (agentic) failure.
 

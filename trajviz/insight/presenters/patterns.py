@@ -8,32 +8,28 @@ from ..rendering import _step_link_chip, build_antipattern_summary_html
 from ..session import LoadedSession
 
 
-def build_antipattern_html(session: LoadedSession) -> str:
-    """Anti-pattern summary HTML for Overview and Patterns."""
+def count_tool_errors(steps: list[dict]) -> tuple[int, list[int]]:
+    """Return ``(error_call_count, step_indices)`` for tools with ``error_type``."""
     error_steps: list[int] = []
     error_count = 0
-    for s in session.steps:
-        errs = [tc for tc in (s.get("tool_calls") or []) if tc.get("error_type")]
+    for step in steps:
+        errs = [tc for tc in (step.get("tool_calls") or []) if tc.get("error_type")]
         if not errs:
             continue
         error_count += len(errs)
-        error_steps.append(int(s.get("index", 0)))
+        error_steps.append(int(step.get("index", 0)))
+    return error_count, error_steps
+
+
+def build_antipattern_html(session: LoadedSession) -> str:
+    """Anti-pattern summary HTML for Overview and Patterns."""
+    error_count, error_steps = count_tool_errors(session.steps)
     return build_antipattern_summary_html(
         session.fruitless_streaks,
         session.tool_selection,
         session.plan_metrics,
         error_count=error_count,
         error_steps=error_steps,
-    )
-
-
-def build_failure_patterns_html(session: LoadedSession) -> str:
-    """Failure-pattern panel with heading for Overview Performance."""
-    return (
-        "<div class='failure-patterns-summary'>"
-        "<div style='font-size:13px;font-weight:600;margin:4px 0 8px;'>Failure patterns</div>"
-        + render_failure_patterns_html(session.failure_patterns)
-        + "</div>"
     )
 
 

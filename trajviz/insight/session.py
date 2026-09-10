@@ -18,6 +18,7 @@ from .diagnostics import (
     compute_bottleneck_explanations,
     compute_failure_chain_metrics,
     detect_failure_chains,
+    detect_performance_bottlenecks,
     extract_file_interactions,
     identify_target_files,
     link_chains_to_agents,
@@ -33,9 +34,13 @@ from .metrics import (
 )
 from .parser import parse_steps
 from .patterns import (
+    build_structural_phase_segments,
     compute_plan_metrics,
+    detect_edit_thrash,
     detect_failure_patterns,
     detect_fruitless_streaks,
+    detect_phase_anomalies,
+    detect_repeated_searches,
     detect_tool_selection_antipatterns,
     detect_tool_sequences,
     extract_plan_history,
@@ -84,6 +89,7 @@ class LoadedSession:
     chain_metrics: dict
     clusters: list
     bottleneck_explanations: list
+    performance_bottlenecks: list
     pressure_series: dict
     pressure_choices: list
     show_root_cause: bool
@@ -91,6 +97,9 @@ class LoadedSession:
     plan_metrics: dict
     fruitless_streaks: list
     tool_selection: list
+    edit_thrash: list
+    repeated_searches: list
+    phase_regressions: list
     truncated: bool = False
 
 
@@ -239,6 +248,11 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
     pressure_choices = pressure_agent_choices(steps)
     plan_history = extract_plan_history(steps)
     plan_metrics = compute_plan_metrics(plan_history)
+    structural_phases = build_structural_phase_segments(steps)
+    phase_regressions = [
+        a for a in detect_phase_anomalies(steps, structural_phases)
+        if a.get("category") == "unintentional_drift"
+    ]
 
     return LoadedSession(
         path=path,
@@ -262,6 +276,7 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         chain_metrics=chain_metrics,
         clusters=clusters,
         bottleneck_explanations=bottleneck_explanations,
+        performance_bottlenecks=detect_performance_bottlenecks(steps, step_analytics),
         pressure_series=pressure_series,
         pressure_choices=pressure_choices,
         show_root_cause=detected not in _NOISY_ROOT_CAUSE_FORMATS,
@@ -269,5 +284,8 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         plan_metrics=plan_metrics,
         fruitless_streaks=detect_fruitless_streaks(steps),
         tool_selection=detect_tool_selection_antipatterns(steps),
+        edit_thrash=detect_edit_thrash(steps),
+        repeated_searches=detect_repeated_searches(steps),
+        phase_regressions=phase_regressions,
         truncated=truncated,
     )

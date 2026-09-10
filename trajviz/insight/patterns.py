@@ -8,7 +8,12 @@ from bisect import bisect_right
 from collections import Counter
 
 from trajviz.insight.parser import spawned_child_session_id
-from trajviz.tool_vocab import BASH_TOOL_NAMES, WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES
+from trajviz.insight.step_errors import tool_call_failed
+from trajviz.tool_vocab import (
+    BASH_TOOL_NAMES,
+    WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES,
+    write_target_path,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +319,7 @@ def detect_failure_patterns(steps: list[dict]) -> list[dict]:
             "example_error": cluster["pattern"],
             "recovery_path": recovery_path,
             "steps": list(cluster.get("steps", [])),
+            "error_class": cluster.get("error_class", "tool"),
         })
 
     return results
@@ -1281,6 +1287,164 @@ def detect_tool_selection_antipatterns(steps: list[dict]) -> list[dict]:
                     })
                     break
     return flagged
+
+
+# ---------------------------------------------------------------------------
+# 6b. Failed same-path edit retries + repeated identical search
+# ---------------------------------------------------------------------------
+
+_EDIT_THRASH_WINDOW = 15
+_EDIT_THRASH_MIN = 3
+_REPEATED_SEARCH_MIN = 3
+
+
+def detect_edit_thrash(steps: list[dict]) -> list[dict]:
+    """Detect repeated Write/Edit on one path that includes failed attempts.
+
+    Successful iterate/fix loops on the same file are normal and are NOT
+    flagged. A cluster qualifies only when ≥3 write attempts hit the same path
+    within a short window **and** at least one of those attempts failed.
+
+    Returns
+    -------
+    list[dict]
+        ``{"path", "count", "fail_count", "steps", "start_step", "end_step"}``
+    """
+    # path -> list of (step_idx, failed)
+    by_path: dict[str, list[tuple[int, bool]]] = {}
+    for s in steps[:_MAX_STEPS]:
+        idx = int(s.get("index", 0))
+        for tc in s.get("tool_calls") or []:
+            name = tc.get("tool_name") or ""
+            if name not in _WRITE_TOOL_NAMES:
+                continue
+            inp = tc.get("input", {})
+            path = write_target_path(inp) if isinstance(inp, dict) else ""
+            if not path:
+                continue
+            path = path.replace("\\", "/")
+            by_path.setdefault(path, []).append((idx, tool_call_failed(tc)))
+
+    thrash: list[dict] = []
+    for path, events in by_path.items():
+        if len(events) < _EDIT_THRASH_MIN:
+            continue
+        best: list[tuple[int, bool]] | None = None
+        best_fails = 0
+        for i in range(len(events)):
+            window = [events[i]]
+            for j in range(i + 1, len(events)):
+                if events[j][0] - events[i][0] > _EDIT_THRASH_WINDOW:
+                    break
+                window.append(events[j])
+            if len(window) < _EDIT_THRASH_MIN:
+                continue
+            fail_count = sum(1 for _, failed in window if failed)
+            if fail_count < 1:
+                continue
+            if best is None or len(window) > len(best):
+                best = window
+                best_fails = fail_count
+        if best is None:
+            continue
+        step_list = [idx for idx, _ in best]
+        thrash.append({
+            "path": path,
+            "count": len(best),
+            "fail_count": best_fails,
+            "steps": step_list,
+            "start_step": step_list[0],
+            "end_step": step_list[-1],
+        })
+
+    thrash.sort(key=lambda t: (-t["fail_count"], -t["count"], t["start_step"], t["path"]))
+    return thrash
+
+
+def _search_signature(tc: dict) -> str | None:
+    """Normalize a search tool call into a comparable signature, or None."""
+    if not _is_search_call(tc):
+        return None
+    name = tc.get("tool_name") or ""
+    inp = tc.get("input", {}) if isinstance(tc.get("input"), dict) else {}
+    if name in ("Grep", "grep"):
+        pattern = str(inp.get("pattern") or "").strip()
+        path = str(inp.get("path") or "").strip()
+        if not pattern:
+            return None
+        return f"grep:{pattern}|{path}"
+    if name in ("Glob", "glob"):
+        pattern = str(inp.get("pattern") or "").strip()
+        path = str(inp.get("path") or "").strip()
+        if not pattern:
+            return None
+        return f"glob:{pattern}|{path}"
+    if name in BASH_TOOL_NAMES:
+        cmd = str(inp.get("command") or "")
+        normalized = " ".join(cmd.split())
+        if not normalized:
+            return None
+        return f"bash:{normalized}"
+    # Other search tools — use name + primary arg
+    for key in ("pattern", "query", "path"):
+        if inp.get(key):
+            return f"{name}:{inp[key]}"
+    return f"{name}:"
+
+
+def detect_repeated_searches(steps: list[dict]) -> list[dict]:
+    """Detect the same search signature used ≥3 times with empty results.
+
+    Complements :func:`detect_fruitless_streaks` (consecutive-only) by catching
+    non-consecutive repeats of an identical query/pattern.
+
+    Returns
+    -------
+    list[dict]
+        ``{"signature": str, "count": int, "steps": [int], "display": str}``
+    """
+    # signature -> step indices where that search was fruitless on the step
+    by_sig: dict[str, list[int]] = {}
+    for s in steps[:_MAX_STEPS]:
+        if not _is_fruitless_step(s):
+            continue
+        idx = int(s.get("index", 0))
+        seen_this_step: set[str] = set()
+        for tc in s.get("tool_calls") or []:
+            sig = _search_signature(tc)
+            if not sig or sig in seen_this_step:
+                continue
+            seen_this_step.add(sig)
+            by_sig.setdefault(sig, []).append(idx)
+
+    out: list[dict] = []
+    for sig, step_list in by_sig.items():
+        unique_steps = sorted(set(step_list))
+        if len(unique_steps) < _REPEATED_SEARCH_MIN:
+            continue
+        # Prefer non-consecutive repeats (fruitless streaks already cover runs).
+        consecutive = all(
+            unique_steps[i] + 1 == unique_steps[i + 1]
+            for i in range(len(unique_steps) - 1)
+        )
+        if consecutive:
+            continue
+        display = sig
+        if sig.startswith("grep:"):
+            display = sig[len("grep:"):]
+        elif sig.startswith("glob:"):
+            display = sig[len("glob:"):]
+        elif sig.startswith("bash:"):
+            display = sig[len("bash:"):]
+        out.append({
+            "signature": sig,
+            "count": len(unique_steps),
+            "steps": unique_steps,
+            "display": display[:80],
+        })
+
+    out.sort(key=lambda r: (-r["count"], r["steps"][0], r["signature"]))
+    return out
 
 
 # ---------------------------------------------------------------------------

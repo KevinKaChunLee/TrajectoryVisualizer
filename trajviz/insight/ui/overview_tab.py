@@ -21,14 +21,20 @@ from ..context_usage import (
 from ..formatting import format_context_pressure_html
 from ..help import HELP_TEXT
 from ..presenters.label_ui import build_label_ui_payload
+from ..presenters.issues import (
+    build_overview_issues_html,
+    collect_overview_issues,
+    rank_issues,
+)
 from ..presenters.overview import (
     build_chart_outputs,
     build_diagnostics_outputs,
     build_overview_outputs,
     empty_plotly_fig,
 )
-from ..presenters.patterns import build_antipattern_html, build_failure_patterns_html
-from ..session import LoadedSession
+from ..issue_judge import JUDGE_ISSUE_CAP, iter_judge_overview_issues
+from ..llm_config import resolve_analysis_config
+from ..session import LoadedSession, build_loaded_session
 from .shared import SharedState
 from .upload import UploadRefs
 
@@ -45,11 +51,10 @@ class OverviewRefs:
     diagnostics_section: gr.Column
     deep_dive_section: gr.Column
     labels_section: gr.Column
+    issues_html: gr.HTML
     metrics_md: gr.Markdown
     token_chart: gr.Plot
     duration_chart: gr.Plot
-    failure_patterns_html: gr.HTML
-    antipattern_summary_html: gr.HTML
     behavior_md: gr.Markdown
     tool_chart: gr.Plot
     tool_duration_chart: gr.Plot
@@ -111,6 +116,7 @@ def layout() -> OverviewRefs:
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_summary'])}</div>")
+                    issues_html = gr.HTML("")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
                         duration_chart = gr.Plot(
@@ -118,8 +124,6 @@ def layout() -> OverviewRefs:
                             label="Step Duration",
                             elem_id="duration-chart",
                         )
-                    failure_patterns_html = gr.HTML("")
-                    antipattern_summary_html = gr.HTML("")
                     metrics_md = gr.Markdown("")
 
                 with gr.Column(visible=False) as efficiency_section:
@@ -227,11 +231,10 @@ def layout() -> OverviewRefs:
         diagnostics_section=diagnostics_section,
         deep_dive_section=deep_dive_section,
         labels_section=labels_section,
+        issues_html=issues_html,
         metrics_md=metrics_md,
         token_chart=token_chart,
         duration_chart=duration_chart,
-        failure_patterns_html=failure_patterns_html,
-        antipattern_summary_html=antipattern_summary_html,
         behavior_md=behavior_md,
         tool_chart=tool_chart,
         tool_duration_chart=tool_duration_chart,
@@ -268,11 +271,10 @@ def load_slots(refs: OverviewRefs) -> dict:
     return {
         "overview_kpi_html": refs.overview_kpi_html,
         "session_detail_html": refs.session_detail_html,
+        "issues_html": refs.issues_html,
         "metrics_md": refs.metrics_md,
         "token_chart": refs.token_chart,
         "duration_chart": refs.duration_chart,
-        "overview_failure_patterns_html": refs.failure_patterns_html,
-        "overview_antipattern_html": refs.antipattern_summary_html,
         "behavior_md": refs.behavior_md,
         "tool_chart": refs.tool_chart,
         "tool_duration_chart": refs.tool_duration_chart,
@@ -303,11 +305,10 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         return {
             "overview_kpi_html": "",
             "session_detail_html": "",
+            "issues_html": "",
             "metrics_md": "",
             "token_chart": fig,
             "duration_chart": fig,
-            "overview_failure_patterns_html": "",
-            "overview_antipattern_html": "",
             "behavior_md": "",
             "tool_chart": fig,
             "tool_duration_chart": fig,
@@ -343,11 +344,10 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
     return {
         "overview_kpi_html": ov["kpi_html"],
         "session_detail_html": ov["session_detail"],
+        "issues_html": build_overview_issues_html(session),
         "metrics_md": ov["metrics_text"],
         "token_chart": ch["tok_fig"],
         "duration_chart": ch["dur_fig"],
-        "overview_failure_patterns_html": build_failure_patterns_html(session),
-        "overview_antipattern_html": build_antipattern_html(session),
         "behavior_md": ov["behavior_text"],
         "tool_chart": ch["tl_fig"],
         "tool_duration_chart": ch["tool_dur_fig"],
@@ -390,7 +390,12 @@ def _snapshot_dropdown_update(
     )
 
 
-def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
+def bind(
+    refs: OverviewRefs,
+    shared: SharedState,
+    upload: UploadRefs,
+    load_events: tuple = (),
+) -> None:
     overview_section_names = OVERVIEW_SECTION_NAMES
     overview_sections = (
         refs.performance_section,
@@ -413,6 +418,78 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
         fn=None,
         js="() => { if (window.tvExpandFileTimeline) { window.tvExpandFileTimeline(); setTimeout(window.tvExpandFileTimeline, 200); } }",
     )
+
+    def on_suggest_fixes(steps, raw):
+        """Auto-run LLM Issues judge after load; progress shows inside the panel."""
+        from ..presenters.issues import render_overview_issues_html
+
+        if not steps:
+            yield render_overview_issues_html([])
+            return
+
+        cfg = resolve_analysis_config()
+        raw_dict = raw if isinstance(raw, dict) else {}
+        session = build_loaded_session("", raw_dict)
+
+        if not cfg.ready:
+            missing = ", ".join(cfg.missing)
+            banner = f"Configure {missing} in .env to auto-suggest fixes"
+            yield build_overview_issues_html(session, banner=banner)
+            return
+
+        ranked = rank_issues(collect_overview_issues(session))
+        if not ranked:
+            yield build_overview_issues_html(session, issues=ranked)
+            return
+
+        judged = ranked
+        errors: list[str] = []
+        for progress in iter_judge_overview_issues(
+            session, ranked, config=cfg, limit=JUDGE_ISSUE_CAP,
+        ):
+            judged = progress.issues
+            errors = progress.errors
+            if not progress.finished:
+                short = progress.current_title
+                if len(short) > 48:
+                    short = short[:45] + "…"
+                progress_line = (
+                    f"Suggesting fixes {progress.current}/{progress.total} — {short}"
+                )
+                yield build_overview_issues_html(
+                    session, issues=judged, progress=progress_line,
+                )
+                continue
+
+            ok = sum(1 for i in judged if i.judgment is not None)
+            if errors and ok == 0:
+                banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
+                yield build_overview_issues_html(
+                    session, issues=ranked, banner=banner,
+                )
+                return
+
+            banner = ""
+            if errors:
+                banner = (
+                    f"{len(errors)} issue(s) could not be judged"
+                    f" ({ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} ok)."
+                )
+            elif len(ranked) > JUDGE_ISSUE_CAP:
+                banner = f"Judged {ok}/{JUDGE_ISSUE_CAP} (capped)."
+            yield build_overview_issues_html(
+                session, issues=judged, banner=banner,
+            )
+
+    judge_event = dict(
+        fn=on_suggest_fixes,
+        inputs=[shared.state_steps, shared.state_raw],
+        outputs=[refs.issues_html],
+        show_progress="minimal",
+        concurrency_id="issues_judge",
+    )
+    for ev in load_events:
+        ev.then(**judge_event)
 
     def _rebuild_utilization(agent_key, window_limit, snapshot_key, steps, raw, dark):
         if not steps:
