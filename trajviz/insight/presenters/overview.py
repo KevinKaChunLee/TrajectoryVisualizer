@@ -36,6 +36,8 @@ from ..rendering import (
     build_root_cause_html,
     render_agent_summary_cards,
 )
+from .issues import collect_overview_issues, rank_issues
+
 from ..session import MAX_STEPS, LoadedSession
 
 
@@ -114,13 +116,62 @@ def _build_session_detail_html(
     )
 
 
+def _issues_kpi_parts(issue_count: int, kind_counts: dict[str, int] | None = None) -> tuple[str, str, str, str]:
+    """Return (value, sub, status, detail) for the Issues KPI card."""
+    value = f"{issue_count:,}"
+    if issue_count <= 0:
+        return value, "none detected", "good", "No major workflow issues detected"
+    kinds = kind_counts or {}
+    bits: list[str] = []
+    for key, label in (
+        ("error", "error"),
+        ("antipattern", "pattern"),
+        ("bottleneck", "bottleneck"),
+    ):
+        n = int(kinds.get(key) or 0)
+        if n:
+            bits.append(f"{n} {label}{'s' if n != 1 else ''}")
+    sub = " · ".join(bits) if bits else "ranked problems"
+    if issue_count >= 3:
+        status, detail = "bad", f"{issue_count} issues — review Overview Issues"
+    else:
+        status, detail = "warn", f"{issue_count} issue{'s' if issue_count != 1 else ''} — review Overview Issues"
+    return value, sub, status, detail
+
+
+def _agent_steps_breakdown(agent_summaries: list[dict] | None, *, limit: int = 4) -> str:
+    """Compact per-agent assistant step counts for the Steps KPI card."""
+    if not agent_summaries:
+        return ""
+    parts: list[str] = []
+    for agent in agent_summaries[:limit]:
+        label = str(agent.get("label") or agent.get("agent_id") or "agent").strip() or "agent"
+        if len(label) > 18:
+            label = label[:15] + "…"
+        parts.append(f"{label} {int(agent.get('step_count') or 0)}")
+    leftover = len(agent_summaries) - limit
+    if leftover > 0:
+        parts.append(f"+{leftover} more")
+    return " · ".join(parts)
+
+
 def build_overview_kpi_html(
-    metrics: dict, wall_fmt: str, verdicts: list[dict] | None = None, message_rows: list[dict] | None = None
+    metrics: dict,
+    wall_fmt: str,
+    verdicts: list[dict] | None = None,
+    message_rows: list[dict] | None = None,
+    *,
+    issue_count: int = 0,
+    issue_kind_counts: dict[str, int] | None = None,
+    agent_summaries: list[dict] | None = None,
 ) -> str:
-    """Build at-a-glance KPI card strip for Overview tab.
+    """Build at-a-glance KPI card strip (global strip above the main Tabs).
 
     When *verdicts* is provided, matching KPI cards get a colored left border
-    and a tooltip with the verdict detail string.
+    and a tooltip with the verdict detail string. *issue_count* drives the
+    Issues card placed after Tokens. Steps shows an agent/subagent breakdown
+    instead of the Errors health verdict (that signal lives on Tool Success /
+    Issues).
     """
     _verdict_map: dict[str, tuple[str, str]] = {}
     if verdicts:
@@ -128,12 +179,17 @@ def build_overview_kpi_html(
             "Tool Success": "Tool Success",
             "Throughput": "Tokens",
             "Token Efficiency": "Tokens",
-            "Errors": "Steps",
+            # Errors intentionally not mapped onto Steps — duplicated elsewhere.
         }
         for v in verdicts:
             kpi_label = _metric_to_kpi.get(v["metric"], "")
             if kpi_label:
                 _verdict_map[kpi_label] = (v["status"], v["detail"])
+
+    issue_value, issue_sub, issue_status, issue_detail = _issues_kpi_parts(
+        issue_count, issue_kind_counts,
+    )
+    _verdict_map["Issues"] = (issue_status, issue_detail)
 
     _status_colors = {
         "good": "#059669",
@@ -150,6 +206,7 @@ def build_overview_kpi_html(
         "Steps": "steps",
         "Wall-Clock": "wall_clock",
         "Tokens": "tokens",
+        "Issues": "issues",
         "Tool Success": "tool_success",
     }
 
@@ -171,6 +228,7 @@ def build_overview_kpi_html(
         throughput_sub += f" · {timed_steps}/{throughput_steps} timed"
 
     user_steps = metrics.get("user_steps", 0)
+    agent_breakdown = _agent_steps_breakdown(agent_summaries)
     cards = [
         (
             "Steps",
@@ -179,6 +237,7 @@ def build_overview_kpi_html(
         ),
         ("Wall-Clock", wall_fmt, f"P95 {metrics.get('p95_duration', 0)}s"),
         ("Tokens", f"{metrics.get('tokens', {}).get('total', 0):,}", throughput_sub),
+        ("Issues", issue_value, issue_sub),
         ("Tool Success", f"{metrics.get('tool_success_rate', 0)}%", f"{metrics.get('tool_call_count', 0):,} calls"),
     ]
     card_html = []
@@ -187,12 +246,23 @@ def build_overview_kpi_html(
         extra_style = ""
         title_attr = ""
         data_attr = ""
+        jump_attr = ""
+        extra_class = ""
         if verdict_info:
             status, detail = verdict_info
             border_color = _status_colors.get(status, "#6b7280")
             extra_style = f" style='border-left:4px solid {border_color};'"
             title_attr = f" title='{html.escape(detail)}'"
             data_attr = f" data-status='{html.escape(status)}'"
+        if label == "Issues":
+            extra_class = " ov-kpi-card--issues"
+            jump_attr = (
+                " role='link' tabindex='0'"
+                " onclick=\"if(window.tvClickMainTab){window.tvClickMainTab('Overview');}"
+                "var el=document.getElementById('overview-issues');"
+                "if(el){el.scrollIntoView({behavior:'smooth',block:'start'});"
+                "if(!el.open){el.open=true;}}\""
+            )
         help_key = _label_to_help_key.get(label, "")
         help_attr = ""
         if help_key and help_key in HELP_TEXT:
@@ -200,17 +270,25 @@ def build_overview_kpi_html(
         sparkline = ""
         if label in sparkline_data:
             sparkline = _build_sparkline_svg(sparkline_data[label])
-        verdict_sub = ""
-        if verdict_info:
+        extra_line = ""
+        if label == "Steps" and agent_breakdown:
+            extra_line = (
+                f"<div class='ov-kpi-agent-breakdown' title='Assistant steps by agent'>"
+                f"{html.escape(agent_breakdown)}</div>"
+            )
+        elif verdict_info:
             status, detail = verdict_info
             vcolor = _status_colors.get(status, "#6b7280")
-            verdict_sub = f"<div style='font-size:11px;color:{vcolor};margin-top:2px;'>{html.escape(detail)}</div>"
+            extra_line = (
+                f"<div style='font-size:11px;color:{vcolor};margin-top:2px;'>"
+                f"{html.escape(detail)}</div>"
+            )
         card_html.append(
-            f"<div class='ov-kpi-card'{extra_style}{title_attr}{data_attr}>"
+            f"<div class='ov-kpi-card{extra_class}'{extra_style}{title_attr}{data_attr}{jump_attr}>"
             f"<div class='ov-kpi-label'{help_attr}>{html.escape(str(label))}</div>"
             f"<div class='ov-kpi-value'>{html.escape(str(value))}</div>"
             f"<div class='ov-kpi-sub'>{html.escape(str(sub))}</div>"
-            f"{verdict_sub}"
+            f"{extra_line}"
             f"{sparkline}"
             "</div>"
         )
@@ -244,7 +322,19 @@ def build_overview_outputs(session: LoadedSession) -> dict:
     wfmt = session.wall_clock
 
     summary = build_summary_outputs(session)
-    kpi_html = build_overview_kpi_html(metrics, wfmt, verdicts=verdicts, message_rows=message_rows)
+    ranked_issues = rank_issues(collect_overview_issues(session))
+    kind_counts: dict[str, int] = {}
+    for issue in ranked_issues:
+        kind_counts[issue.kind] = kind_counts.get(issue.kind, 0) + 1
+    kpi_html = build_overview_kpi_html(
+        metrics,
+        wfmt,
+        verdicts=verdicts,
+        message_rows=message_rows,
+        issue_count=len(ranked_issues),
+        issue_kind_counts=kind_counts,
+        agent_summaries=session.agent_summaries,
+    )
     metrics_text = format_performance_md(metrics, wfmt)
 
     behavior_text = format_behavioral_md(metrics, diag_metrics=session.diagnostic_metrics)

@@ -184,6 +184,8 @@ class JudgeMockTests(unittest.TestCase):
         html = render_overview_issues_html(judged)
         self.assertIn(">Change<", html)
         self.assertIn(">Fix", html)
+        self.assertIn("Show fix", html)
+        self.assertIn("overview-issue-more", html)
         self.assertIn("CLAUDE.md", html)
         self.assertIn("空搜索超过 N 次后停止", html)
         self.assertIn("with LLM fix", html)

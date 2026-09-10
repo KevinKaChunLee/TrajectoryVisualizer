@@ -1,14 +1,15 @@
 """Centralized help text registry for metric tooltips and section explanations."""
 
 # Tooltip/subtitle text keyed by identifier. Only keys referenced by
-# presenters/overview.py builds the four KPI cards (shown above the main Tabs);
+# presenters/overview.py for the KPI cards (shown above the main Tabs)
 # (rendered as data-help tooltips) and the Overview section subtitles.
 # Add an entry here only together with the UI code that renders it.
 HELP_TEXT: dict[str, str] = {
     # KPI card metrics
-    "steps": "Total number of conversation turns (user + assistant messages) in the trajectory.",
+    "steps": "Total conversation turns. Subtitle is assistant vs user; the line below breaks assistant steps down by agent/subagent.",
     "wall_clock": "Elapsed wall-clock time from first to last step, including idle gaps between steps.",
     "tokens": "Total tokens consumed across all steps: input + output + reasoning + cache read. Subtitle gen tok/s is output tokens ÷ model generation time (step duration minus spawn wait and timed tool waits).",
+    "issues": "Count of ranked Overview Issues (errors, waste patterns, performance bottlenecks). Click to jump to the Issues panel.",
     "tool_success": "Percentage of tool calls that completed without errors. 100% means no tool failures.",
     # Section subtitles
     "section_summary": "Cost charts for this run. Issues (above) list what went wrong — click a step chip to open Workflow.",
