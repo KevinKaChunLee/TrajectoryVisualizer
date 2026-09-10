@@ -242,7 +242,9 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
     performance_bottlenecks = detect_performance_bottlenecks(steps, step_analytics)
     traj = raw.get("trajectory") or raw.get("messages") or []
     diagnostic_metrics = compute_diagnostic_metrics(
-        steps, traj if isinstance(traj, list) else [],
+        steps,
+        traj if isinstance(traj, list) else [],
+        tool_fail=metrics.get("tool_fail"),
     )
     pressure_series = context_pressure_series(
         steps,

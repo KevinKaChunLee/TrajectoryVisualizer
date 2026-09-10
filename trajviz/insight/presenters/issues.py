@@ -332,7 +332,7 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
             continue
         idx = int(step_idx)
         title = str(bn.get("title") or f"Performance bottleneck at #{idx}")
-        detail = str(bn.get("detail") or bn.get("explanation") or "")[:200]
+        detail = str(bn.get("detail") or "")[:200]
         why = str(bn.get("why") or (
             "Session-relative duration outlier with a dominant tool, idle/queue, "
             "or context/inference cause."

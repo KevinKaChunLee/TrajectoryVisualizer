@@ -1,4 +1,4 @@
-"""Trajectory diagnostics: file interaction, failure chains, root-cause attribution, bottleneck explanation."""
+"""Trajectory diagnostics: file interaction, failure chains, root-cause attribution, performance bottlenecks."""
 
 from __future__ import annotations
 

@@ -228,10 +228,6 @@ def _file_lines_from_interactions(interactions: list[dict]) -> list[str]:
     ]
 
 
-def _file_lines(steps: list[dict]) -> list[str]:
-    return _file_lines_from_interactions(extract_file_interactions(steps))
-
-
 def _tool_sequence_lines(sequences: list[dict]) -> list[str]:
     if not sequences:
         return ["(none)"]
@@ -276,23 +272,16 @@ def _bottleneck_lines(bottlenecks: list[dict]) -> list[str]:
         return ["(none)"]
     lines = []
     for item in bottlenecks:
-        title = item.get("title")
-        detail = item.get("detail") or item.get("explanation") or ""
-        if title:
-            lines.append(
-                f"- step {item.get('step_idx')}: {item.get('duration')}s — "
-                f"{_clip(str(title), 120)}"
-            )
-            if detail:
-                lines.append(f"  {_clip(str(detail), 200)}")
-            why = item.get("why")
-            if why:
-                lines.append(f"  why: {_clip(str(why), 160)}")
-        else:
-            lines.append(
-                f"- step {item.get('step_idx')}: {item.get('duration')}s — "
-                f"{_clip(str(detail), 240)}"
-            )
+        lines.append(
+            f"- step {item.get('step_idx')}: {item.get('duration')}s — "
+            f"{_clip(str(item.get('title') or ''), 120)}"
+        )
+        detail = item.get("detail")
+        if detail:
+            lines.append(f"  {_clip(str(detail), 200)}")
+        why = item.get("why")
+        if why:
+            lines.append(f"  why: {_clip(str(why), 160)}")
     return lines
 
 
@@ -373,29 +362,32 @@ def _error_step_lines(steps: list[dict], limit: int = 16) -> list[str]:
 
 
 def _timeline_lines(steps: list[dict], limit: int = 80) -> list[str]:
-    rows: list[str] = []
-    for step in steps:
-        role = step.get("role") or "?"
-        tools = [
-            str(tc.get("tool_name") or "?")
-            for tc in (step.get("tool_calls") or [])
-            if isinstance(tc, dict)
-        ]
-        dur = step.get("duration")
-        dur_s = f"{dur:.1f}s" if isinstance(dur, (int, float)) else "-"
-        tok = (step.get("tokens") or {}).get("total", 0) if isinstance(step.get("tokens"), dict) else 0
-        err = " ERR" if step.get("error_count") else ""
-        tool_s = ",".join(tools[:6]) if tools else "-"
-        preview = ""
-        if role == "user":
-            preview = " " + _clip(str(step.get("text_preview") or ""), 80)
-        rows.append(
-            f"{step.get('index')} {role} {dur_s} {tok}tok {tool_s}{err}{preview}"
-        )
-    if len(rows) <= limit:
-        return rows
+    n = len(steps)
+    if n <= limit:
+        return [_timeline_row(step) for step in steps]
     head, tail = limit // 2, limit - limit // 2
-    return rows[:head] + [f"… {len(rows) - limit} steps omitted …"] + rows[-tail:]
+    rows = [_timeline_row(step) for step in steps[:head]]
+    rows.append(f"… {n - limit} steps omitted …")
+    rows.extend(_timeline_row(step) for step in steps[-tail:])
+    return rows
+
+
+def _timeline_row(step: dict) -> str:
+    role = step.get("role") or "?"
+    tools = [
+        str(tc.get("tool_name") or "?")
+        for tc in (step.get("tool_calls") or [])
+        if isinstance(tc, dict)
+    ]
+    dur = step.get("duration")
+    dur_s = f"{dur:.1f}s" if isinstance(dur, (int, float)) else "-"
+    tok = (step.get("tokens") or {}).get("total", 0) if isinstance(step.get("tokens"), dict) else 0
+    err = " ERR" if step.get("error_count") else ""
+    tool_s = ",".join(tools[:6]) if tools else "-"
+    preview = ""
+    if role == "user":
+        preview = " " + _clip(str(step.get("text_preview") or ""), 80)
+    return f"{step.get('index')} {role} {dur_s} {tok}tok {tool_s}{err}{preview}"
 
 
 def _compose_brief(
@@ -413,19 +405,14 @@ def _compose_brief(
     streaks: list[dict],
     bash_flags: list[dict],
     tool_seqs: list[dict],
-    file_interactions: list[dict] | None = None,
+    file_interactions: list[dict],
 ) -> str:
     sections = [
         ("SESSION", _session_header(raw, steps, metrics, wall_fmt)),
         ("HEALTH", _verdict_lines(verdicts)),
         ("PERFORMANCE", _metrics_lines(metrics, steps)),
         ("AGENTS", _agent_lines(agents)),
-        (
-            "FILES",
-            _file_lines_from_interactions(file_interactions)
-            if file_interactions is not None
-            else _file_lines(steps),
-        ),
+        ("FILES", _file_lines_from_interactions(file_interactions)),
         ("TOOL_SEQUENCES", _tool_sequence_lines(tool_seqs)),
         ("BOTTLENECKS", _bottleneck_lines(bottlenecks)),
         ("FAILURES", _failure_lines(fail_pats, chains, chain_metrics)),
@@ -478,6 +465,7 @@ def build_analysis_brief(steps: list[dict], raw: dict | None = None) -> str:
         streaks=streaks,
         bash_flags=bash_flags,
         tool_seqs=tool_seqs,
+        file_interactions=extract_file_interactions(steps),
     )
 
 
@@ -486,7 +474,7 @@ def build_analysis_brief_from_session(session: LoadedSession) -> str:
     if not session.steps:
         return ""
     return _compose_brief(
-        raw=session.raw if isinstance(session.raw, dict) else {},
+        raw=session.raw,
         steps=session.steps,
         metrics=session.metrics,
         wall_fmt=session.wall_clock,
@@ -657,20 +645,20 @@ def analyze_loaded_trajectory(
     steps: list[dict],
     raw: dict | None = None,
     *,
-    session: LoadedSession | None = None,
+    brief: str | None = None,
     config: AnalysisLLMConfig | None = None,
     chat_fn: ChatFn | None = None,
 ) -> tuple[str, list[dict]]:
-    """Pack dashboard stats and run the first analysis pass for a loaded run."""
-    if session is not None:
-        brief = build_analysis_brief_from_session(session)
-        steps = session.steps
-    else:
-        if not steps:
-            return "", []
-        brief = build_analysis_brief(steps, raw if isinstance(raw, dict) else {})
+    """Run the first analysis pass for a loaded run.
+
+    Pass *brief* (including an empty string) when already packed from
+    ``LoadedSession`` so the load path never re-runs detectors. Omit *brief*
+    only for callers that must build it from *steps*/*raw* (tests).
+    """
     if not steps:
         return "", []
+    if brief is None:
+        brief = build_analysis_brief(steps, raw if isinstance(raw, dict) else {})
     history = answer_question(
         AUTO_ANALYSIS_QUESTION,
         [],

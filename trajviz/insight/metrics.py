@@ -765,12 +765,12 @@ def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | Non
 def compute_diagnostic_metrics(
     steps: list[dict],
     trajectory: list[dict],
+    *,
+    tool_fail: int | None = None,
 ) -> dict:
-    """Compute chip-level diagnostic metrics (sub-agents, tool errors, edit precision).
+    """Sub-agent counts, tool-error chip, and edit precision.
 
-    Plan / fruitless / phase detectors live on ``LoadedSession`` already — do not
-    re-run them here. Behavioral chips only need sub-agent + error counts; edit
-    precision is kept for analysis/tests.
+    Pass *tool_fail* from ``compute_metrics`` to avoid a second tool-call scan.
     """
     from .patterns import (
         extract_subagent_sessions,
@@ -779,11 +779,12 @@ def compute_diagnostic_metrics(
 
     sessions = extract_subagent_sessions(steps, trajectory)
     sa_metrics = compute_subagent_metrics(sessions, steps)
-    error_count = sum(
-        1 for s in steps for tc in s.get("tool_calls", []) if tool_call_failed(tc)
+    error_count = (
+        int(tool_fail)
+        if tool_fail is not None
+        else sum(1 for s in steps for tc in s.get("tool_calls", []) if tool_call_failed(tc))
     )
 
-    # Edit precision: successful edits / total edit attempts
     from trajviz.tool_vocab import WRITE_TOOL_NAMES as edit_tools
     edit_total = 0
     edit_success = 0
@@ -791,7 +792,6 @@ def compute_diagnostic_metrics(
         for tc in s.get("tool_calls", []):
             if tc.get("tool_name") in edit_tools:
                 edit_total += 1
-                # Same failure definition as tool_success_rate.
                 if not tool_call_failed(tc):
                     edit_success += 1
 

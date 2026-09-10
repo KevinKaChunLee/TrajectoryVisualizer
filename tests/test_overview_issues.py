@@ -143,11 +143,6 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("Tool bottleneck", issues[0].title)
         self.assertIn("npm test", issues[0].detail)
 
-    def test_top_n_hotspot_explanations_are_not_issues(self):
-        # Only performance_bottlenecks feed Issues — bare duration hotspots do not.
-        issues = collect_overview_issues(_session())
-        self.assertEqual(issues, [])
-
     def test_progress_banner_visible_while_judging(self):
         html = render_overview_issues_html(
             [
