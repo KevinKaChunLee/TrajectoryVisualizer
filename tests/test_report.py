@@ -166,14 +166,15 @@ class ReportBuildTests(unittest.TestCase):
         self.assertIn("<meta name='color-scheme' content='dark'>", doc)
         self.assertNotIn("class='tv-theme-light'", doc)
 
-    def test_token_warnings_appear_in_header(self):
+    def test_truncation_warning_appears_in_header(self):
         from trajviz.insight.session import build_loaded_session
 
         raw = self._loaded()
         session = build_loaded_session(raw.get("_source_path") or "oc.json", raw)
-        session.token_warnings = ["input tokens exceed total"]
+        session.truncated = True
+        session.steps_total = 2500
         doc = build_report_html(session)
-        self.assertIn("input tokens exceed total", doc)
+        self.assertIn("truncated", doc)
         self.assertIn("tv-note", doc)
 
     def test_plotly_included_once_via_cdn_when_charts_exist(self):

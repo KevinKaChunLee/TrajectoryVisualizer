@@ -203,7 +203,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertNotIn(">Fix<", html)
         self.assertNotIn(">Change<", html)
 
-    def test_shows_all_ranked_issues_behind_show_all(self):
+    def test_shows_all_ranked_issues(self):
         issues = [
             OverviewIssue(
                 kind="antipattern",
@@ -218,9 +218,8 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(len(shown), 12)
         html = render_overview_issues_html(shown)
         self.assertIn("12 issues", html)
-        self.assertIn("Show all 12", html)
-        self.assertIn("(7 more)", html)
-        self.assertIn("overview-issues-remainder", html)
+        self.assertNotIn("Show all", html)
+        self.assertNotIn("overview-issues-remainder", html)
         for i in range(12):
             self.assertIn(f"Waste pattern #{i}", html)
 

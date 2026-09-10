@@ -17,7 +17,6 @@ from typing import Any
 import plotly.graph_objects as go
 
 from .loaders import FORMAT_LABELS
-from .presenters.issues import build_overview_issues_html
 from .presenters.overview import (
     build_chart_outputs,
     build_diagnostics_outputs,
@@ -60,7 +59,7 @@ def build_report_html(
     pat_tool = render_tool_sequences_html(session.tool_sequences)
     pat_fail = render_failure_patterns_html(session.failure_patterns)
     antipattern = build_antipattern_html(session)
-    issues_panel = build_overview_issues_html(session)
+    issues_panel = ov["issues_html"]
 
     figures: list[tuple[str, go.Figure]] = [
         ("Token usage", ch["tok_fig"]),

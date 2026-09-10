@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import os
+from collections import Counter
 
 import plotly.graph_objects as go
 
@@ -36,7 +37,12 @@ from ..rendering import (
     build_root_cause_html,
     render_agent_summary_cards,
 )
-from .issues import collect_overview_issues, rank_issues
+from .issues import (
+    OverviewIssue,
+    build_overview_issues_html,
+    collect_overview_issues,
+    rank_issues,
+)
 
 from ..session import MAX_STEPS, LoadedSession
 
@@ -116,19 +122,20 @@ def _build_session_detail_html(
     )
 
 
-def _issues_kpi_parts(issue_count: int, kind_counts: dict[str, int] | None = None) -> tuple[str, str, str, str]:
+def _issues_kpi_parts(issues: list[OverviewIssue]) -> tuple[str, str, str, str]:
     """Return (value, sub, status, detail) for the Issues KPI card."""
+    issue_count = len(issues)
     value = f"{issue_count:,}"
     if issue_count <= 0:
         return value, "none detected", "good", "No major workflow issues detected"
-    kinds = kind_counts or {}
+    kinds = Counter(issue.kind for issue in issues)
     bits: list[str] = []
     for key, label in (
         ("error", "error"),
         ("antipattern", "pattern"),
         ("bottleneck", "bottleneck"),
     ):
-        n = int(kinds.get(key) or 0)
+        n = kinds[key]
         if n:
             bits.append(f"{n} {label}{'s' if n != 1 else ''}")
     sub = " · ".join(bits) if bits else "ranked problems"
@@ -161,17 +168,15 @@ def build_overview_kpi_html(
     verdicts: list[dict] | None = None,
     message_rows: list[dict] | None = None,
     *,
-    issue_count: int = 0,
-    issue_kind_counts: dict[str, int] | None = None,
+    issues: list[OverviewIssue] | None = None,
     agent_summaries: list[dict] | None = None,
 ) -> str:
     """Build at-a-glance KPI card strip (global strip above the main Tabs).
 
     When *verdicts* is provided, matching KPI cards get a colored left border
-    and a tooltip with the verdict detail string. *issue_count* drives the
-    Issues card placed after Tokens. Steps shows an agent/subagent breakdown
-    instead of the Errors health verdict (that signal lives on Tool Success /
-    Issues).
+    and a tooltip with the verdict detail string. *issues* drives the Issues
+    card after Tokens. Steps shows an agent/subagent breakdown instead of the
+    Errors health verdict (that signal lives on Tool Success / Issues).
     """
     _verdict_map: dict[str, tuple[str, str]] = {}
     if verdicts:
@@ -179,16 +184,14 @@ def build_overview_kpi_html(
             "Tool Success": "Tool Success",
             "Throughput": "Tokens",
             "Token Efficiency": "Tokens",
-            # Errors intentionally not mapped onto Steps — duplicated elsewhere.
         }
         for v in verdicts:
             kpi_label = _metric_to_kpi.get(v["metric"], "")
             if kpi_label:
                 _verdict_map[kpi_label] = (v["status"], v["detail"])
 
-    issue_value, issue_sub, issue_status, issue_detail = _issues_kpi_parts(
-        issue_count, issue_kind_counts,
-    )
+    issue_value, issue_sub, issue_status, issue_detail = _issues_kpi_parts(issues or [])
+    # Border/tooltip only — card subtitle already carries the scannable summary.
     _verdict_map["Issues"] = (issue_status, issue_detail)
 
     _status_colors = {
@@ -276,7 +279,7 @@ def build_overview_kpi_html(
                 f"<div class='ov-kpi-agent-breakdown' title='Assistant steps by agent'>"
                 f"{html.escape(agent_breakdown)}</div>"
             )
-        elif verdict_info:
+        elif verdict_info and label != "Issues":
             status, detail = verdict_info
             vcolor = _status_colors.get(status, "#6b7280")
             extra_line = (
@@ -323,18 +326,15 @@ def build_overview_outputs(session: LoadedSession) -> dict:
 
     summary = build_summary_outputs(session)
     ranked_issues = rank_issues(collect_overview_issues(session))
-    kind_counts: dict[str, int] = {}
-    for issue in ranked_issues:
-        kind_counts[issue.kind] = kind_counts.get(issue.kind, 0) + 1
     kpi_html = build_overview_kpi_html(
         metrics,
         wfmt,
         verdicts=verdicts,
         message_rows=message_rows,
-        issue_count=len(ranked_issues),
-        issue_kind_counts=kind_counts,
+        issues=ranked_issues,
         agent_summaries=session.agent_summaries,
     )
+    issues_html = build_overview_issues_html(session, issues=ranked_issues)
     metrics_text = format_performance_md(metrics, wfmt)
 
     behavior_text = format_behavioral_md(metrics, diag_metrics=session.diagnostic_metrics)
@@ -356,6 +356,7 @@ def build_overview_outputs(session: LoadedSession) -> dict:
     return {
         **summary,
         "kpi_html": kpi_html,
+        "issues_html": issues_html,
         "session_detail": session_detail,
         "metrics_text": metrics_text,
         "behavior_text": behavior_text,
@@ -449,15 +450,12 @@ def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dic
 
 
 def load_warnings_html(session: LoadedSession) -> str:
-    """HTML warning strip for truncation and token-integrity issues."""
-    chunks = []
-    if session.truncated:
-        extra = session.steps_total - MAX_STEPS
-        chunks.append(
-            f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>"
-            f"&#9888; Showing first {MAX_STEPS:,} of {session.steps_total:,} steps "
-            f"({extra:,} truncated).</p>"
-        )
-    for tw in session.token_warnings:
-        chunks.append(f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>&#9888; {html.escape(tw)}</p>")
-    return "".join(chunks)
+    """HTML warning strip for truncation (when the run exceeds MAX_STEPS)."""
+    if not session.truncated:
+        return ""
+    extra = session.steps_total - MAX_STEPS
+    return (
+        f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>"
+        f"&#9888; Showing first {MAX_STEPS:,} of {session.steps_total:,} steps "
+        f"({extra:,} truncated).</p>"
+    )

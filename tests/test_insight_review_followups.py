@@ -157,6 +157,7 @@ class OutputThroughputTests(unittest.TestCase):
 
     def test_issues_kpi_card_after_tokens(self):
         from trajviz.insight.presenters import build_overview_kpi_html
+        from trajviz.insight.presenters.issues import OverviewIssue
 
         metrics = {
             "total_steps": 3,
@@ -167,12 +168,12 @@ class OutputThroughputTests(unittest.TestCase):
             "tool_success_rate": 100,
             "tool_call_count": 1,
         }
-        html = build_overview_kpi_html(
-            metrics,
-            "4s",
-            issue_count=3,
-            issue_kind_counts={"error": 2, "antipattern": 1},
-        )
+        issues = [
+            OverviewIssue(kind="error", title="a", detail="", why="", steps=(1,)),
+            OverviewIssue(kind="error", title="b", detail="", why="", steps=(2,)),
+            OverviewIssue(kind="antipattern", title="c", detail="", why="", steps=(3,)),
+        ]
+        html = build_overview_kpi_html(metrics, "4s", issues=issues)
         tokens_at = html.find(">Tokens<")
         issues_at = html.find(">Issues<")
         tool_at = html.find(">Tool Success<")
@@ -183,6 +184,9 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertIn("data-status='bad'", html)
         self.assertIn("ov-kpi-card--issues", html)
         self.assertIn("overview-issues", html)
+        # Long detail stays on title/tooltip only — not a second visible subtitle line.
+        self.assertIn("title='3 issues — review Overview Issues'", html)
+        self.assertNotIn("margin-top:2px;'>3 issues — review Overview Issues", html)
 
     def test_steps_kpi_shows_agent_breakdown_not_error_verdict(self):
         from trajviz.insight.presenters import build_overview_kpi_html

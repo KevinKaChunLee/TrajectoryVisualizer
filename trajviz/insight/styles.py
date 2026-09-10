@@ -1052,26 +1052,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     margin-top: 4px;
     padding-top: 2px;
 }
-.overview-issues-remainder {
-    margin: 4px 0 2px;
-}
-.overview-issues-remainder-summary {
-    list-style: none;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ov-accent, #1d4ed8);
-    padding: 6px 2px;
-    user-select: none;
-}
-.overview-issues-remainder-summary::-webkit-details-marker { display: none; }
-.overview-issues-remainder-meta {
-    font-weight: 500;
-    color: var(--ov-muted);
-}
-.overview-issues-remainder-body {
-    margin-top: 4px;
-}
 .overview-issues-progress {
     display: flex;
     align-items: center;

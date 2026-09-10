@@ -308,34 +308,6 @@ def _churn(summary: dict | None) -> int | None:
     return None
 
 
-def validate_token_integrity(steps: list[dict]) -> list[str]:
-    """Check for steps with missing or all-zero token data.
-
-    Returns a list of human-readable warning strings (empty if all OK).
-    """
-    zero_token_steps = []
-    for s in steps:
-        tokens = s.get("tokens", {})
-        total = tokens.get("total", 0) or 0
-        inp = tokens.get("input", 0) or 0
-        out = tokens.get("output", 0) or 0
-        cache = tokens.get("cache_read", 0) or 0
-        if total == 0 and inp == 0 and out == 0 and cache == 0:
-            if s.get("role") == "assistant":
-                zero_token_steps.append(s.get("index", "?"))
-
-    warnings: list[str] = []
-    if zero_token_steps:
-        n = len(zero_token_steps)
-        examples = ", ".join(str(i) for i in zero_token_steps[:5])
-        suffix = f" and {n - 5} more" if n > 5 else ""
-        warnings.append(
-            f"{n} assistant step(s) have zero token data "
-            f"(steps {examples}{suffix}) \u2014 metrics may be inaccurate."
-        )
-    return warnings
-
-
 def build_message_metrics(steps: list[dict]) -> list[dict]:
     """Build per-message metrics used for diagnostics tables and charts."""
     from .parser import infer_non_cache_input

@@ -345,7 +345,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
     return {
         "overview_kpi_html": gr.update(value=ov["kpi_html"], visible=True),
         "session_detail_html": ov["session_detail"],
-        "issues_html": build_overview_issues_html(session),
+        "issues_html": ov["issues_html"],
         "metrics_md": ov["metrics_text"],
         "token_chart": ch["tok_fig"],
         "duration_chart": ch["dur_fig"],

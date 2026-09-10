@@ -30,7 +30,6 @@ from .metrics import (
     compute_diagnostic_metrics,
     compute_health_verdict,
     compute_metrics,
-    validate_token_integrity,
 )
 from .parser import parse_steps
 from .patterns import (
@@ -73,7 +72,6 @@ class LoadedSession:
     steps: list[dict]
     steps_total: int
     format: str
-    token_warnings: list[str]
     message_rows: list[dict]
     metrics: dict
     verdicts: list[dict]
@@ -158,7 +156,6 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         steps = steps[:MAX_STEPS]
         truncated = True
 
-    token_warnings = validate_token_integrity(steps)
     message_rows = build_message_metrics(steps)
     metrics = compute_metrics(steps, raw, message_rows=message_rows)
     _, wfmt = wall_clock_fmt(metrics)
@@ -203,7 +200,6 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         steps=steps,
         steps_total=steps_total,
         format=detected,
-        token_warnings=list(token_warnings),
         message_rows=message_rows,
         metrics=metrics,
         verdicts=verdicts,
