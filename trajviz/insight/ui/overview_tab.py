@@ -38,6 +38,11 @@ from ..session import LoadedSession, build_loaded_session
 from .shared import SharedState
 from .upload import UploadRefs
 
+_ISSUES_JUDGE_IDLE = (
+    "<span style='font-size:12px;color:var(--ov-muted);'>"
+    "Auto-suggests fixes when ANALYZE_/LABEL_ LLM is configured</span>"
+)
+
 
 @dataclass
 class OverviewRefs:
@@ -120,13 +125,13 @@ def layout() -> OverviewRefs:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_summary'])}</div>")
                     with gr.Row():
                         issues_suggest_btn = gr.Button(
-                            "Suggest fixes",
+                            "Re-run fixes",
                             size="sm",
                             variant="secondary",
                         )
                         issues_judge_status = gr.HTML(
                             "<span style='font-size:12px;color:var(--ov-muted);'>"
-                            "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
+                            "Auto-suggests fixes when ANALYZE_/LABEL_ LLM is configured</span>"
                         )
                     issues_html = gr.HTML("")
                     with gr.Row(equal_height=True):
@@ -321,10 +326,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "overview_kpi_html": "",
             "session_detail_html": "",
             "issues_html": "",
-            "issues_judge_status": (
-                "<span style='font-size:12px;color:var(--ov-muted);'>"
-                "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
-            ),
+            "issues_judge_status": _ISSUES_JUDGE_IDLE,
             "metrics_md": "",
             "token_chart": fig,
             "duration_chart": fig,
@@ -364,10 +366,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "overview_kpi_html": ov["kpi_html"],
         "session_detail_html": ov["session_detail"],
         "issues_html": build_overview_issues_html(session),
-        "issues_judge_status": (
-            "<span style='font-size:12px;color:var(--ov-muted);'>"
-            "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
-        ),
+        "issues_judge_status": _ISSUES_JUDGE_IDLE,
         "metrics_md": ov["metrics_text"],
         "token_chart": ch["tok_fig"],
         "duration_chart": ch["dur_fig"],
@@ -413,7 +412,12 @@ def _snapshot_dropdown_update(
     )
 
 
-def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
+def bind(
+    refs: OverviewRefs,
+    shared: SharedState,
+    upload: UploadRefs,
+    load_events: tuple = (),
+) -> None:
     overview_section_names = OVERVIEW_SECTION_NAMES
     overview_sections = (
         refs.performance_section,
@@ -438,15 +442,11 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
     )
 
     def on_suggest_fixes(steps, raw):
-        """On-demand LLM judge for Overview Issues — yields per-issue progress."""
+        """LLM Issues judge — yields per-issue progress (load auto-run + button re-run)."""
         from ..presenters.issues import render_overview_issues_html
 
-        idle = (
-            "<span style='font-size:12px;color:var(--ov-muted);'>"
-            "Uses ANALYZE_/LABEL_ LLM — on demand</span>"
-        )
         if not steps:
-            yield render_overview_issues_html([]), idle
+            yield render_overview_issues_html([]), _ISSUES_JUDGE_IDLE
             return
 
         cfg = resolve_analysis_config()
@@ -457,7 +457,7 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
             missing = ", ".join(cfg.missing)
             status = (
                 f"<span style='font-size:12px;color:var(--ov-warn);'>"
-                f"Configure {html.escape(missing)} in .env</span>"
+                f"Configure {html.escape(missing)} in .env to auto-suggest fixes</span>"
             )
             yield build_overview_issues_html(session), status
             return
@@ -518,12 +518,16 @@ def bind(refs: OverviewRefs, shared: SharedState, upload: UploadRefs) -> None:
                 session, issues=judged, banner=banner,
             ), status
 
-    refs.issues_suggest_btn.click(
+    judge_event = dict(
         fn=on_suggest_fixes,
         inputs=[shared.state_steps, shared.state_raw],
         outputs=[refs.issues_html, refs.issues_judge_status],
         show_progress="minimal",
+        concurrency_id="issues_judge",
     )
+    refs.issues_suggest_btn.click(**judge_event)
+    for ev in load_events:
+        ev.then(**judge_event)
 
     def _rebuild_utilization(agent_key, window_limit, snapshot_key, steps, raw, dark):
         if not steps:

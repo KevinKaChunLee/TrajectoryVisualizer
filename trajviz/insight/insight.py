@@ -63,7 +63,7 @@ def build_ui() -> gr.Blocks:
         upload.bind_export(upload_refs, shared, load_events)
 
         sidebar.bind(sidebar_refs, shared, load_events)
-        overview_tab.bind(overview, shared, upload_refs)
+        overview_tab.bind(overview, shared, upload_refs, load_events)
         attribution_tab.bind(attribution, shared, upload_refs, load_events)
         comparison_tab.bind(comparison, shared, upload_refs)
         workflow_tab.bind(workflow, shared)

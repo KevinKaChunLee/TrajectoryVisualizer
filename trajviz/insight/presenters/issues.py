@@ -407,7 +407,7 @@ def render_overview_issues_html(
     hint = (
         "LLM Change/Fix attached — click a step to open Workflow"
         if judged
-        else "Ranked workflow problems — click a step to open Workflow, or Suggest fixes"
+        else "Ranked workflow problems — click a step to open Workflow; fixes auto-suggest when configured"
     )
     return (
         "<details class='overview-issues-panel' id='overview-issues' open>"
