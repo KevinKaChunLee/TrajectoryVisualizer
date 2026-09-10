@@ -390,8 +390,22 @@ def render_overview_issues_html(
 
     progress_html = ""
     if progress:
+        # Inline keyframes + SVG so the spinner still moves even if APP_CSS
+        # animation rules fail to apply inside Gradio's HTML updates.
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
+            "<style>"
+            "@keyframes overview-issues-spin{to{transform:rotate(360deg)}}"
+            ".overview-issues-progress-dot{"
+            "box-sizing:border-box;display:inline-block;width:12px;height:12px;"
+            "border-radius:50%;"
+            "border:2px solid rgba(29,78,216,0.25);border-top-color:#1d4ed8;"
+            "flex-shrink:0;animation:overview-issues-spin .7s linear infinite"
+            "}"
+            "@media (prefers-reduced-motion:reduce){"
+            ".overview-issues-progress-dot{animation:none;border-color:#1d4ed8}"
+            "}"
+            "</style>"
             "<span class='overview-issues-progress-label'>Thinking…</span>"
             "<span class='overview-issues-progress-dot' aria-hidden='true'></span>"
             f"<span>{html.escape(progress)}</span>"

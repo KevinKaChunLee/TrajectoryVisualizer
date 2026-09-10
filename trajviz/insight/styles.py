@@ -1052,20 +1052,26 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 .overview-issues-progress-label {
     flex-shrink: 0;
 }
+/* Spinning ring — more visible than opacity pulse; survives Gradio HTML swaps better to notice. */
 .overview-issues-progress-dot {
-    width: 8px;
-    height: 8px;
+    box-sizing: border-box;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background: var(--ov-accent, #1d4ed8);
+    border: 2px solid color-mix(in srgb, var(--ov-accent, #1d4ed8) 28%, transparent);
+    border-top-color: var(--ov-accent, #1d4ed8);
     flex-shrink: 0;
-    animation: overview-issues-pulse 1s ease-in-out infinite;
+    animation: overview-issues-spin 0.7s linear infinite;
 }
-@keyframes overview-issues-pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.35; transform: scale(0.85); }
+@keyframes overview-issues-spin {
+    to { transform: rotate(360deg); }
 }
 @media (prefers-reduced-motion: reduce) {
-    .overview-issues-progress-dot { animation: none; opacity: 0.7; }
+    .overview-issues-progress-dot {
+        animation: none;
+        border-color: var(--ov-accent, #1d4ed8);
+        opacity: 0.85;
+    }
 }
 .judge-badge {
     display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px;
