@@ -823,7 +823,6 @@ def detect_performance_bottlenecks(
         tool_target = str(dt.get("target") or "")
         tool_s = float(decomp.get("tool_s") or 0)
         idle_s = float(decomp.get("idle_s") or 0)
-        inference_s = float(decomp.get("inference_s") or 0)
 
         if cause == "idle":
             title = f"Idle/queue bottleneck before #{idx} ({idle_s:.0f}s gap)"

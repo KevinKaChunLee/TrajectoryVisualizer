@@ -12,7 +12,6 @@ from trajviz.insight.issue_judge import (
 )
 from trajviz.insight.llm_config import AnalysisLLMConfig
 from trajviz.insight.presenters.issues import (
-    IssueJudgment,
     OverviewIssue,
     collect_overview_issues,
     rank_issues,
