@@ -480,12 +480,16 @@ def bind(
                 short = progress.current_title
                 if len(short) > 48:
                     short = short[:45] + "…"
-                status = (
-                    f"<span style='font-size:12px;color:var(--ov-muted);'>"
-                    f"Judging {progress.current}/{progress.total} — "
-                    f"{html.escape(short)}</span>"
+                progress_line = (
+                    f"Suggesting fixes {progress.current}/{progress.total} — {short}"
                 )
-                yield build_overview_issues_html(session, issues=judged), status
+                status = (
+                    f"<span style='font-size:12px;font-weight:600;color:var(--ov-accent);'>"
+                    f"{html.escape(progress_line)}</span>"
+                )
+                yield build_overview_issues_html(
+                    session, issues=judged, progress=progress_line,
+                ), status
                 continue
 
             ok = sum(1 for i in judged if i.judgment is not None)

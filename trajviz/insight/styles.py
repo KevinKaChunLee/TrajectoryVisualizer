@@ -1035,6 +1035,32 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     padding: 0 12px 10px;
     border-top: 1px solid var(--ov-border);
 }
+.overview-issues-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 8px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--ov-banner-border, #c7d7f6);
+    background: var(--ov-insight-bg, #f0f4ff);
+    color: var(--ov-accent, #1d4ed8);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
+}
+.overview-issues-progress-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ov-accent, #1d4ed8);
+    flex-shrink: 0;
+    animation: overview-issues-pulse 1s ease-in-out infinite;
+}
+@keyframes overview-issues-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.85); }
+}
 .judge-badge {
     display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px;
     border-radius: 4px; color: white; text-transform: uppercase;

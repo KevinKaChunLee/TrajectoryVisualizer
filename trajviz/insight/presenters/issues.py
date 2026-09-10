@@ -375,13 +375,26 @@ def render_overview_issues_html(
     issues: list[OverviewIssue],
     *,
     banner: str = "",
+    progress: str = "",
 ) -> str:
-    """Render a foldable Issues panel (healthy empty state when *issues* is empty)."""
+    """Render a foldable Issues panel (healthy empty state when *issues* is empty).
+
+    *progress* is a live status line shown inside the panel while the LLM judge runs.
+    """
     banner_html = ""
     if banner:
         banner_html = (
             f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>"
             f"{html.escape(banner)}</div>"
+        )
+
+    progress_html = ""
+    if progress:
+        progress_html = (
+            "<div class='overview-issues-progress' role='status' aria-live='polite'>"
+            "<span class='overview-issues-progress-dot' aria-hidden='true'></span>"
+            f"<span>{html.escape(progress)}</span>"
+            "</div>"
         )
 
     if not issues:
@@ -392,6 +405,7 @@ def render_overview_issues_html(
             "<span class='overview-issues-summary-meta'>none detected</span>"
             "</summary>"
             "<div class='overview-issues-body'>"
+            f"{progress_html}"
             f"{banner_html}"
             "<div style='padding:8px 0 4px;color:var(--ov-muted);text-align:center;font-size:13px;'>"
             "No major workflow issues detected."
@@ -401,12 +415,14 @@ def render_overview_issues_html(
     count = len(issues)
     judged = sum(1 for i in issues if i.judgment is not None)
     count_label = f"{count} issue{'s' if count != 1 else ''}"
-    if judged:
+    if progress:
+        count_label += " · suggesting fixes…"
+    elif judged:
         count_label += f" · {judged} with LLM fix"
 
     hint = (
         "LLM Change/Fix attached — click a step to open Workflow"
-        if judged
+        if judged and not progress
         else "Ranked workflow problems — click a step to open Workflow; fixes auto-suggest when configured"
     )
     return (
@@ -416,6 +432,7 @@ def render_overview_issues_html(
         f"<span class='overview-issues-summary-meta'>{html.escape(count_label)}</span>"
         "</summary>"
         "<div class='overview-issues-body'>"
+        f"{progress_html}"
         f"{banner_html}"
         f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>{hint}</div>"
         + "".join(_issue_card(issue) for issue in issues)
@@ -428,10 +445,11 @@ def build_overview_issues_html(
     *,
     issues: list[OverviewIssue] | None = None,
     banner: str = "",
+    progress: str = "",
 ) -> str:
     """Collect, rank, and render Overview Issues for *session*."""
     if issues is None:
         ranked = rank_issues(collect_overview_issues(session))
     else:
         ranked = list(issues)
-    return render_overview_issues_html(ranked, banner=banner)
+    return render_overview_issues_html(ranked, banner=banner, progress=progress)

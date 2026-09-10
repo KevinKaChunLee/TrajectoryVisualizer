@@ -120,6 +120,24 @@ class OverviewIssuesTests(unittest.TestCase):
         )
         self.assertEqual(issues, [])
 
+    def test_progress_banner_visible_while_judging(self):
+        html = render_overview_issues_html(
+            [
+                OverviewIssue(
+                    kind="error",
+                    title="Bash: exit 1 (1×)",
+                    detail="boom",
+                    why="x",
+                    steps=(3,),
+                )
+            ],
+            progress="Suggesting fixes 1/3 — Bash: exit 1 (1×)",
+        )
+        self.assertIn("overview-issues-progress", html)
+        self.assertIn("Suggesting fixes 1/3", html)
+        self.assertIn("suggesting fixes…", html)
+        self.assertNotIn(">Change<", html)
+
     def test_step_chips_without_fix_or_change(self):
         html = render_overview_issues_html([
             OverviewIssue(
