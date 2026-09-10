@@ -33,7 +33,6 @@ from ..help import HELP_TEXT
 from ..loaders import FORMAT_LABELS
 from ..metrics import extract_agent_info
 from ..rendering import (
-    _diag_jump_onclick,
     build_root_cause_html,
     render_agent_summary_cards,
 )
@@ -43,23 +42,6 @@ from ..session import MAX_STEPS, LoadedSession
 def trajectory_format_label(fmt: str | None) -> str:
     """Return a human-readable trajectory format label."""
     return FORMAT_LABELS.get(fmt or "", fmt or "Unknown")
-
-
-def _build_anomaly_strip_html(anomalies: list[dict]) -> str:
-    """Render clickable anomaly badges with data-step-idx attributes."""
-    if not anomalies:
-        return ""
-    badges = []
-    for a in anomalies:
-        idx = a["step_idx"]
-        onclick = _diag_jump_onclick(idx)
-        badges.append(
-            f"<span class='anomaly-badge' data-step-idx='{idx}'"
-            f" onclick=\"{onclick}\" style='cursor:pointer;'>"
-            f"{html.escape(a['type'])}: #{idx} ({html.escape(a['value'])})"
-            f"</span>"
-        )
-    return "<div class='anomaly-strip'>" + "".join(badges) + "</div>"
 
 
 def _build_sparkline_svg(values: list[float], width: int = 100, height: int = 20) -> str:
@@ -123,7 +105,13 @@ def _build_session_detail_html(
         f"{html.escape(str(val))}</span></div>"
         for label, val in fields
     )
-    return f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>{chips}</div>"
+    return (
+        "<details class='session-detail' style='margin:0 0 10px;'>"
+        "<summary style='cursor:pointer;font-size:12px;color:var(--ov-muted);"
+        "user-select:none;'>Session details</summary>"
+        f"<div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;'>{chips}</div>"
+        "</details>"
+    )
 
 
 def build_overview_kpi_html(
@@ -236,16 +224,13 @@ def empty_plotly_fig() -> go.Figure:
 
 
 def build_summary_outputs(session: LoadedSession) -> dict:
-    """Banner and anomaly strip for the upload row."""
-    banner = format_banner_html(
-        os.path.basename(session.path),
-        session.metrics,
-        session.wall_clock,
-        trajectory_format=session.format,
-    )
+    """Legacy helper: stats one-liner (kept for tests; not shown in the live UI)."""
     return {
-        "banner": banner,
-        "anomaly_html": _build_anomaly_strip_html(session.anomalies),
+        "banner": format_banner_html(
+            os.path.basename(session.path),
+            session.metrics,
+            session.wall_clock,
+        ),
     }
 
 

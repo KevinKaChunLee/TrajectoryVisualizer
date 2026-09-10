@@ -80,7 +80,6 @@ class LoadedSession:
     agent_summaries: list[dict]
     step_analytics: list[dict]
     wall_clock: str
-    anomalies: list[dict]
     tool_sequences: list[dict]
     failure_patterns: list[dict]
     file_interactions: list[dict]
@@ -101,68 +100,6 @@ class LoadedSession:
     repeated_searches: list
     phase_regressions: list
     truncated: bool = False
-
-
-def compute_anomalies(message_rows: list[dict]) -> list[dict]:
-    """Return a list of anomaly dicts (type, step_idx, value) from message rows."""
-    anomalies: list[dict] = []
-    if not message_rows:
-        return anomalies
-
-    with_dur = [r for r in message_rows if r.get("duration") is not None]
-    if with_dur:
-        longest = max(with_dur, key=lambda r: r["duration"])
-        anomalies.append(
-            {
-                "type": "Slowest",
-                "step_idx": longest["index"],
-                "value": f"{longest['duration']:.1f}s",
-            }
-        )
-
-    highest_tok = max(message_rows, key=lambda r: r["tokens_total"])
-    if highest_tok["tokens_total"] > 0:
-        anomalies.append(
-            {
-                "type": "Most Tokens",
-                "step_idx": highest_tok["index"],
-                "value": f"{highest_tok['tokens_total']:,} tok",
-            }
-        )
-
-    asst_with_tok = [r for r in message_rows if r.get("role") == "assistant" and r["tokens_total"] > 0]
-    if asst_with_tok:
-        lowest_cache = min(asst_with_tok, key=lambda r: r["cache_ratio"])
-        anomalies.append(
-            {
-                "type": "Lowest Cache",
-                "step_idx": lowest_cache["index"],
-                "value": f"{lowest_cache['cache_ratio'] * 100:.1f}%",
-            }
-        )
-
-    with_tools = [r for r in message_rows if r["tool_calls"] > 0]
-    if with_tools:
-        most_tools = max(with_tools, key=lambda r: r["tool_calls"])
-        anomalies.append(
-            {
-                "type": "Most Tools",
-                "step_idx": most_tools["index"],
-                "value": f"{most_tools['tool_calls']} calls",
-            }
-        )
-
-    error_steps = [r for r in message_rows if r.get("error_count", 0) > 0]
-    if error_steps:
-        anomalies.append(
-            {
-                "type": "Errors",
-                "step_idx": error_steps[0]["index"],
-                "value": f"{len(error_steps)} step(s)",
-            }
-        )
-
-    return anomalies[:5]
 
 
 def _path_exists(file_path: str) -> bool:
@@ -273,7 +210,6 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         agent_summaries=agent_summaries,
         step_analytics=step_analytics,
         wall_clock=wfmt,
-        anomalies=compute_anomalies(message_rows),
         tool_sequences=detect_tool_sequences(steps),
         failure_patterns=detect_failure_patterns(steps),
         file_interactions=interactions,

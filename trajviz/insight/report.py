@@ -93,11 +93,12 @@ def build_report_html(
         _header_html(title, basename, fmt_label, generated, load_warnings_html(session)),
         _section(
             "Summary",
-            ov["banner"] + ov["anomaly_html"] + ov["kpi_html"] + ov["session_detail"]
-            + issues_panel
-            + _mixed_md_to_html(ov["metrics_text"]),
+            issues_panel
+            + ov["kpi_html"]
+            + ov["session_detail"],
         ),
         charts(figures[:2]),
+        _section("Deep dive", _mixed_md_to_html(ov["metrics_text"])),
         _section("Context utilization", dg["diag_pressure_html"]),
         charts(figures[2:3]),
         _section("Tools", _mixed_md_to_html(ov["behavior_text"])),

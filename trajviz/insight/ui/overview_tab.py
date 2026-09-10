@@ -96,10 +96,11 @@ OVERVIEW_SECTION_NAMES = [
 ]
 
 
-def layout() -> OverviewRefs:
+def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
     with gr.TabItem("Overview"):
+        # Debug hero: Issues first; KPI strip lives above the main Tabs.
+        issues_html = gr.HTML("")
         session_detail_html = gr.HTML("")
-        overview_kpi_html = gr.HTML("", elem_classes=["overview-kpi-strip"])
 
         overview_section_names = OVERVIEW_SECTION_NAMES
         with gr.Row(elem_classes=["overview-content-layout"]):
@@ -116,7 +117,6 @@ def layout() -> OverviewRefs:
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_summary'])}</div>")
-                    issues_html = gr.HTML("")
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
                         duration_chart = gr.Plot(
@@ -124,7 +124,6 @@ def layout() -> OverviewRefs:
                             label="Step Duration",
                             elem_id="duration-chart",
                         )
-                    metrics_md = gr.Markdown("")
 
                 with gr.Column(visible=False) as efficiency_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_context_utilization'])}</div>")
@@ -202,6 +201,8 @@ def layout() -> OverviewRefs:
                     plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
 
                 with gr.Column(visible=False) as deep_dive_section:
+                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_deep_dive'])}</div>")
+                    metrics_md = gr.Markdown("")
                     hotspots_md = gr.Markdown("")
                     per_message_md = gr.Markdown("")
 
@@ -303,7 +304,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
     fig = empty_plotly_fig()
     if session is None:
         return {
-            "overview_kpi_html": "",
+            "overview_kpi_html": gr.update(value="", visible=False),
             "session_detail_html": "",
             "issues_html": "",
             "metrics_md": "",
@@ -342,7 +343,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
     ch = build_chart_outputs(session, dark=dark)
     dg = build_diagnostics_outputs(session, dark=dark)
     return {
-        "overview_kpi_html": ov["kpi_html"],
+        "overview_kpi_html": gr.update(value=ov["kpi_html"], visible=True),
         "session_detail_html": ov["session_detail"],
         "issues_html": build_overview_issues_html(session),
         "metrics_md": ov["metrics_text"],

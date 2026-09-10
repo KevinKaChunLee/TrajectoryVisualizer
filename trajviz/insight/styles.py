@@ -187,31 +187,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 #wf-detail-content {
     text-align: left;
 }
-/* Anomaly strip */
-.anomaly-strip {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin: 0 0 16px 0;
-}
-.anomaly-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: var(--ov-anomaly-bg);
-    border: 1px solid var(--ov-anomaly-border);
-    border-radius: 8px;
-    padding: 4px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--ov-anomaly-text);
-    cursor: pointer;
-    transition: box-shadow 0.15s, background 0.15s;
-}
-.anomaly-badge:hover {
-    background: var(--ov-anomaly-hover);
-    box-shadow: 0 2px 6px rgba(245,158,11,0.25);
-}
 
 /* KPI card verdict indicator */
 .ov-kpi-card[data-status="good"] {

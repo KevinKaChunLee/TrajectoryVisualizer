@@ -33,8 +33,14 @@ def build_ui() -> gr.Blocks:
 
         sidebar_refs = sidebar.layout()
         upload_refs = upload.layout()
+        # Global health strip — above Overview/Patterns/… so it stays visible on every tab.
+        overview_kpi_html = gr.HTML(
+            "",
+            visible=False,
+            elem_classes=["overview-kpi-strip"],
+        )
         with gr.Tabs(visible=False) as main_tabs:
-            overview = overview_tab.layout()
+            overview = overview_tab.layout(overview_kpi_html)
             patterns = patterns_tab.layout()
             attribution = attribution_tab.layout()
             comparison = comparison_tab.layout()

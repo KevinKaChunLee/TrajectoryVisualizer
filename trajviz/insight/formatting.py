@@ -322,8 +322,7 @@ def wall_clock_fmt(metrics: dict) -> tuple[float, str]:
     return wall, fmt
 
 
-def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
-                       *, trajectory_format: str | None = None) -> str:
+def format_banner_html(filename: str, metrics: dict, wall_fmt: str) -> str:
     """Build the one-line HTML summary banner for the loaded trajectory."""
     import html as _html
     parts = [
@@ -343,25 +342,7 @@ def format_banner_html(filename: str, metrics: dict, wall_fmt: str,
     parts.append(f"{wall_fmt} wall-clock")
     if metrics.get("reasoning_parts", 0) > 0:
         parts.append(f" &middot; {metrics['reasoning_parts']} reasoning")
-    banner = "".join(parts)
-
-    # Format-specific advisory notes
-    note_style = (
-        "margin-top:6px;padding:4px 10px;background:#fef3c7;"
-        "border-left:3px solid #d97706;border-radius:4px;"
-        "font-size:12px;color:#92400e;"
-    )
-    if trajectory_format in ("opencode", "codearts"):
-        format_name = "CodeArts" if trajectory_format == "codearts" else "OpenCode"
-        banner += (
-            f"<div style='{note_style}'>"
-            f"{format_name} format — Token Usage by Step shows all five fields stacked: "
-            "Fresh Input + Cache Read + Output + Reasoning = Total, with Cache Write as the 5th segment. "
-            "Cache Read can dominate each bar because the source records it as a running "
-            "conversation prefix."
-            "</div>"
-        )
-    return banner
+    return "".join(parts)
 
 
 def format_context_pressure_html(
