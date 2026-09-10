@@ -34,17 +34,6 @@ AGENT_CSS_COLORS = [
     ("#ede9fe", "#8b5cf6"),                    # violet
 ]
 
-# Role colors for step type identification in charts.
-ROLE_COLORS = {
-    "error": "#dc2626",       # red
-    "stop": "#059669",        # green
-    "tool": "#d97706",        # amber/orange
-    "reasoning": "#7c3aed",   # purple
-    "user": "#1e40af",        # dark blue
-    "assistant": "#92400e",   # brown
-    "default": "#6b7280",     # grey
-}
-
 # Step Duration chart: scaffold primitives vs agentic/custom tool failures.
 DURATION_ERROR_COLORS = {
     "system": "#d97706",  # amber — Grep / Read / Write / …

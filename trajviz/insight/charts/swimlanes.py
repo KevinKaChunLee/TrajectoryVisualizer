@@ -14,7 +14,7 @@ from ._layout import (
 import plotly.graph_objects as go
 
 from ..palette import SESSION_COLORS, TOOL_OUTCOME_COLORS
-from ..patterns import tool_chart_name
+from ..shell_cmd import tool_chart_name
 from ._timeline import (
     _disambiguate_timeline_labels,
     _legend_label,

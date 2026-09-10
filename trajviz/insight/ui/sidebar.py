@@ -67,19 +67,19 @@ def layout() -> SidebarRefs:
 def bind(refs: SidebarRefs, shared: SharedState, load_events) -> None:
     state_analysis_brief = shared.state_analysis_brief
 
-    def on_trajectory_for_analysis(steps, raw):
-        """Pack dashboard stats, then run the first analysis pass."""
+    def on_trajectory_for_analysis(steps, brief):
+        """First LLM pass using the brief packed from LoadedSession at load."""
         if not steps:
             return "", [], config_status_html(loaded_steps=0)
-        brief, history = analyze_loaded_trajectory(
-            steps, raw if isinstance(raw, dict) else {},
-        )
+        # Always pass the packed string so detectors are not rebuilt on load.
+        packed = brief if isinstance(brief, str) else ""
+        brief, history = analyze_loaded_trajectory(steps, brief=packed)
         return brief, history, config_status_html(loaded_steps=len(steps))
 
     for _ev in load_events:
         _ev.then(
             fn=on_trajectory_for_analysis,
-            inputs=[shared.state_steps, shared.state_raw],
+            inputs=[shared.state_steps, state_analysis_brief],
             outputs=[state_analysis_brief, refs.analysis_chatbot, refs.analysis_status],
         )
 

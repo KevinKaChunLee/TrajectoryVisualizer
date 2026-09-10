@@ -189,13 +189,3 @@ def bind_timeline_agents(
     color_map = {aid: i for i, aid in enumerate(order)}
     labels = _disambiguate_timeline_labels(list(color_map.keys()), steps)
     return color_map, labels, agent_id
-
-
-def build_agent_color_map(steps: list[dict]) -> dict[str, int]:
-    """Return a mapping from timeline agent-id to palette index.
-
-    Empty string is index 0 (main) when a step maps to it. Other agents
-    follow in first-seen order.
-    """
-    color_map, _labels, _agent_id = bind_timeline_agents(steps)
-    return color_map

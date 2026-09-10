@@ -359,13 +359,13 @@ Helper utilities that live in `scripts/` (run from the repo root):
 |---|---|
 | `codearts_consolidator.py` | Read-only export from a CodeArts `opencode.db` with recursive child sessions, or lossless archival merge of legacy `messages_<n>.json` shards. See the **CodeArts** collection section above. |
 | `opencode_consolidator.py` | Recursively merge an OpenCode parent session and child sub-agent sessions into a single JSON. See the **OpenCode** collection section above. |
-| `step_labeler.py` | LLM-based per-step classifier. Reads a trajectory and emits a sidecar `*_labeled.json` with phase and action tags from the taxonomy. |
-| `step_labeler_v2.py` | Variant of `step_labeler.py` that emits one record for **every** parsed step: assistant steps via the LLM, user steps as deterministic `user/user_prompt`, with `index`/`raw_index` preserved for exact source mapping. |
-| `TAXONOMY_REFERENCE.md` | Authoritative list of phase and action tags the labeler emits. Auto-loaded by `step_labeler.py` from its own directory. |
+| `step_labeler_v2.py` | **Preferred** LLM step classifier. Emits one label record for **every** parsed step: assistant steps via the LLM, user steps as deterministic `user/user_prompt`, with `index`/`raw_index` preserved for exact source mapping. |
+| `step_labeler.py` | Shared taxonomy/LLM helpers used by v2, plus a **compat CLI** that routes to v2 in assistant-only mode (`*_labeled.json`). Prefer `step_labeler_v2.py` for new work. |
+| `TAXONOMY_REFERENCE.md` | Authoritative list of phase and action tags the labeler emits. Auto-loaded by the labeler from its own directory. |
 
 ### Labeling a trajectory
 
-`step_labeler.py` makes live LLM calls via
+Use **`step_labeler_v2.py`** for new sidecars. It makes live LLM calls via
 `requests`, which is installed by default with the rest of the project.
 
 The labeler needs three config values — provide them via a `.env` file (in
@@ -392,12 +392,15 @@ Optional: `LABEL_PROVIDER` (`openai` | `anthropic`, default `openai`),
 Example invocations:
 
 ```bash
-# Step behavior labels using a .env file in the repo root
+# Preferred: full-index v2 sidecar
+python scripts/step_labeler_v2.py cc_trajectory.json --output cc_trajectory_labeled_v2.json
+
+# Compat CLI: assistant-only sidecar (still routes through v2)
 python scripts/step_labeler.py cc_trajectory.json --output cc_trajectory_labeled.json
 
 # Overriding config on the command line
-python scripts/step_labeler.py cc_trajectory.json \
-    --output cc_trajectory_labeled.json \
+python scripts/step_labeler_v2.py cc_trajectory.json \
+    --output cc_trajectory_labeled_v2.json \
     --base-url https://api.openai.com/v1 \
     --api-key sk-... \
     --model gpt-4o-mini

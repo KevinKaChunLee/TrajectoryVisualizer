@@ -15,7 +15,6 @@ from .context_usage import (
 from .diagnostics import (
     annotate_clusters_with_agents,
     cluster_errors,
-    compute_bottleneck_explanations,
     compute_failure_chain_metrics,
     detect_failure_chains,
     detect_performance_bottlenecks,
@@ -28,6 +27,7 @@ from .formatting import wall_clock_fmt
 from .metrics import (
     build_message_metrics,
     compute_agent_summary,
+    compute_diagnostic_metrics,
     compute_health_verdict,
     compute_metrics,
     validate_token_integrity,
@@ -88,8 +88,8 @@ class LoadedSession:
     failure_chains: list
     chain_metrics: dict
     clusters: list
-    bottleneck_explanations: list
     performance_bottlenecks: list
+    diagnostic_metrics: dict
     pressure_series: dict
     pressure_choices: list
     show_root_cause: bool
@@ -239,7 +239,13 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
     )
     clusters = cluster_errors(steps)
     clusters = annotate_clusters_with_agents(clusters, steps, agent_summaries)
-    bottleneck_explanations = compute_bottleneck_explanations(steps, step_analytics)
+    performance_bottlenecks = detect_performance_bottlenecks(steps, step_analytics)
+    traj = raw.get("trajectory") or raw.get("messages") or []
+    diagnostic_metrics = compute_diagnostic_metrics(
+        steps,
+        traj if isinstance(traj, list) else [],
+        tool_fail=metrics.get("tool_fail"),
+    )
     pressure_series = context_pressure_series(
         steps,
         agent_key=PRESSURE_ALL_AGENTS,
@@ -275,8 +281,8 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         failure_chains=chains,
         chain_metrics=chain_metrics,
         clusters=clusters,
-        bottleneck_explanations=bottleneck_explanations,
-        performance_bottlenecks=detect_performance_bottlenecks(steps, step_analytics),
+        performance_bottlenecks=performance_bottlenecks,
+        diagnostic_metrics=diagnostic_metrics,
         pressure_series=pressure_series,
         pressure_choices=pressure_choices,
         show_root_cause=detected not in _NOISY_ROOT_CAUSE_FORMATS,

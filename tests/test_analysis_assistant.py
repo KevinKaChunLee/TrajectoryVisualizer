@@ -284,6 +284,7 @@ class AnalysisUiTests(unittest.TestCase):
         source = inspect.getsource(sidebar)
         self.assertIn("🤖 AI Trajectory Analysis", source)
         self.assertIn("analyze_loaded_trajectory", source)
+        self.assertIn("answer_question", source)
         self.assertNotIn("suggest_btns", source)
         self.assertNotIn("Where did it go wrong?", source)
         self.assertNotIn("analysis-panel-sub", source)

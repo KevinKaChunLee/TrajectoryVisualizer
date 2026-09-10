@@ -10,6 +10,7 @@ from typing import Any
 
 import gradio as gr
 
+from ..assistant import build_analysis_brief_from_session
 from ..loaders import FORMAT_LABELS
 from ..session import LoadError, LoadedSession, load_session
 from . import overview_tab, patterns_tab, raw_tab, upload, workflow_tab
@@ -45,11 +46,13 @@ def pack_shell(session: LoadedSession | None = None, *, dark: bool = False, bann
             "main_tabs": gr.update(visible=False),
             "state_steps": [],
             "state_raw": {},
+            "state_analysis_brief": "",
         }
     return {
         "main_tabs": gr.update(visible=True),
         "state_steps": session.steps,
         "state_raw": session.raw,
+        "state_analysis_brief": build_analysis_brief_from_session(session),
     }
 
 
@@ -58,6 +61,7 @@ def _shell_slots(ctx: LoadContext) -> dict[str, Any]:
         "main_tabs": ctx.main_tabs,
         "state_steps": ctx.shared.state_steps,
         "state_raw": ctx.shared.state_raw,
+        "state_analysis_brief": ctx.shared.state_analysis_brief,
     }
 
 
