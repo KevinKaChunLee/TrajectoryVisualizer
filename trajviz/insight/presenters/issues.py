@@ -392,6 +392,7 @@ def render_overview_issues_html(
     if progress:
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
+            "<span class='overview-issues-progress-label'>Thinking…</span>"
             "<span class='overview-issues-progress-dot' aria-hidden='true'></span>"
             f"<span>{html.escape(progress)}</span>"
             "</div>"

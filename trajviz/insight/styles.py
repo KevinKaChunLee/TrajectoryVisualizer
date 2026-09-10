@@ -1049,6 +1049,9 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     font-weight: 600;
     line-height: 1.35;
 }
+.overview-issues-progress-label {
+    flex-shrink: 0;
+}
 .overview-issues-progress-dot {
     width: 8px;
     height: 8px;
@@ -1060,6 +1063,9 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 @keyframes overview-issues-pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: 0.35; transform: scale(0.85); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .overview-issues-progress-dot { animation: none; opacity: 0.7; }
 }
 .judge-badge {
     display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px;
