@@ -4,7 +4,7 @@
 
 TrajViz loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
-Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, **Codex CLI**, **Pi**, and **DeepSeek Harness** out of the box.
+Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, **ICode**, **Codex CLI**, **Pi**, and **DeepSeek Harness** out of the box.
 
 ---
 
@@ -143,13 +143,15 @@ trajviz normalizes the following formats. **Auto-detect** is the default —
 upload a `.json` / `.jsonl` / `.zip` file and load it. Pick a specific format only to
 override detection or to load a Claude Code export that lacks the usual
 `format` marker. An explicit pick still rejects a mismatched JSON file
-(Codex, Pi, and DeepSeek Harness `.jsonl` sessions are recognized regardless of the dropdown):
+(Codex, Pi, and DeepSeek Harness `.jsonl` sessions, and ICode expanded-session
+JSON, are recognized regardless of the dropdown):
 
 | Format | Detection | Notes |
 |---|---|---|
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
+| ICode | `_chrys_export.format: chrys-expanded-session-v1` (or `meta` + `state.messages`) | Normalized from a Chrys expanded-session JSON; `glob` / `grep` / `sh` / `explore_agent` mapped into the shared step model. Nested `_chrys_sub_agent_sessions` are flattened. |
 | Codex CLI | `.jsonl` rollout starting with a `session_meta` event | Normalized into the shared step model (Auto-detect recognizes `.jsonl` uploads); tool intent (Read / Grep / Glob / Write / Bash) inferred from classic `exec_command` calls and modern `exec` / `apply_patch` records |
 | Pi | `.jsonl` session starting with a `session` event | Normalized from `~/.pi/agent/sessions/` exports; `bash` / `read` / `write` / `edit` / `grep` mapped into the shared step model |
 | DeepSeek Harness | `.jsonl` session starting with a `session` header that has `createdAt` (epoch ms) and slash-typed body events (`user/message`, `tool/call`, …) | Normalized from a DSH export folder or zip (`session.jsonl` + `subagents/<id>/session.jsonl`); `bash` / `read` / `write` / `glob` / `todo_write` / `subagent_fork` mapped into the shared step model. Child logs drop the inherited parent prefix (`seedLength`). |
@@ -298,6 +300,18 @@ The consolidator can also merge an old folder-based session
 archival JSON. That legacy output preserves the original message records for
 reproducibility but is **not** loadable by the dashboard, which only supports
 the current export format.
+
+### ICode
+
+ICode (Chrys) expanded-session exports are a JSON object with `meta`,
+`state.messages`, and `_chrys_export.format: chrys-expanded-session-v1`.
+Sub-agent runs are nested under `_chrys_sub_agent_sessions` in the same file.
+
+1. Export the session from ICode / chrys-manager as expanded session JSON
+   (not the compressed transcript).
+2. Upload the `.json` file. Auto-detect recognizes the Chrys envelope.
+   `glob` / `grep` / `sh` / `explore_agent` map into the shared tool
+   vocabulary, and nested sub-agent sessions are threaded into the step model.
 
 ### Codex CLI
 

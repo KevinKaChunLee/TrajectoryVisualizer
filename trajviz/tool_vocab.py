@@ -10,7 +10,7 @@ Every consumer now imports from here; add new scaffold tool names HERE only.
 
 # Tools whose successful invocation writes file content. Mixed casings are the
 # literal spellings emitted by the supported scaffolds (Claude Code, OpenCode,
-# CodeArts, Codex CLI, Pi, DeepSeek Harness adapters).
+# CodeArts, ICode, Codex CLI, Pi, DeepSeek Harness adapters).
 WRITE_TOOL_NAMES: frozenset[str] = frozenset({
     "Edit", "edit", "Write", "write",
     "NotebookEdit", "patch",
@@ -75,17 +75,18 @@ def parse_skill_name(tool_name: str, tool_input: object) -> str | None:
 
 # Tools that spawn a child agent / sub-session. Mixed casings are the literal
 # names emitted by Claude Code (Task), OpenCode (task / Agent), DSH
-# (subagent / subagent_fork), and Codex (spawn_agent).
+# (subagent / subagent_fork), Codex (spawn_agent), and ICode (explore_agent).
 SPAWN_TOOL_NAMES: frozenset[str] = frozenset({
     "Agent", "agent",
     "Task", "task",
     "subagent", "subagent_fork",
     "spawn_agent",
+    "explore_agent",
 })
 
-# Shell tool spellings across Claude Code, OpenCode/Pi/DSH, and adapters.
+# Shell tool spellings across Claude Code, OpenCode/Pi/DSH/ICode, and adapters.
 BASH_TOOL_NAMES: frozenset[str] = frozenset({
-    "Bash", "bash", "BashCommand",
+    "Bash", "bash", "BashCommand", "sh",
 })
 
 # Scaffold/harness primitives (search, file I/O). Failures of these are
