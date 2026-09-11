@@ -67,16 +67,6 @@ def _icode_parse_arguments(arguments: Any) -> dict:
     return {"raw": arguments}
 
 
-def _icode_tool_title_hint(arguments: Any) -> str:
-    """Short human label (the command/pattern/etc.) from a tool call's arguments."""
-    args = _icode_parse_arguments(arguments)
-    for key in ("command", "file_path", "path", "pattern", "description", "prompt"):
-        v = args.get(key)
-        if isinstance(v, str) and v:
-            return v[:80]
-    return ""
-
-
 def _icode_normalize_tool(name: Any, arguments: Any, tool_kind: str = "") -> tuple[str, dict]:
     raw_name = name if isinstance(name, str) else ""
     canonical = _ICODE_TOOL_NAMES.get(raw_name.lower(), raw_name) if raw_name else ""
@@ -108,13 +98,6 @@ def _icode_iter_contents(contents: Any):
                 yield {"type": "text", "text": item}
         elif isinstance(item, dict):
             yield item
-
-
-def _icode_group_tokens(message: dict) -> dict | None:
-    count = _icode_dict(_icode_props(message).get("_group")).get("token_count")
-    if isinstance(count, bool) or not isinstance(count, (int, float)) or count <= 0:
-        return None
-    return {"total": int(count)}
 
 
 def _icode_tool_part(name: Any, arguments: Any, call_id: str, tool_kind: str = "") -> dict:
@@ -179,14 +162,14 @@ def _icode_spawn_metadata(
     call_id: str,
     children_by_invocation: dict,
     children_by_call: dict,
-) -> tuple[dict, dict | None]:
+) -> dict:
     result_meta = _icode_dict(result_props.get("_chrys_tool_result_metadata"))
     invocation = _icode_str(result_meta.get("sub_agent_invocation_id"))
     child = children_by_invocation.get(invocation) if invocation else None
     if child is None and call_id:
         child = children_by_call.get(call_id)
     if child is None:
-        return {}, None
+        return {}
     child_meta = _icode_dict(child.get("meta"))
     extra: dict[str, Any] = {}
     child_id = _icode_child_session_id(child_meta)
@@ -199,7 +182,7 @@ def _icode_spawn_metadata(
     ended = _iso_to_epoch_ms(child_meta.get("ended_at"))
     if created is not None and ended is not None and ended >= created:
         extra["totalDurationMs"] = ended - created
-    return extra, child
+    return extra
 
 
 def _icode_function_result_fields(item: dict) -> tuple[str, bool, str | None, dict]:
@@ -249,7 +232,7 @@ def _convert_icode_messages(
         message_id: str = "",
         tokens: dict | None = None,
         finish: str = "",
-    ) -> dict:
+    ) -> None:
         info: dict[str, Any] = {
             "role": role,
             "time": {"created": ts or 0},
@@ -270,9 +253,7 @@ def _convert_icode_messages(
             info["tokens"] = tokens
         if finish:
             info["finish"] = finish
-        record = {"info": info, "parts": parts, "message_id": message_id}
-        out.append(record)
-        return record
+        out.append({"info": info, "parts": parts, "message_id": message_id})
 
     def _track(part: dict, call_id: str) -> None:
         if call_id:
@@ -289,11 +270,17 @@ def _convert_icode_messages(
     for message in messages:
         if not isinstance(message, dict):
             continue
-        if _icode_props(message).get("_chrys_kind") == "turn":
+        props = _icode_props(message)
+        if props.get("_chrys_kind") == "turn":
             continue
         role = _icode_str(message.get("role"))
-        ts = _iso_to_epoch_ms(_icode_props(message).get("_chrys_created_at"))
-        tokens = _icode_group_tokens(message)
+        ts = _iso_to_epoch_ms(props.get("_chrys_created_at"))
+        count = _icode_dict(props.get("_group")).get("token_count")
+        tokens = (
+            {"total": int(count)}
+            if not isinstance(count, bool) and isinstance(count, (int, float)) and count > 0
+            else None
+        )
         message_id = _icode_str(message.get("message_id"))
 
         if role == "user":
@@ -309,25 +296,8 @@ def _convert_icode_messages(
         if role == "assistant":
             parts = []
             has_tools = False
-            # Chrys splits some tool invocations across two function_call
-            # contents in one message: a named stub with empty arguments
-            # (approval request) followed by an anonymous call carrying the
-            # real arguments. Inherit the stub's name/kind so the anonymous
-            # call doesn't render as "?", and give the stub a title from the
-            # paired arguments so both halves show the intended command.
-            stubs: list[tuple[str, str]] = []
-            anon_arg_hints: list[str] = []
-            for item in _icode_iter_contents(message.get("contents")):
-                if item.get("type") in ("function_call", "tool_call", "toolCall"):
-                    stub_name = _icode_str(item.get("name"))
-                    stub_args = _icode_str(item.get("arguments"))
-                    if stub_name and not stub_args.strip():
-                        stub_kind = _icode_str(_icode_dict(item.get("additional_properties")).get("_chrys_tool_kind"))
-                        stubs.append((stub_name, stub_kind))
-                    elif not stub_name and stub_args.strip():
-                        anon_arg_hints.append(_icode_tool_title_hint(item.get("arguments")))
-            stub_iter = iter(stubs)
-            anon_hint_iter = iter(anon_arg_hints)
+            # Named empty-args stub (approval) then anonymous call with real args.
+            pending_stubs: list[tuple[str, str, dict]] = []
             for item in _icode_iter_contents(message.get("contents")):
                 ctype = item.get("type")
                 if ctype in ("reasoning", "thinking"):
@@ -341,13 +311,20 @@ def _convert_icode_messages(
                     tool_kind = _icode_str(_icode_dict(item.get("additional_properties")).get("_chrys_tool_kind"))
                     name = item.get("name")
                     args = item.get("arguments")
-                    if not _icode_str(name) and _icode_str(args).strip():
-                        name, tool_kind = next(stub_iter, ("", tool_kind))
+                    name_s = _icode_str(name)
+                    empty_args = not _icode_str(args).strip()
+                    stub_part = None
+                    if not name_s and not empty_args and pending_stubs:
+                        name, tool_kind, stub_part = pending_stubs.pop(0)
                     part = _icode_tool_part(name, args, call_id, tool_kind)
-                    if _icode_str(name) and not _icode_str(args).strip():
-                        hint = next(anon_hint_iter, "")
-                        if hint:
-                            part["state"]["title"] = hint
+                    if stub_part is not None:
+                        for key in ("command", "file_path", "path", "pattern", "description", "prompt"):
+                            hint = part["state"]["input"].get(key)
+                            if isinstance(hint, str) and hint:
+                                stub_part["state"]["title"] = hint[:80]
+                                break
+                    elif name_s and empty_args:
+                        pending_stubs.append((name_s, tool_kind, part))
                     if ts:
                         time_info = part["state"].setdefault("time", {})
                         if isinstance(time_info, dict) and "start" not in time_info:
@@ -371,8 +348,8 @@ def _convert_icode_messages(
             if item.get("type") not in ("function_result", "tool_result", "toolResult"):
                 continue
             call_id = _icode_str(item.get("call_id") or item.get("id"))
-            output, failed, error_type, props = _icode_function_result_fields(item)
-            extra, child = _icode_spawn_metadata(props, call_id, children_by_invocation, children_by_call)
+            output, failed, error_type, result_props = _icode_function_result_fields(item)
+            extra = _icode_spawn_metadata(result_props, call_id, children_by_invocation, children_by_call)
             part = _take(call_id)
             if part is None:
                 part = _icode_tool_part("?", {}, call_id)
@@ -383,14 +360,14 @@ def _convert_icode_messages(
                 is_error=failed,
                 error_type=error_type,
                 ts=ts,
-                extra_metadata=extra or None,
+                extra_metadata=extra,
             )
             child_id = extra.get("sessionId")
-            if child is not None and isinstance(child_id, str) and converted_children.get(child_id):
+            if child_id and converted_children.get(child_id):
                 parent_idx = len(out) - 1
-                inserts.setdefault(parent_idx, [])
-                if child_id not in inserts[parent_idx]:
-                    inserts[parent_idx].append(child_id)
+                bucket = inserts.setdefault(parent_idx, [])
+                if child_id not in bucket:
+                    bucket.append(child_id)
 
     for part in (*[p for queued in pending_by_id.values() for p in queued], *pending_anon):
         if _icode_dict(part.get("state")).get("status") == "pending":
@@ -423,7 +400,7 @@ def _convert_icode_session(
 ) -> list[dict]:
     meta = _icode_dict(session.get("meta"))
     state = _icode_dict(session.get("state"))
-    session_id = _icode_str(meta.get("session_id")) or _icode_child_session_id(meta) or parent_session_id
+    session_id = _icode_child_session_id(meta) or parent_session_id
     nested = _icode_list(session.get("_chrys_sub_agent_sessions"))
     by_invocation: dict[str, dict] = {}
     by_call: dict[str, dict] = {}
@@ -516,19 +493,10 @@ def _convert_icode_to_internal(raw: dict) -> dict:
             "time": {"created": created_ms, "updated": updated_ms},
         },
         "messages": messages,
-        "_chrys_export": export or None,
+        "_chrys_export": export,
     }
     _convert_opencode_metadata(converted)
-
-    metadata = converted.get("metadata")
-    if not isinstance(metadata, dict):
-        metadata = {}
-        converted["metadata"] = metadata
-
-    model_id = _icode_str(meta.get("model_id")) or metadata.get("model", "")
-    sub_agent_count = metadata.get("sub_agent_count", 0)
-    if not isinstance(sub_agent_count, int):
-        sub_agent_count = len(children)
+    metadata = converted["metadata"]
 
     metadata.update({
         "session_id": session_id,
@@ -536,14 +504,14 @@ def _convert_icode_to_internal(raw: dict) -> dict:
         "directory": directory,
         "directory_name": directory.replace("\\", "/").rsplit("/", 1)[-1] if directory else "",
         "agent": "icode",
-        "model": model_id,
+        "model": _icode_str(meta.get("model_id")),
         "model_provider": _icode_str(meta.get("model_provider")),
         "platform": _icode_str(meta.get("os_name")),
         "originator": "ICode",
         "generator_name": _icode_str(producer.get("name")) or "icode",
         "generator_version": _icode_str(producer.get("version") or meta.get("app_version")),
         "format_version": _icode_str(export.get("format") or meta.get("schema_version")),
-        "sub_agent_count": max(sub_agent_count, len(children)),
+        "sub_agent_count": max(metadata.get("sub_agent_count", 0), len(children)),
         "session_count": 1 + len(children),
         "timestamp_utc": created_iso,
         "export_complete": export.get("complete_relative_to_persisted_data"),
@@ -573,10 +541,7 @@ def _convert_icode_to_internal(raw: dict) -> dict:
         "finished_at": updated_iso,
     }
 
-    stats = converted.get("stats")
-    if not isinstance(stats, dict):
-        stats = {}
-        converted["stats"] = stats
+    stats = converted["stats"]
     failed_tool_calls = 0
     reasoning_parts = 0
     for msg in messages:
@@ -590,7 +555,7 @@ def _convert_icode_to_internal(raw: dict) -> dict:
                 continue
             if part.get("type") != "tool":
                 continue
-            status = _icode_str(part.get("status") or _icode_dict(part.get("state")).get("status"))
+            status = _icode_str(_icode_dict(part.get("state")).get("status"))
             if status == "error" or part.get("error"):
                 failed_tool_calls += 1
     stats["failed_tool_calls"] = failed_tool_calls
