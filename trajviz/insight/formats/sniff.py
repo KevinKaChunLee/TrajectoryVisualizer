@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-_OBJECT_FORMATS = frozenset({"ccsession", "codearts", "opencode"})
+_OBJECT_FORMATS = frozenset({"ccsession", "codearts", "icode", "opencode"})
 _EVENT_FORMATS = frozenset({"codex", "pi", "dsh"})
 _FORMAT_STAMPS = {
     "ccsession": "_cc_format",
     "codearts": "_codearts_format",
+    "icode": "_icode_format",
     "codex": "_codex_format",
     "pi": "_pi_format",
     "dsh": "_dsh_format",
 }
+_CHRYS_EXPANDED_FORMAT = "chrys-expanded-session-v1"
 
 
 def _looks_like_codex_jsonl(events: list) -> bool:
@@ -80,6 +82,37 @@ def _detect_event_stream_format(events: list) -> str:
     return "unknown"
 
 
+def _looks_like_icode_object(raw: dict) -> bool:
+    """True when a JSON object is an ICode / Chrys expanded session.
+
+    Distinct from OpenCode ``info + messages``: ICode uses ``meta`` +
+    ``state.messages`` with ``contents`` arrays, and stamps
+    ``_chrys_export.format = chrys-expanded-session-v1``.
+    """
+    export = raw.get("_chrys_export")
+    if isinstance(export, dict) and export.get("format") == _CHRYS_EXPANDED_FORMAT:
+        return True
+    meta = raw.get("meta")
+    state = raw.get("state")
+    if not isinstance(meta, dict) or not isinstance(state, dict):
+        return False
+    session_id = meta.get("session_id")
+    messages = state.get("messages")
+    if not (isinstance(session_id, str) and session_id and isinstance(messages, list)):
+        return False
+    for message in messages[:8]:
+        if not isinstance(message, dict):
+            continue
+        contents = message.get("contents")
+        if not isinstance(contents, list):
+            continue
+        if message.get("type") == "message":
+            return True
+        if message.get("role") in ("user", "assistant", "tool"):
+            return True
+    return False
+
+
 def _detect_object_format(raw: dict) -> str:
     """Detect format of a parsed JSON object (raw export or already-converted)."""
     # Post-conversion markers: converters build/stamp a dict so a second pass
@@ -92,6 +125,8 @@ def _detect_object_format(raw: dict) -> str:
         return "pi"
     if raw.get("_dsh_format") is True:
         return "dsh"
+    if raw.get("_icode_format") is True:
+        return "icode"
     if raw.get("format") == "ccsession-trajectory":
         return "ccsession"
     # CodeArts exports use an OpenCode-compatible ``info + messages``
@@ -117,6 +152,10 @@ def _detect_object_format(raw: dict) -> str:
         and isinstance(raw.get("messages"), list)
     ):
         return "codearts"
+    # ICode before OpenCode: converted ICode files keep ``info + messages``
+    # plus ``_chrys_export``, and must not be mislabeled as OpenCode.
+    if _looks_like_icode_object(raw):
+        return "icode"
     if isinstance(raw.get("info"), dict) and isinstance(raw.get("messages"), list):
         return "opencode"
     return "unknown"

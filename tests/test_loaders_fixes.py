@@ -314,6 +314,7 @@ class FormatLabelsTests(unittest.TestCase):
             {
                 "ccsession": "Claude Code",
                 "codearts": "CodeArts",
+                "icode": "ICode",
                 "opencode": "OpenCode",
                 "codex": "Codex CLI",
                 "pi": "Pi",
@@ -344,6 +345,7 @@ class FormatSelectionTests(unittest.TestCase):
     def test_explicit_selection_rejects_other_json_format(self):
         self.assertEqual(check_format_selection("opencode", "ccsession"), "mismatch")
         self.assertEqual(check_format_selection("codearts", "opencode"), "mismatch")
+        self.assertEqual(check_format_selection("icode", "opencode"), "mismatch")
         self.assertEqual(check_format_selection("pi", "ccsession"), "mismatch")
         self.assertEqual(check_format_selection("codex", "opencode"), "mismatch")
 

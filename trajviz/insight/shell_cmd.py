@@ -375,16 +375,34 @@ def primary_shell_command(command: str, *, _nesting: int = 0) -> str | None:
     return None
 
 
+def tool_call_hint(tc: dict) -> str:
+    """Short per-call label (command/path/pattern) for chart hovers."""
+    text = tc.get("title") if isinstance(tc.get("title"), str) else ""
+    if not text.strip():
+        inp = tc.get("input")
+        if isinstance(inp, dict):
+            for key in ("command", "file_path", "path", "pattern", "description", "prompt"):
+                v = inp.get(key)
+                if isinstance(v, str) and v.strip():
+                    text = v
+                    break
+    text = " ".join(text.split())
+    if len(text) > 64:
+        text = text[:63] + "…"
+    return text
+
+
 def tool_chart_name(tc: dict) -> str:
     """Chart label for a tool call; expand Bash into the shell command/script."""
     name = tc.get("tool_name") or "(unnamed)"
     if name not in BASH_TOOL_NAMES:
         return name
     inp = tc.get("input")
-    if not isinstance(inp, dict):
-        return name
-    command = inp.get("command")
-    if not isinstance(command, str) or not command.strip():
+    command = inp.get("command") if isinstance(inp, dict) else None
+    if not (isinstance(command, str) and command.strip()):
+        # Split Chrys calls keep the intended command on the stub's title.
+        command = tc.get("title")
+    if not (isinstance(command, str) and command.strip()):
         return name
     return primary_shell_command(command) or name
 

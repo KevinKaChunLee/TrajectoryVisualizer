@@ -83,7 +83,8 @@ class ToolOutcomeTimelineTests(unittest.TestCase):
         ]
         explore = next(t for t in named if t.name == "explore")
         self.assertEqual(list(explore.customdata), [5])
-        self.assertEqual(list(explore.hovertext), ["Failure"])
+        # Hover includes the outcome plus the call's command.
+        self.assertEqual(list(explore.hovertext), ["Failure<br>npm test"])
 
     def test_multi_agent_colors_by_agent_and_shapes_by_outcome(self):
         steps = [
