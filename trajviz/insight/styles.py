@@ -155,12 +155,41 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     font-size: 12px;
     margin-top: 4px;
 }
-.ov-kpi-agent-breakdown {
+.ov-kpi-breakdown {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 7.2em;
+    overflow-y: auto;
+}
+.ov-kpi-breakdown-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 11px;
+    line-height: 1.25;
+    min-width: 0;
+}
+.ov-kpi-breakdown-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+.ov-kpi-breakdown-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+.ov-kpi-breakdown-count {
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
     color: var(--ov-text);
-    margin-top: 4px;
-    line-height: 1.35;
-    word-break: break-word;
+    font-weight: 600;
 }
 
 .insight-step-link {
