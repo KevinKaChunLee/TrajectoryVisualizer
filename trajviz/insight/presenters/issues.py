@@ -23,7 +23,7 @@ _SEVERITY: dict[IssueKind, int] = {
     "bottleneck": 2,
 }
 
-_BORDER: dict[IssueKind, str] = {
+ISSUE_KIND_COLORS: dict[IssueKind, str] = {
     "error": "var(--ov-bad)",
     "antipattern": "var(--ov-warn)",
     "bottleneck": "var(--ov-accent)",
@@ -351,10 +351,10 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
 
 
 def _issue_card(issue: OverviewIssue) -> str:
-    """Render one issue card; Change/Fix only when an LLM judgment is present."""
+    """Compact scan row: title + steps + visible Fix; Why behind a disclosure."""
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
-    border = _BORDER[issue.kind]
+    border = ISSUE_KIND_COLORS[issue.kind]
     steps_html = _step_link_chips(list(issue.steps))
 
     judgment_html = ""
@@ -388,22 +388,33 @@ def _issue_card(issue: OverviewIssue) -> str:
     why_html = ""
     if issue.why:
         why_html = (
+            "<details class='overview-issue-more'>"
+            "<summary class='overview-issue-more-summary'>Why it matters</summary>"
+            f"<div class='overview-issue-more-body'>"
             f"<div style='font-size:11px;color:var(--ov-muted);font-style:italic;"
-            f"margin-top:4px;'>Why it matters: {html.escape(issue.why)}</div>"
+            f"margin-top:4px;'>{html.escape(issue.why)}</div>"
+            f"</div></details>"
         )
 
+    detail_html = (
+        f"<span class='overview-issue-detail'>{detail}</span>" if issue.detail else ""
+    )
     return (
-        f"<div style='padding:10px 12px;background:var(--ov-card);"
-        f"border-left:3px solid {border};border-radius:4px;margin-bottom:8px;'>"
-        f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
-        f"<span style='font-size:12px;font-weight:600;'>{title}</span>"
-        f"<span style='font-size:12px;color:var(--ov-muted);'>{detail}</span>"
+        f"<div class='overview-issue-card' style='border-left-color:{border};'>"
+        f"<div class='overview-issue-head'>"
+        f"<span class='overview-issue-title'>{title}</span>"
+        f"{detail_html}"
         f"</div>"
         f"{steps_html}"
         f"{judgment_html}"
         f"{why_html}"
         f"</div>"
     )
+
+
+def _issue_cards_html(issues: list[OverviewIssue]) -> str:
+    """Render all issue cards (no preview cap)."""
+    return "".join(_issue_card(issue) for issue in issues)
 
 
 def render_overview_issues_html(
@@ -467,9 +478,9 @@ def render_overview_issues_html(
         count_label += f" · {judged} with LLM fix"
 
     hint = (
-        "LLM Change/Fix attached — click a step to open Workflow"
+        "LLM Change/Fix shown below — click a step to open Workflow"
         if judged and not progress
-        else "Ranked workflow problems — click a step to open Workflow; fixes auto-suggest when configured"
+        else "Ranked problems — click a step to open Workflow; expand Why for context"
     )
     return (
         "<details class='overview-issues-panel' id='overview-issues' open>"
@@ -481,7 +492,7 @@ def render_overview_issues_html(
         f"{progress_html}"
         f"{banner_html}"
         f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>{hint}</div>"
-        + "".join(_issue_card(issue) for issue in issues)
+        + _issue_cards_html(issues)
         + "</div></details>"
     )
 

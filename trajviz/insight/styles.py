@@ -114,7 +114,7 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 }
 .ov-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 14px;
 }
 .ov-kpi-card {
@@ -124,6 +124,13 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     padding: 12px 12px 10px;
     box-shadow: 0 1px 6px rgba(15, 23, 42, 0.04);
     transition: transform 0.15s, box-shadow 0.15s;
+}
+.ov-kpi-card--issues {
+    cursor: pointer;
+}
+.ov-kpi-card--issues:focus-visible {
+    outline: 2px solid var(--ov-accent, #1d4ed8);
+    outline-offset: 2px;
 }
 .ov-kpi-card:hover {
     transform: translateY(-2px);
@@ -147,6 +154,42 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     color: var(--ov-muted);
     font-size: 12px;
     margin-top: 4px;
+}
+.ov-kpi-breakdown {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 7.2em;
+    overflow-y: auto;
+}
+.ov-kpi-breakdown-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.25;
+    min-width: 0;
+}
+.ov-kpi-breakdown-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+.ov-kpi-breakdown-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+.ov-kpi-breakdown-count {
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    color: var(--ov-text);
+    font-weight: 600;
 }
 
 .insight-step-link {
@@ -186,31 +229,6 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 }
 #wf-detail-content {
     text-align: left;
-}
-/* Anomaly strip */
-.anomaly-strip {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin: 0 0 16px 0;
-}
-.anomaly-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: var(--ov-anomaly-bg);
-    border: 1px solid var(--ov-anomaly-border);
-    border-radius: 8px;
-    padding: 4px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--ov-anomaly-text);
-    cursor: pointer;
-    transition: box-shadow 0.15s, background 0.15s;
-}
-.anomaly-badge:hover {
-    background: var(--ov-anomaly-hover);
-    box-shadow: 0 2px 6px rgba(245,158,11,0.25);
 }
 
 /* KPI card verdict indicator */
@@ -1017,6 +1035,51 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 .overview-issues-body {
     padding: 0 12px 10px;
     border-top: 1px solid var(--ov-border);
+}
+.overview-issue-card {
+    padding: 8px 10px;
+    background: var(--ov-card);
+    border-left: 3px solid var(--ov-border);
+    border-radius: 4px;
+    margin-bottom: 6px;
+}
+.overview-issue-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.overview-issue-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ov-text);
+}
+.overview-issue-detail {
+    font-size: 12px;
+    color: var(--ov-muted);
+}
+.overview-issue-more {
+    margin-top: 4px;
+}
+.overview-issue-more-summary {
+    list-style: none;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ov-accent, #1d4ed8);
+    user-select: none;
+}
+.overview-issue-more-summary::-webkit-details-marker { display: none; }
+.overview-issue-more-summary::before {
+    content: "▸ ";
+    color: var(--ov-muted);
+}
+.overview-issue-more[open] > .overview-issue-more-summary::before {
+    content: "▾ ";
+}
+.overview-issue-more-body {
+    margin-top: 4px;
+    padding-top: 2px;
 }
 .overview-issues-progress {
     display: flex;

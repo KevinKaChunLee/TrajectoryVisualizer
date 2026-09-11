@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import os
+from collections import Counter
 
 import plotly.graph_objects as go
 
@@ -32,34 +33,25 @@ from ..formatting import (
 from ..help import HELP_TEXT
 from ..loaders import FORMAT_LABELS
 from ..metrics import extract_agent_info
+from ..palette import AGENT_COLORS
 from ..rendering import (
-    _diag_jump_onclick,
     build_root_cause_html,
     render_agent_summary_cards,
 )
+from .issues import (
+    ISSUE_KIND_COLORS,
+    OverviewIssue,
+    build_overview_issues_html,
+    collect_overview_issues,
+    rank_issues,
+)
+
 from ..session import MAX_STEPS, LoadedSession
 
 
 def trajectory_format_label(fmt: str | None) -> str:
     """Return a human-readable trajectory format label."""
     return FORMAT_LABELS.get(fmt or "", fmt or "Unknown")
-
-
-def _build_anomaly_strip_html(anomalies: list[dict]) -> str:
-    """Render clickable anomaly badges with data-step-idx attributes."""
-    if not anomalies:
-        return ""
-    badges = []
-    for a in anomalies:
-        idx = a["step_idx"]
-        onclick = _diag_jump_onclick(idx)
-        badges.append(
-            f"<span class='anomaly-badge' data-step-idx='{idx}'"
-            f" onclick=\"{onclick}\" style='cursor:pointer;'>"
-            f"{html.escape(a['type'])}: #{idx} ({html.escape(a['value'])})"
-            f"</span>"
-        )
-    return "<div class='anomaly-strip'>" + "".join(badges) + "</div>"
 
 
 def _build_sparkline_svg(values: list[float], width: int = 100, height: int = 20) -> str:
@@ -123,16 +115,108 @@ def _build_session_detail_html(
         f"{html.escape(str(val))}</span></div>"
         for label, val in fields
     )
-    return f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>{chips}</div>"
+    return (
+        "<details class='session-detail' style='margin:0 0 10px;'>"
+        "<summary style='cursor:pointer;font-size:12px;color:var(--ov-muted);"
+        "user-select:none;'>Session details</summary>"
+        f"<div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;'>{chips}</div>"
+        "</details>"
+    )
+
+
+_ISSUE_KIND_LABELS = (
+    ("error", "error"),
+    ("antipattern", "pattern"),
+    ("bottleneck", "bottleneck"),
+)
+
+
+def _kpi_breakdown_html(
+    items: list[tuple[str, int, str]],
+    *,
+    title: str,
+) -> str:
+    """Color-coded swatch list used by Steps (agents) and Issues (kinds)."""
+    if not items:
+        return ""
+    rows: list[str] = []
+    for name, count, color in items:
+        safe = html.escape(name)
+        rows.append(
+            "<div class='ov-kpi-breakdown-row'>"
+            f"<span class='ov-kpi-breakdown-swatch' style='background:{color};'></span>"
+            f"<span class='ov-kpi-breakdown-name' style='color:{color};' "
+            f"title='{safe}'>{safe}</span>"
+            f"<span class='ov-kpi-breakdown-count'>{count}</span>"
+            "</div>"
+        )
+    return (
+        f"<div class='ov-kpi-breakdown' title='{html.escape(title)}'>"
+        + "".join(rows)
+        + "</div>"
+    )
+
+
+def _issues_kpi_parts(issues: list[OverviewIssue]) -> tuple[str, str, str, str, str]:
+    """Return (value, sub, status, detail, breakdown_html) for the Issues KPI card."""
+    issue_count = len(issues)
+    value = f"{issue_count:,}"
+    if issue_count <= 0:
+        return (
+            value,
+            "none detected",
+            "good",
+            "No major workflow issues detected",
+            "",
+        )
+    kinds = Counter(issue.kind for issue in issues)
+    items = [
+        (
+            label if kinds[key] == 1 else f"{label}s",
+            kinds[key],
+            ISSUE_KIND_COLORS[key],
+        )
+        for key, label in _ISSUE_KIND_LABELS
+        if kinds[key]
+    ]
+    if issue_count >= 3:
+        status, detail = "bad", f"{issue_count} issues — review Overview Issues"
+    else:
+        status, detail = "warn", f"{issue_count} issue{'s' if issue_count != 1 else ''} — review Overview Issues"
+    return value, "", status, detail, _kpi_breakdown_html(items, title="Issues by kind")
+
+
+def _agent_steps_breakdown(agent_summaries: list[dict] | None) -> str:
+    """Color-coded agent step list for the Steps KPI card."""
+    summaries = agent_summaries or []
+    if not summaries:
+        return ""
+    items = [
+        (
+            str(agent.get("label") or agent.get("agent_id") or "agent").strip() or "agent",
+            int(agent.get("step_count") or 0),
+            AGENT_COLORS[idx % len(AGENT_COLORS)],
+        )
+        for idx, agent in enumerate(summaries)
+    ]
+    return _kpi_breakdown_html(items, title="Assistant steps by agent")
 
 
 def build_overview_kpi_html(
-    metrics: dict, wall_fmt: str, verdicts: list[dict] | None = None, message_rows: list[dict] | None = None
+    metrics: dict,
+    wall_fmt: str,
+    verdicts: list[dict] | None = None,
+    message_rows: list[dict] | None = None,
+    *,
+    issues: list[OverviewIssue] | None = None,
+    agent_summaries: list[dict] | None = None,
 ) -> str:
-    """Build at-a-glance KPI card strip for Overview tab.
+    """Build at-a-glance KPI card strip (global strip above the main Tabs).
 
     When *verdicts* is provided, matching KPI cards get a colored left border
-    and a tooltip with the verdict detail string.
+    and a tooltip with the verdict detail string. *issues* drives the Issues
+    card after Tokens. Steps shows an agent/subagent breakdown instead of the
+    Errors health verdict (that signal lives on Tool Success / Issues).
     """
     _verdict_map: dict[str, tuple[str, str]] = {}
     if verdicts:
@@ -140,12 +224,17 @@ def build_overview_kpi_html(
             "Tool Success": "Tool Success",
             "Throughput": "Tokens",
             "Token Efficiency": "Tokens",
-            "Errors": "Steps",
         }
         for v in verdicts:
             kpi_label = _metric_to_kpi.get(v["metric"], "")
             if kpi_label:
                 _verdict_map[kpi_label] = (v["status"], v["detail"])
+
+    issue_value, issue_sub, issue_status, issue_detail, issue_breakdown = _issues_kpi_parts(
+        issues or [],
+    )
+    # Border/tooltip only — kind breakdown is rendered like the Steps agent list.
+    _verdict_map["Issues"] = (issue_status, issue_detail)
 
     _status_colors = {
         "good": "#059669",
@@ -162,6 +251,7 @@ def build_overview_kpi_html(
         "Steps": "steps",
         "Wall-Clock": "wall_clock",
         "Tokens": "tokens",
+        "Issues": "issues",
         "Tool Success": "tool_success",
     }
 
@@ -183,6 +273,7 @@ def build_overview_kpi_html(
         throughput_sub += f" · {timed_steps}/{throughput_steps} timed"
 
     user_steps = metrics.get("user_steps", 0)
+    agent_breakdown = _agent_steps_breakdown(agent_summaries)
     cards = [
         (
             "Steps",
@@ -191,6 +282,7 @@ def build_overview_kpi_html(
         ),
         ("Wall-Clock", wall_fmt, f"P95 {metrics.get('p95_duration', 0)}s"),
         ("Tokens", f"{metrics.get('tokens', {}).get('total', 0):,}", throughput_sub),
+        ("Issues", issue_value, issue_sub),
         ("Tool Success", f"{metrics.get('tool_success_rate', 0)}%", f"{metrics.get('tool_call_count', 0):,} calls"),
     ]
     card_html = []
@@ -199,12 +291,23 @@ def build_overview_kpi_html(
         extra_style = ""
         title_attr = ""
         data_attr = ""
+        jump_attr = ""
+        extra_class = ""
         if verdict_info:
             status, detail = verdict_info
             border_color = _status_colors.get(status, "#6b7280")
             extra_style = f" style='border-left:4px solid {border_color};'"
             title_attr = f" title='{html.escape(detail)}'"
             data_attr = f" data-status='{html.escape(status)}'"
+        if label == "Issues":
+            extra_class = " ov-kpi-card--issues"
+            jump_attr = (
+                " role='link' tabindex='0'"
+                " onclick=\"if(window.tvClickMainTab){window.tvClickMainTab('Overview');}"
+                "var el=document.getElementById('overview-issues');"
+                "if(el){el.scrollIntoView({behavior:'smooth',block:'start'});"
+                "if(!el.open){el.open=true;}}\""
+            )
         help_key = _label_to_help_key.get(label, "")
         help_attr = ""
         if help_key and help_key in HELP_TEXT:
@@ -212,17 +315,27 @@ def build_overview_kpi_html(
         sparkline = ""
         if label in sparkline_data:
             sparkline = _build_sparkline_svg(sparkline_data[label])
-        verdict_sub = ""
-        if verdict_info:
+        sub_block = (
+            f"<div class='ov-kpi-sub'>{html.escape(str(sub))}</div>" if sub else ""
+        )
+        extra_line = ""
+        if label == "Steps" and agent_breakdown:
+            extra_line = agent_breakdown
+        elif label == "Issues" and issue_breakdown:
+            extra_line = issue_breakdown
+        elif verdict_info and label != "Issues":
             status, detail = verdict_info
             vcolor = _status_colors.get(status, "#6b7280")
-            verdict_sub = f"<div style='font-size:11px;color:{vcolor};margin-top:2px;'>{html.escape(detail)}</div>"
+            extra_line = (
+                f"<div style='font-size:11px;color:{vcolor};margin-top:2px;'>"
+                f"{html.escape(detail)}</div>"
+            )
         card_html.append(
-            f"<div class='ov-kpi-card'{extra_style}{title_attr}{data_attr}>"
+            f"<div class='ov-kpi-card{extra_class}'{extra_style}{title_attr}{data_attr}{jump_attr}>"
             f"<div class='ov-kpi-label'{help_attr}>{html.escape(str(label))}</div>"
             f"<div class='ov-kpi-value'>{html.escape(str(value))}</div>"
-            f"<div class='ov-kpi-sub'>{html.escape(str(sub))}</div>"
-            f"{verdict_sub}"
+            f"{sub_block}"
+            f"{extra_line}"
             f"{sparkline}"
             "</div>"
         )
@@ -236,16 +349,13 @@ def empty_plotly_fig() -> go.Figure:
 
 
 def build_summary_outputs(session: LoadedSession) -> dict:
-    """Banner and anomaly strip for the upload row."""
-    banner = format_banner_html(
-        os.path.basename(session.path),
-        session.metrics,
-        session.wall_clock,
-        trajectory_format=session.format,
-    )
+    """Legacy helper: stats one-liner (kept for tests; not shown in the live UI)."""
     return {
-        "banner": banner,
-        "anomaly_html": _build_anomaly_strip_html(session.anomalies),
+        "banner": format_banner_html(
+            os.path.basename(session.path),
+            session.metrics,
+            session.wall_clock,
+        ),
     }
 
 
@@ -259,7 +369,16 @@ def build_overview_outputs(session: LoadedSession) -> dict:
     wfmt = session.wall_clock
 
     summary = build_summary_outputs(session)
-    kpi_html = build_overview_kpi_html(metrics, wfmt, verdicts=verdicts, message_rows=message_rows)
+    ranked_issues = rank_issues(collect_overview_issues(session))
+    kpi_html = build_overview_kpi_html(
+        metrics,
+        wfmt,
+        verdicts=verdicts,
+        message_rows=message_rows,
+        issues=ranked_issues,
+        agent_summaries=session.agent_summaries,
+    )
+    issues_html = build_overview_issues_html(session, issues=ranked_issues)
     metrics_text = format_performance_md(metrics, wfmt)
 
     behavior_text = format_behavioral_md(metrics, diag_metrics=session.diagnostic_metrics)
@@ -281,6 +400,7 @@ def build_overview_outputs(session: LoadedSession) -> dict:
     return {
         **summary,
         "kpi_html": kpi_html,
+        "issues_html": issues_html,
         "session_detail": session_detail,
         "metrics_text": metrics_text,
         "behavior_text": behavior_text,
@@ -374,15 +494,12 @@ def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dic
 
 
 def load_warnings_html(session: LoadedSession) -> str:
-    """HTML warning strip for truncation and token-integrity issues."""
-    chunks = []
-    if session.truncated:
-        extra = session.steps_total - MAX_STEPS
-        chunks.append(
-            f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>"
-            f"&#9888; Showing first {MAX_STEPS:,} of {session.steps_total:,} steps "
-            f"({extra:,} truncated).</p>"
-        )
-    for tw in session.token_warnings:
-        chunks.append(f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>&#9888; {html.escape(tw)}</p>")
-    return "".join(chunks)
+    """HTML warning strip for truncation (when the run exceeds MAX_STEPS)."""
+    if not session.truncated:
+        return ""
+    extra = session.steps_total - MAX_STEPS
+    return (
+        f"<p style='color:#d97706;font-size:13px;margin:0 0 4px;'>"
+        f"&#9888; Showing first {MAX_STEPS:,} of {session.steps_total:,} steps "
+        f"({extra:,} truncated).</p>"
+    )

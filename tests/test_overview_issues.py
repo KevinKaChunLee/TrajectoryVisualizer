@@ -179,6 +179,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("tvGotoWorkflowStep(7)", html)
         self.assertIn("#3", html)
         self.assertIn("#7", html)
+        self.assertIn("overview-issue-more", html)
         self.assertIn("Why it matters", html)
         self.assertNotIn(">Change<", html)
         self.assertNotIn(">Fix<", html)
@@ -217,6 +218,10 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(len(shown), 12)
         html = render_overview_issues_html(shown)
         self.assertIn("12 issues", html)
+        self.assertNotIn("Show all", html)
+        self.assertNotIn("overview-issues-remainder", html)
+        for i in range(12):
+            self.assertIn(f"Waste pattern #{i}", html)
 
     def test_skips_tool_error_rollup_when_failure_patterns_exist(self):
         session = _session(

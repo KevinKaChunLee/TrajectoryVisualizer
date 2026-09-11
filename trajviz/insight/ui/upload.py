@@ -1,4 +1,4 @@
-"""Upload row, title, and summary banner."""
+"""Upload row, title, and load warnings."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from ..loaders import FORMAT_DROPDOWN_CHOICES
-from ..presenters.overview import build_summary_outputs, load_warnings_html
+from ..presenters.overview import load_warnings_html
 from ..report import ReportError, write_report_file
 from ..session import LoadedSession
 from .shared import SharedState
@@ -28,7 +28,6 @@ class UploadRefs:
     summary_area: gr.Column
     summary_banner: gr.HTML
     label_badge_html: gr.HTML
-    anomaly_strip_html: gr.HTML
 
 
 def layout() -> UploadRefs:
@@ -74,7 +73,6 @@ def layout() -> UploadRefs:
     with gr.Column(visible=False) as summary_area:
         summary_banner = gr.HTML("", elem_classes=["summary-banner"])
         label_badge_html = gr.HTML("")
-        anomaly_strip_html = gr.HTML("")
 
     return UploadRefs(
         upload_accordion=upload_accordion,
@@ -87,7 +85,6 @@ def layout() -> UploadRefs:
         summary_area=summary_area,
         summary_banner=summary_banner,
         label_badge_html=label_badge_html,
-        anomaly_strip_html=anomaly_strip_html,
     )
 
 
@@ -97,7 +94,6 @@ def load_slots(refs: UploadRefs) -> dict:
         "summary_area": refs.summary_area,
         "upload_accordion": refs.upload_accordion,
         "summary_banner": refs.summary_banner,
-        "anomaly_strip_html": refs.anomaly_strip_html,
         "export_btn": refs.export_btn,
     }
 
@@ -164,18 +160,18 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
     del dark
     export_off = _export_off()
     if session is None:
+        has_banner = bool(banner)
         return {
-            "summary_area": gr.update(visible=bool(banner)),
+            "summary_area": gr.update(visible=has_banner),
             "upload_accordion": gr.update(),
-            "summary_banner": banner,
-            "anomaly_strip_html": "",
+            "summary_banner": gr.update(value=banner, visible=has_banner),
             "export_btn": export_off,
         }
-    summary = build_summary_outputs(session)
+    warnings = load_warnings_html(session)
     return {
+        # Keep area visible so label badges can appear after Load Labels.
         "summary_area": gr.update(visible=True),
         "upload_accordion": gr.update(),
-        "summary_banner": load_warnings_html(session) + summary["banner"],
-        "anomaly_strip_html": summary["anomaly_html"],
+        "summary_banner": gr.update(value=warnings, visible=bool(warnings.strip())),
         "export_btn": export_off,
     }

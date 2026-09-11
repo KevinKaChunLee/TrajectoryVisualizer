@@ -138,7 +138,10 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertIn("10.0 gen tok/s", html)
         self.assertIn("excl. tools", html)
         self.assertIn("1/2 timed", html)
+        self.assertIn(">Issues<", html)
+        self.assertIn("none detected", html)
         self.assertNotIn("100.0 tok/s", html)
+        self.assertNotIn("failed tool calls", html)
 
         banner = format_banner_html("trace.json", metrics, "10s")
         self.assertIn("10.0 gen tok/s", banner)
@@ -151,6 +154,92 @@ class OutputThroughputTests(unittest.TestCase):
         performance = format_performance_md(computed_metrics, "10s")
         self.assertIn("Total processed tok/sec", performance)
         self.assertIn("Median processed tok/sec", performance)
+
+    def test_issues_kpi_card_after_tokens(self):
+        from trajviz.insight.presenters import build_overview_kpi_html
+        from trajviz.insight.presenters.issues import OverviewIssue
+
+        metrics = {
+            "total_steps": 3,
+            "assistant_steps": 2,
+            "user_steps": 1,
+            "p95_duration": 1.0,
+            "tokens": {"total": 10},
+            "tool_success_rate": 100,
+            "tool_call_count": 1,
+        }
+        issues = [
+            OverviewIssue(kind="error", title="a", detail="", why="", steps=(1,)),
+            OverviewIssue(kind="error", title="b", detail="", why="", steps=(2,)),
+            OverviewIssue(kind="antipattern", title="c", detail="", why="", steps=(3,)),
+        ]
+        html = build_overview_kpi_html(metrics, "4s", issues=issues)
+        tokens_at = html.find(">Tokens<")
+        issues_at = html.find(">Issues<")
+        tool_at = html.find(">Tool Success<")
+        self.assertGreater(issues_at, tokens_at)
+        self.assertGreater(tool_at, issues_at)
+        self.assertIn("ov-kpi-breakdown", html)
+        self.assertIn(">errors<", html)
+        self.assertIn(">pattern<", html)
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>2</span>",
+            html,
+        )
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>1</span>",
+            html,
+        )
+        self.assertIn("var(--ov-bad)", html)
+        self.assertIn("var(--ov-warn)", html)
+        self.assertIn("data-status='bad'", html)
+        self.assertIn("ov-kpi-card--issues", html)
+        self.assertIn("overview-issues", html)
+        # Long detail stays on title/tooltip only — not a second visible subtitle line.
+        self.assertIn("title='3 issues — review Overview Issues'", html)
+        self.assertNotIn("margin-top:2px;'>3 issues — review Overview Issues", html)
+
+    def test_steps_kpi_shows_agent_breakdown_not_error_verdict(self):
+        from trajviz.insight.presenters import build_overview_kpi_html
+
+        metrics = {
+            "total_steps": 10,
+            "assistant_steps": 9,
+            "user_steps": 1,
+            "p95_duration": 1.0,
+            "tokens": {"total": 10},
+            "tool_success_rate": 50,
+            "tool_call_count": 4,
+            "tool_fail": 3,
+        }
+        verdicts = [{
+            "metric": "Errors",
+            "status": "bad",
+            "label": "3",
+            "detail": "3 failed tool calls — agent may be struggling",
+        }]
+        agents = [
+            {"label": "main", "step_count": 6},
+            {"label": "explore", "step_count": 3},
+        ]
+        html = build_overview_kpi_html(
+            metrics, "4s", verdicts=verdicts, agent_summaries=agents,
+        )
+        self.assertIn("ov-kpi-breakdown", html)
+        self.assertIn("ov-kpi-breakdown-row", html)
+        self.assertIn("ov-kpi-breakdown-swatch", html)
+        self.assertIn(">main<", html)
+        self.assertIn(">explore<", html)
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>6</span>",
+            html,
+        )
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>3</span>",
+            html,
+        )
+        self.assertNotIn("failed tool calls", html)
+        self.assertNotIn("agent may be struggling", html)
 
 
 class WrappedShellSearchTests(unittest.TestCase):

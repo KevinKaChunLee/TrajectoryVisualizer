@@ -17,7 +17,6 @@ from typing import Any
 import plotly.graph_objects as go
 
 from .loaders import FORMAT_LABELS
-from .presenters.issues import build_overview_issues_html
 from .presenters.overview import (
     build_chart_outputs,
     build_diagnostics_outputs,
@@ -60,7 +59,7 @@ def build_report_html(
     pat_tool = render_tool_sequences_html(session.tool_sequences)
     pat_fail = render_failure_patterns_html(session.failure_patterns)
     antipattern = build_antipattern_html(session)
-    issues_panel = build_overview_issues_html(session)
+    issues_panel = ov["issues_html"]
 
     figures: list[tuple[str, go.Figure]] = [
         ("Token usage", ch["tok_fig"]),
@@ -93,11 +92,12 @@ def build_report_html(
         _header_html(title, basename, fmt_label, generated, load_warnings_html(session)),
         _section(
             "Summary",
-            ov["banner"] + ov["anomaly_html"] + ov["kpi_html"] + ov["session_detail"]
-            + issues_panel
-            + _mixed_md_to_html(ov["metrics_text"]),
+            issues_panel
+            + ov["kpi_html"]
+            + ov["session_detail"],
         ),
         charts(figures[:2]),
+        _section("Deep dive", _mixed_md_to_html(ov["metrics_text"])),
         _section("Context utilization", dg["diag_pressure_html"]),
         charts(figures[2:3]),
         _section("Tools", _mixed_md_to_html(ov["behavior_text"])),

@@ -301,3 +301,8 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn('content: "AI Trajectory Analysis"', APP_CSS)
         self.assertIn("state_analysis_brief", source)
         self.assertIn("on_analysis_ask", source)
+        # LLM first pass runs on sidebar expand (or load-while-open), not on every load.
+        self.assertIn("on_sidebar_expand", source)
+        self.assertIn("analysis_sidebar.expand", source)
+        self.assertIn("state_sidebar_open", source)
+        self.assertIn("on_trajectory_loaded", source)
