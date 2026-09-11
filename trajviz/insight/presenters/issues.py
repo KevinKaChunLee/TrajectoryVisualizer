@@ -23,7 +23,7 @@ _SEVERITY: dict[IssueKind, int] = {
     "bottleneck": 2,
 }
 
-_BORDER: dict[IssueKind, str] = {
+ISSUE_KIND_COLORS: dict[IssueKind, str] = {
     "error": "var(--ov-bad)",
     "antipattern": "var(--ov-warn)",
     "bottleneck": "var(--ov-accent)",
@@ -354,7 +354,7 @@ def _issue_card(issue: OverviewIssue) -> str:
     """Compact scan row: title + steps + visible Fix; Why behind a disclosure."""
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
-    border = _BORDER[issue.kind]
+    border = ISSUE_KIND_COLORS[issue.kind]
     steps_html = _step_link_chips(list(issue.steps))
 
     judgment_html = ""

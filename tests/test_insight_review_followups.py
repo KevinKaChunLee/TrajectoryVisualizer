@@ -182,11 +182,16 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertIn("ov-kpi-breakdown", html)
         self.assertIn(">errors<", html)
         self.assertIn(">pattern<", html)
-        self.assertIn(">2<", html)
-        self.assertIn(">1<", html)
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>2</span>",
+            html,
+        )
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>1</span>",
+            html,
+        )
         self.assertIn("var(--ov-bad)", html)
         self.assertIn("var(--ov-warn)", html)
-        self.assertNotIn(" · ", html)
         self.assertIn("data-status='bad'", html)
         self.assertIn("ov-kpi-card--issues", html)
         self.assertIn("overview-issues", html)
@@ -225,9 +230,14 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertIn("ov-kpi-breakdown-swatch", html)
         self.assertIn(">main<", html)
         self.assertIn(">explore<", html)
-        self.assertIn(">6<", html)
-        self.assertIn(">3<", html)
-        self.assertNotIn(" · ", html)
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>6</span>",
+            html,
+        )
+        self.assertIn(
+            "<span class='ov-kpi-breakdown-count'>3</span>",
+            html,
+        )
         self.assertNotIn("failed tool calls", html)
         self.assertNotIn("agent may be struggling", html)
 

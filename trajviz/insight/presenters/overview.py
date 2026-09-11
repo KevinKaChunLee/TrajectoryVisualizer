@@ -39,6 +39,7 @@ from ..rendering import (
     render_agent_summary_cards,
 )
 from .issues import (
+    ISSUE_KIND_COLORS,
     OverviewIssue,
     build_overview_issues_html,
     collect_overview_issues,
@@ -123,77 +124,82 @@ def _build_session_detail_html(
     )
 
 
-_ISSUE_KIND_KPI = (
-    ("error", "error", "errors", "var(--ov-bad)"),
-    ("antipattern", "pattern", "patterns", "var(--ov-warn)"),
-    ("bottleneck", "bottleneck", "bottlenecks", "var(--ov-accent)"),
+_ISSUE_KIND_LABELS = (
+    ("error", "error"),
+    ("antipattern", "pattern"),
+    ("bottleneck", "bottleneck"),
 )
 
 
-def _issues_kpi_parts(issues: list[OverviewIssue]) -> tuple[str, str, str, str]:
-    """Return (value, sub_html, status, detail) for the Issues KPI card.
+def _kpi_breakdown_html(
+    items: list[tuple[str, int, str]],
+    *,
+    title: str,
+) -> str:
+    """Color-coded swatch list used by Steps (agents) and Issues (kinds)."""
+    if not items:
+        return ""
+    rows: list[str] = []
+    for name, count, color in items:
+        safe = html.escape(name)
+        rows.append(
+            "<div class='ov-kpi-breakdown-row'>"
+            f"<span class='ov-kpi-breakdown-swatch' style='background:{color};'></span>"
+            f"<span class='ov-kpi-breakdown-name' style='color:{color};' "
+            f"title='{safe}'>{safe}</span>"
+            f"<span class='ov-kpi-breakdown-count'>{count}</span>"
+            "</div>"
+        )
+    return (
+        f"<div class='ov-kpi-breakdown' title='{html.escape(title)}'>"
+        + "".join(rows)
+        + "</div>"
+    )
 
-    *sub_html* is either a plain muted line (healthy) or a color-coded kind list.
-    """
+
+def _issues_kpi_parts(issues: list[OverviewIssue]) -> tuple[str, str, str, str, str]:
+    """Return (value, sub, status, detail, breakdown_html) for the Issues KPI card."""
     issue_count = len(issues)
     value = f"{issue_count:,}"
     if issue_count <= 0:
         return (
             value,
-            "<div class='ov-kpi-sub'>none detected</div>",
+            "none detected",
             "good",
             "No major workflow issues detected",
+            "",
         )
     kinds = Counter(issue.kind for issue in issues)
-    rows: list[str] = []
-    for key, singular, plural, color in _ISSUE_KIND_KPI:
-        n = kinds[key]
-        if not n:
-            continue
-        label = singular if n == 1 else plural
-        rows.append(
-            "<div class='ov-kpi-breakdown-row'>"
-            f"<span class='ov-kpi-breakdown-swatch' style='background:{color};'></span>"
-            f"<span class='ov-kpi-breakdown-name' style='color:{color};'>{html.escape(label)}</span>"
-            f"<span class='ov-kpi-breakdown-count'>{n}</span>"
-            "</div>"
+    items = [
+        (
+            label if kinds[key] == 1 else f"{label}s",
+            kinds[key],
+            ISSUE_KIND_COLORS[key],
         )
-    sub = (
-        "<div class='ov-kpi-breakdown' title='Issues by kind'>"
-        + "".join(rows)
-        + "</div>"
-        if rows
-        else "<div class='ov-kpi-sub'>ranked problems</div>"
-    )
+        for key, label in _ISSUE_KIND_LABELS
+        if kinds[key]
+    ]
     if issue_count >= 3:
         status, detail = "bad", f"{issue_count} issues — review Overview Issues"
     else:
         status, detail = "warn", f"{issue_count} issue{'s' if issue_count != 1 else ''} — review Overview Issues"
-    return value, sub, status, detail
+    return value, "", status, detail, _kpi_breakdown_html(items, title="Issues by kind")
 
 
 def _agent_steps_breakdown(agent_summaries: list[dict] | None) -> str:
-    """Color-coded agent step list for the Steps KPI card (HTML, already escaped)."""
-    if not agent_summaries:
+    """Color-coded agent step list for the Steps KPI card."""
+    summaries = agent_summaries or []
+    if not summaries:
         return ""
-    rows: list[str] = []
-    for idx, agent in enumerate(agent_summaries):
-        label = str(agent.get("label") or agent.get("agent_id") or "agent").strip() or "agent"
-        count = int(agent.get("step_count") or 0)
-        color = AGENT_COLORS[idx % len(AGENT_COLORS)]
-        rows.append(
-            "<div class='ov-kpi-breakdown-row'>"
-            f"<span class='ov-kpi-breakdown-swatch' style='background:{color};'></span>"
-            f"<span class='ov-kpi-breakdown-name' style='color:{color};' "
-            f"title='{html.escape(label)}'>{html.escape(label)}</span>"
-            f"<span class='ov-kpi-breakdown-count'>{count}</span>"
-            "</div>"
+    items = [
+        (
+            str(agent.get("label") or agent.get("agent_id") or "agent").strip() or "agent",
+            int(agent.get("step_count") or 0),
+            AGENT_COLORS[idx % len(AGENT_COLORS)],
         )
-    return (
-        "<div class='ov-kpi-breakdown' title='Assistant steps by agent'>"
-        + "".join(rows)
-        + "</div>"
-    )
+        for idx, agent in enumerate(summaries)
+    ]
+    return _kpi_breakdown_html(items, title="Assistant steps by agent")
 
 
 def build_overview_kpi_html(
@@ -224,8 +230,10 @@ def build_overview_kpi_html(
             if kpi_label:
                 _verdict_map[kpi_label] = (v["status"], v["detail"])
 
-    issue_value, issue_sub, issue_status, issue_detail = _issues_kpi_parts(issues or [])
-    # Border/tooltip only — card subtitle already carries the scannable summary.
+    issue_value, issue_sub, issue_status, issue_detail, issue_breakdown = _issues_kpi_parts(
+        issues or [],
+    )
+    # Border/tooltip only — kind breakdown is rendered like the Steps agent list.
     _verdict_map["Issues"] = (issue_status, issue_detail)
 
     _status_colors = {
@@ -307,14 +315,14 @@ def build_overview_kpi_html(
         sparkline = ""
         if label in sparkline_data:
             sparkline = _build_sparkline_svg(sparkline_data[label])
-        # Issues sub is prebuilt HTML (kind list). Steps appends agent list separately.
-        if label == "Issues":
-            sub_block = sub
-        else:
-            sub_block = f"<div class='ov-kpi-sub'>{html.escape(str(sub))}</div>"
+        sub_block = (
+            f"<div class='ov-kpi-sub'>{html.escape(str(sub))}</div>" if sub else ""
+        )
         extra_line = ""
         if label == "Steps" and agent_breakdown:
             extra_line = agent_breakdown
+        elif label == "Issues" and issue_breakdown:
+            extra_line = issue_breakdown
         elif verdict_info and label != "Issues":
             status, detail = verdict_info
             vcolor = _status_colors.get(status, "#6b7280")
