@@ -237,7 +237,10 @@ def parse_steps(raw: dict) -> list[dict]:
         t_created = safe_get(info, "time", "created", default=None)
         t_completed = safe_get(info, "time", "completed", default=None)
         duration = None
-        if isinstance(t_created, (int, float)) and isinstance(t_completed, (int, float)):
+        if (
+            isinstance(t_created, (int, float)) and t_created > 0
+            and isinstance(t_completed, (int, float))
+        ):
             duration = round((t_completed - t_created) / 1000.0, 2)
 
         raw_parts = msg.get("parts", [])
@@ -401,7 +404,7 @@ def _fill_missing_last_step_duration(steps: list[dict], raw: dict) -> None:
     if last.get("duration") is not None:
         return
     start_ms = last.get("time_created_ms")
-    if not isinstance(start_ms, (int, float)):
+    if not isinstance(start_ms, (int, float)) or start_ms <= 0:
         return
 
     # Prefer the session's finished_at timestamp (authoritative when present).

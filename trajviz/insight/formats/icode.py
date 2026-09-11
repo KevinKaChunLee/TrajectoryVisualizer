@@ -521,7 +521,13 @@ def _fill_completed_times(messages: list[dict]) -> None:
     for i in range(len(messages) - 1):
         cur_t = messages[i]["info"]["time"].get("created")
         nxt_t = messages[i + 1]["info"]["time"].get("created")
-        if isinstance(cur_t, (int, float)) and isinstance(nxt_t, (int, float)) and nxt_t >= cur_t:
+        # ``created`` defaults to 0 when the source message has no timestamp;
+        # filling ``completed`` from the next message would then produce a
+        # duration equal to the absolute epoch time, so skip those.
+        if (
+            isinstance(cur_t, (int, float)) and cur_t > 0
+            and isinstance(nxt_t, (int, float)) and nxt_t >= cur_t
+        ):
             messages[i]["info"]["time"]["completed"] = nxt_t
 
 
