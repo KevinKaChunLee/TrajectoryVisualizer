@@ -75,18 +75,17 @@ def parse_skill_name(tool_name: str, tool_input: object) -> str | None:
 
 # Tools that spawn a child agent / sub-session. Mixed casings are the literal
 # names emitted by Claude Code (Task), OpenCode (task / Agent), DSH
-# (subagent / subagent_fork), Codex (spawn_agent), and ICode (explore_agent).
+# (subagent / subagent_fork), and Codex (spawn_agent).
 SPAWN_TOOL_NAMES: frozenset[str] = frozenset({
     "Agent", "agent",
     "Task", "task",
     "subagent", "subagent_fork",
     "spawn_agent",
-    "explore_agent",
 })
 
-# Shell tool spellings across Claude Code, OpenCode/Pi/DSH/ICode, and adapters.
+# Shell tool spellings across Claude Code, OpenCode/Pi/DSH, and adapters.
 BASH_TOOL_NAMES: frozenset[str] = frozenset({
-    "Bash", "bash", "BashCommand", "sh",
+    "Bash", "bash", "BashCommand",
 })
 
 # Scaffold/harness primitives (search, file I/O). Failures of these are

@@ -86,16 +86,18 @@ class ICodeLoaderTests(unittest.TestCase):
         steps = parse_steps(load_trajectory(str(FIXTURE)))
         tools = [tc for s in steps for tc in s["tool_calls"]]
         sh = next(tc for tc in tools if tc["tool_id"] == "call-sh-1")
-        nameless = next(tc for tc in tools if tc["tool_id"] == "")
+        paired = next(tc for tc in tools if tc["tool_id"] == "")
 
         self.assertEqual(sh["tool_name"], "Bash")
         self.assertTrue(tool_call_failed(sh))
         self.assertEqual(sh["error_type"], "argument_parsing")
         self.assertIn("Argument parsing failed", sh["output"])
+        self.assertEqual(sh["title"], "ls")
 
-        self.assertEqual(nameless["tool_name"], "?")
-        self.assertTrue(tool_call_failed(nameless))
-        self.assertEqual(nameless["error_type"], "tool_not_found")
+        self.assertEqual(paired["tool_name"], "Bash")
+        self.assertEqual(paired["input"]["command"], "ls")
+        self.assertTrue(tool_call_failed(paired))
+        self.assertEqual(paired["error_type"], "tool_not_found")
 
     def test_subagent_is_flattened_and_annotated(self):
         loaded = load_trajectory(str(FIXTURE))

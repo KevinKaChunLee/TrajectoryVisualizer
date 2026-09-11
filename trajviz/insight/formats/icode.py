@@ -53,14 +53,6 @@ def _icode_props(message: dict) -> dict:
     return _icode_dict(message.get("additional_properties"))
 
 
-def _icode_message_ts_ms(message: dict) -> int | None:
-    props = _icode_props(message)
-    ts = _iso_to_epoch_ms(props.get("_chrys_created_at") if isinstance(props.get("_chrys_created_at"), str) else None)
-    if ts is not None:
-        return ts
-    return None
-
-
 def _icode_parse_arguments(arguments: Any) -> dict:
     if isinstance(arguments, dict):
         return dict(arguments)
@@ -118,46 +110,28 @@ def _icode_iter_contents(contents: Any):
             yield item
 
 
-def _icode_is_turn_marker(message: dict) -> bool:
-    props = _icode_props(message)
-    if props.get("_chrys_kind") == "turn":
-        return True
-    contents = _icode_list(message.get("contents"))
-    if contents:
-        return False
-    return not _icode_str(message.get("role"))
-
-
 def _icode_group_tokens(message: dict) -> dict | None:
-    group = _icode_dict(_icode_props(message).get("_group"))
-    count = group.get("token_count")
+    count = _icode_dict(_icode_props(message).get("_group")).get("token_count")
     if isinstance(count, bool) or not isinstance(count, (int, float)) or count <= 0:
         return None
-    total = int(count)
-    return {"total": total}
+    return {"total": int(count)}
 
 
 def _icode_tool_part(name: Any, arguments: Any, call_id: str, tool_kind: str = "") -> dict:
     tool_name, tool_input = _icode_normalize_tool(name, arguments, tool_kind)
-    state = {
-        "status": "pending",
-        "input": tool_input,
-        "output": "",
-        "metadata": {},
-    }
+    metadata = {}
     if tool_kind:
-        state["metadata"]["_chrys_tool_kind"] = tool_kind
+        metadata["_chrys_tool_kind"] = tool_kind
     return {
         "type": "tool",
         "tool": tool_name,
-        "tool_name": tool_name,
         "callID": call_id,
-        "tool_id": call_id,
-        "status": "pending",
-        "input": tool_input,
-        "output": "",
-        "state": state,
-        "metadata": dict(state["metadata"]),
+        "state": {
+            "status": "pending",
+            "input": tool_input,
+            "output": "",
+            "metadata": metadata,
+        },
     }
 
 
@@ -166,34 +140,28 @@ def _icode_apply_tool_result(
     *,
     output: str,
     is_error: bool,
-    error_text: str | None,
     error_type: str | None,
     ts: int | None,
     extra_metadata: dict | None = None,
 ) -> None:
     status = "error" if is_error else "completed"
-    part["output"] = output
-    part["status"] = status
+    state = part.setdefault("state", {})
+    if not isinstance(state, dict):
+        state = {}
+        part["state"] = state
+    state["status"] = status
+    state["output"] = output
     if is_error:
-        part["error"] = error_text or output
+        state["error"] = output
+        part["error"] = output
         if error_type:
             part["error_type"] = error_type
-    state = part.setdefault("state", {})
-    if isinstance(state, dict):
-        state["status"] = status
-        state["output"] = output
-        if is_error:
-            state["error"] = error_text or output
-        if ts:
-            time_info = state.setdefault("time", {})
-            if isinstance(time_info, dict):
-                time_info["end"] = ts
-        if extra_metadata:
-            metadata = state.setdefault("metadata", {})
-            if isinstance(metadata, dict):
-                metadata.update(extra_metadata)
+    if ts:
+        time_info = state.setdefault("time", {})
+        if isinstance(time_info, dict):
+            time_info["end"] = ts
     if extra_metadata:
-        metadata = part.setdefault("metadata", {})
+        metadata = state.setdefault("metadata", {})
         if isinstance(metadata, dict):
             metadata.update(extra_metadata)
 
@@ -206,102 +174,47 @@ def _icode_child_session_id(child_meta: dict) -> str:
     return ""
 
 
-def _icode_index_children(children: list) -> tuple[dict[str, dict], dict[str, dict]]:
-    """Map invocation id and parent provider call id → child session dict."""
-    by_invocation: dict[str, dict] = {}
-    by_call: dict[str, dict] = {}
-    for child in children:
-        if not isinstance(child, dict):
-            continue
-        meta = _icode_dict(child.get("meta"))
-        invocation = _icode_str(meta.get("invocation_id"))
-        call_id = _icode_str(meta.get("parent_provider_call_id"))
-        if invocation:
-            by_invocation[invocation] = child
-        if call_id:
-            by_call[call_id] = child
-    return by_invocation, by_call
-
-
-def _icode_spawn_metadata(result_props: dict, call_id: str, children_by_invocation: dict, children_by_call: dict) -> tuple[dict, dict | None]:
+def _icode_spawn_metadata(
+    result_props: dict,
+    call_id: str,
+    children_by_invocation: dict,
+    children_by_call: dict,
+) -> tuple[dict, dict | None]:
     result_meta = _icode_dict(result_props.get("_chrys_tool_result_metadata"))
     invocation = _icode_str(result_meta.get("sub_agent_invocation_id"))
-    child = None
-    if invocation:
-        child = children_by_invocation.get(invocation)
+    child = children_by_invocation.get(invocation) if invocation else None
     if child is None and call_id:
         child = children_by_call.get(call_id)
-    extra = dict(result_meta)
-    extra.update({k: v for k, v in result_props.items() if k != "_chrys_tool_result_metadata"})
-    if child is not None:
-        child_meta = _icode_dict(child.get("meta"))
-        child_id = _icode_child_session_id(child_meta)
-        if child_id:
-            extra["sessionId"] = child_id
-        parent_id = _icode_str(child_meta.get("parent_session_id"))
-        if parent_id:
-            extra["parentSessionId"] = parent_id
-        created = _iso_to_epoch_ms(child_meta.get("created_at") if isinstance(child_meta.get("created_at"), str) else None)
-        ended = _iso_to_epoch_ms(child_meta.get("ended_at") if isinstance(child_meta.get("ended_at"), str) else None)
-        if created is not None and ended is not None and ended >= created:
-            extra["totalDurationMs"] = ended - created
+    if child is None:
+        return {}, None
+    child_meta = _icode_dict(child.get("meta"))
+    extra: dict[str, Any] = {}
+    child_id = _icode_child_session_id(child_meta)
+    if child_id:
+        extra["sessionId"] = child_id
+    parent_id = _icode_str(child_meta.get("parent_session_id"))
+    if parent_id:
+        extra["parentSessionId"] = parent_id
+    created = _iso_to_epoch_ms(child_meta.get("created_at"))
+    ended = _iso_to_epoch_ms(child_meta.get("ended_at"))
+    if created is not None and ended is not None and ended >= created:
+        extra["totalDurationMs"] = ended - created
     return extra, child
 
 
-def _icode_function_result_fields(item: dict) -> tuple[str, str, bool, str | None, str | None, dict]:
+def _icode_function_result_fields(item: dict) -> tuple[str, bool, str | None, dict]:
     props = _icode_dict(item.get("additional_properties"))
     result = item.get("result")
     output = result if isinstance(result, str) else (str(result) if result else "")
     exception = item.get("exception")
     exception_text = exception if isinstance(exception, str) else (str(exception) if exception else "")
     error_kind = props.get("tool_error_kind")
-    error_message = props.get("tool_error_message")
+    error_message = _icode_str(props.get("tool_error_message"))
     failed = bool(props.get("failed")) or bool(exception_text) or bool(error_kind)
     if not output:
-        output = exception_text or _icode_str(error_message)
-    error_text = exception_text or _icode_str(error_message) or (output if failed else None)
+        output = exception_text or error_message
     error_type = error_kind if isinstance(error_kind, str) and error_kind else None
-    return output, exception_text, failed, error_text, error_type, props
-
-
-def _icode_info_for_message(
-    message: dict,
-    *,
-    role: str,
-    ts: int | None,
-    tokens: dict | None,
-    session_id: str,
-    parent_session_id: str,
-    session_depth: int,
-    session_title: str,
-    is_sub_agent: bool,
-    agent: str,
-    model_id: str,
-    provider_id: str,
-    finish: str = "",
-) -> dict:
-    message_id = _icode_str(message.get("message_id"))
-    info: dict[str, Any] = {
-        "role": role,
-        "time": {"created": ts or 0},
-        "id": message_id,
-        "sessionID": session_id,
-        "agent": agent,
-        "modelID": model_id,
-        "providerID": provider_id,
-        "isSubAgent": is_sub_agent,
-    }
-    if parent_session_id:
-        info["parentSessionID"] = parent_session_id
-    if session_depth:
-        info["sessionDepth"] = session_depth
-    if session_title:
-        info["sessionTitle"] = session_title
-    if tokens:
-        info["tokens"] = tokens
-    if finish:
-        info["finish"] = finish
-    return info
+    return output, failed, error_type, props
 
 
 def _convert_icode_messages(
@@ -328,6 +241,39 @@ def _convert_icode_messages(
     pending_anon: list[dict] = []
     inserts: dict[int, list[str]] = {}
 
+    def _append(
+        role: str,
+        ts: int | None,
+        parts: list,
+        *,
+        message_id: str = "",
+        tokens: dict | None = None,
+        finish: str = "",
+    ) -> dict:
+        info: dict[str, Any] = {
+            "role": role,
+            "time": {"created": ts or 0},
+            "id": message_id,
+            "sessionID": session_id,
+            "agent": agent,
+            "modelID": model_id,
+            "providerID": provider_id,
+            "isSubAgent": is_sub_agent,
+        }
+        if parent_session_id:
+            info["parentSessionID"] = parent_session_id
+        if session_depth:
+            info["sessionDepth"] = session_depth
+        if session_title:
+            info["sessionTitle"] = session_title
+        if tokens:
+            info["tokens"] = tokens
+        if finish:
+            info["finish"] = finish
+        record = {"info": info, "parts": parts, "message_id": message_id}
+        out.append(record)
+        return record
+
     def _track(part: dict, call_id: str) -> None:
         if call_id:
             pending_by_id.setdefault(call_id, []).append(part)
@@ -337,43 +283,27 @@ def _convert_icode_messages(
     def _take(call_id: str) -> dict | None:
         if call_id:
             queued = pending_by_id.get(call_id)
-            if queued:
-                return queued.pop(0)
-        if pending_anon:
-            return pending_anon.pop(0)
-        return None
+            return queued.pop(0) if queued else None
+        return pending_anon.pop(0) if pending_anon else None
 
     for message in messages:
         if not isinstance(message, dict):
             continue
-        if _icode_is_turn_marker(message):
+        if _icode_props(message).get("_chrys_kind") == "turn":
             continue
         role = _icode_str(message.get("role"))
-        ts = _icode_message_ts_ms(message)
+        ts = _iso_to_epoch_ms(_icode_props(message).get("_chrys_created_at"))
         tokens = _icode_group_tokens(message)
+        message_id = _icode_str(message.get("message_id"))
 
         if role == "user":
-            parts = []
-            for item in _icode_iter_contents(message.get("contents")):
-                if item.get("type") in ("text", "reasoning", "thinking"):
-                    text = item.get("text") or item.get("thinking") or ""
-                    if item.get("type") in ("reasoning", "thinking"):
-                        parts.append({"type": "reasoning", "text": text})
-                    elif text:
-                        parts.append({"type": "text", "text": text})
+            parts = [
+                {"type": "text", "text": item.get("text") or ""}
+                for item in _icode_iter_contents(message.get("contents"))
+                if item.get("type") == "text" and item.get("text")
+            ]
             if parts:
-                info = _icode_info_for_message(
-                    message, role="user", ts=ts, tokens=tokens,
-                    session_id=session_id, parent_session_id=parent_session_id,
-                    session_depth=session_depth, session_title=session_title,
-                    is_sub_agent=is_sub_agent, agent=agent,
-                    model_id=model_id, provider_id=provider_id,
-                )
-                out.append({
-                    "info": info,
-                    "parts": parts,
-                    "message_id": info["id"],
-                })
+                _append("user", ts, parts, message_id=message_id, tokens=tokens)
             continue
 
         if role == "assistant":
@@ -408,8 +338,7 @@ def _convert_icode_messages(
                         parts.append({"type": "text", "text": text})
                 elif ctype in ("function_call", "tool_call", "toolCall"):
                     call_id = _icode_str(item.get("call_id") or item.get("id"))
-                    item_props = _icode_dict(item.get("additional_properties"))
-                    tool_kind = _icode_str(item_props.get("_chrys_tool_kind"))
+                    tool_kind = _icode_str(_icode_dict(item.get("additional_properties")).get("_chrys_tool_kind"))
                     name = item.get("name")
                     args = item.get("arguments")
                     if not _icode_str(name) and _icode_str(args).strip():
@@ -428,19 +357,11 @@ def _convert_icode_messages(
                     has_tools = True
             if not parts and not tokens:
                 continue
-            finish = "tool-calls" if has_tools else "stop"
-            info = _icode_info_for_message(
-                message, role="assistant", ts=ts, tokens=tokens,
-                session_id=session_id, parent_session_id=parent_session_id,
-                session_depth=session_depth, session_title=session_title,
-                is_sub_agent=is_sub_agent, agent=agent,
-                model_id=model_id, provider_id=provider_id, finish=finish,
+            _append(
+                "assistant", ts, parts,
+                message_id=message_id, tokens=tokens,
+                finish="tool-calls" if has_tools else "stop",
             )
-            out.append({
-                "info": info,
-                "parts": parts,
-                "message_id": info["id"],
-            })
             continue
 
         if role != "tool":
@@ -450,45 +371,31 @@ def _convert_icode_messages(
             if item.get("type") not in ("function_result", "tool_result", "toolResult"):
                 continue
             call_id = _icode_str(item.get("call_id") or item.get("id"))
-            output, _exception, failed, error_text, error_type, props = _icode_function_result_fields(item)
+            output, failed, error_type, props = _icode_function_result_fields(item)
             extra, child = _icode_spawn_metadata(props, call_id, children_by_invocation, children_by_call)
             part = _take(call_id)
             if part is None:
                 part = _icode_tool_part("?", {}, call_id)
-                info = _icode_info_for_message(
-                    message, role="assistant", ts=ts, tokens=tokens,
-                    session_id=session_id, parent_session_id=parent_session_id,
-                    session_depth=session_depth, session_title=session_title,
-                    is_sub_agent=is_sub_agent, agent=agent,
-                    model_id=model_id, provider_id=provider_id, finish="stop",
-                )
-                out.append({
-                    "info": info,
-                    "parts": [part],
-                    "message_id": info["id"],
-                })
+                _append("assistant", ts, [part], message_id=message_id, tokens=tokens, finish="stop")
             _icode_apply_tool_result(
                 part,
                 output=output,
                 is_error=failed,
-                error_text=error_text,
                 error_type=error_type,
                 ts=ts,
                 extra_metadata=extra or None,
             )
-            if child is not None:
-                child_id = _icode_child_session_id(_icode_dict(child.get("meta")))
-                if child_id and converted_children.get(child_id):
-                    parent_idx = len(out) - 1
-                    inserts.setdefault(parent_idx, [])
-                    if child_id not in inserts[parent_idx]:
-                        inserts[parent_idx].append(child_id)
+            child_id = extra.get("sessionId")
+            if child is not None and isinstance(child_id, str) and converted_children.get(child_id):
+                parent_idx = len(out) - 1
+                inserts.setdefault(parent_idx, [])
+                if child_id not in inserts[parent_idx]:
+                    inserts[parent_idx].append(child_id)
 
     for part in (*[p for queued in pending_by_id.values() for p in queued], *pending_anon):
-        if part.get("status") == "pending":
+        if _icode_dict(part.get("state")).get("status") == "pending":
             _icode_apply_tool_result(
-                part, output="", is_error=True, error_text="No tool result",
-                error_type="missing_result", ts=None,
+                part, output="", is_error=True, error_type="missing_result", ts=None,
             )
 
     if not inserts:
@@ -499,8 +406,7 @@ def _convert_icode_messages(
     for idx, msg in enumerate(out):
         merged.append(msg)
         for child_id in inserts.get(idx, []):
-            child_msgs = converted_children.get(child_id) or []
-            merged.extend(child_msgs)
+            merged.extend(converted_children.get(child_id) or [])
             placed.add(child_id)
     for child_id, child_msgs in converted_children.items():
         if child_id not in placed:
@@ -518,36 +424,38 @@ def _convert_icode_session(
     meta = _icode_dict(session.get("meta"))
     state = _icode_dict(session.get("state"))
     session_id = _icode_str(meta.get("session_id")) or _icode_child_session_id(meta) or parent_session_id
-    agent = _icode_str(meta.get("agent_profile"))
-    title = _icode_str(meta.get("agent_display_name") or meta.get("generated_title"))
-    model_id = _icode_str(meta.get("model_id"))
-    provider_id = _icode_str(meta.get("model_provider"))
     nested = _icode_list(session.get("_chrys_sub_agent_sessions"))
-    by_invocation, by_call = _icode_index_children(nested)
+    by_invocation: dict[str, dict] = {}
+    by_call: dict[str, dict] = {}
     converted_children: dict[str, list[dict]] = {}
     for child in nested:
         if not isinstance(child, dict):
             continue
         child_meta = _icode_dict(child.get("meta"))
         child_id = _icode_child_session_id(child_meta)
-        if not child_id:
-            continue
-        converted_children[child_id] = _convert_icode_session(
-            child,
-            parent_session_id=session_id,
-            session_depth=session_depth + 1,
-            is_sub_agent=True,
-        )
+        invocation = _icode_str(child_meta.get("invocation_id"))
+        call_id = _icode_str(child_meta.get("parent_provider_call_id"))
+        if invocation:
+            by_invocation[invocation] = child
+        if call_id:
+            by_call[call_id] = child
+        if child_id:
+            converted_children[child_id] = _convert_icode_session(
+                child,
+                parent_session_id=session_id,
+                session_depth=session_depth + 1,
+                is_sub_agent=True,
+            )
     return _convert_icode_messages(
         _icode_list(state.get("messages")),
         session_id=session_id,
         parent_session_id=parent_session_id,
         session_depth=session_depth,
-        session_title=title if is_sub_agent else "",
+        session_title=_icode_str(meta.get("agent_display_name") or meta.get("generated_title")) if is_sub_agent else "",
         is_sub_agent=is_sub_agent,
-        agent=agent,
-        model_id=model_id,
-        provider_id=provider_id,
+        agent=_icode_str(meta.get("agent_profile")),
+        model_id=_icode_str(meta.get("model_id")),
+        provider_id=_icode_str(meta.get("model_provider")),
         children_by_invocation=by_invocation,
         children_by_call=by_call,
         converted_children=converted_children,
@@ -576,9 +484,6 @@ def _convert_icode_to_internal(raw: dict) -> dict:
     plus optional ``_chrys_sub_agent_sessions``.  Nested children are
     flattened into the OpenCode message/part shape used by ``parse_steps()``.
     """
-    if raw.get("_icode_format") is True and isinstance(raw.get("messages"), list):
-        return raw
-
     meta = _icode_dict(raw.get("meta"))
     state = _icode_dict(raw.get("state"))
     export = _icode_dict(raw.get("_chrys_export"))
@@ -594,28 +499,24 @@ def _convert_icode_to_internal(raw: dict) -> dict:
     updated_iso = _icode_str(meta.get("updated_at"))
     created_ms = _iso_to_epoch_ms(created_iso) or 0
     updated_ms = _iso_to_epoch_ms(updated_iso) or created_ms
-    if isinstance(updated_ms, int) and messages:
-        last_info = messages[-1].get("info", {})
-        last_time = last_info.get("time", {}) if isinstance(last_info, dict) else {}
-        if isinstance(last_time, dict) and not last_time.get("completed"):
+    if messages:
+        last_time = _icode_dict(_icode_dict(messages[-1].get("info")).get("time"))
+        if not last_time.get("completed"):
             last_created = last_time.get("created")
-            if isinstance(last_created, (int, float)) and updated_ms >= last_created:
+            if isinstance(last_created, (int, float)) and last_created > 0 and updated_ms >= last_created:
                 last_time["completed"] = updated_ms
 
-    info = {
-        "id": session_id,
-        "slug": "",
-        "directory": directory,
-        "title": _icode_str(meta.get("generated_title")),
-        "version": _icode_str(meta.get("app_version")),
-        "time": {"created": created_ms, "updated": updated_ms},
-    }
-
     converted = {
-        "info": info,
+        "info": {
+            "id": session_id,
+            "slug": "",
+            "directory": directory,
+            "title": _icode_str(meta.get("generated_title")),
+            "version": _icode_str(meta.get("app_version")),
+            "time": {"created": created_ms, "updated": updated_ms},
+        },
         "messages": messages,
         "_chrys_export": export or None,
-        "_chrys_sub_agent_sessions": children,
     }
     _convert_opencode_metadata(converted)
 
@@ -677,11 +578,17 @@ def _convert_icode_to_internal(raw: dict) -> dict:
         stats = {}
         converted["stats"] = stats
     failed_tool_calls = 0
+    reasoning_parts = 0
     for msg in messages:
         if not isinstance(msg, dict):
             continue
         for part in _icode_list(msg.get("parts")):
-            if not isinstance(part, dict) or part.get("type") != "tool":
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "reasoning":
+                reasoning_parts += 1
+                continue
+            if part.get("type") != "tool":
                 continue
             status = _icode_str(part.get("status") or _icode_dict(part.get("state")).get("status"))
             if status == "error" or part.get("error"):
@@ -695,7 +602,7 @@ def _convert_icode_to_internal(raw: dict) -> dict:
         "has_timing": bool(created_ms),
         "has_tool_calls": bool(stats.get("total_tool_calls")),
         "has_runtime_token_usage": bool(token_usage.get("total_tokens")),
-        "has_reasoning_content": bool(stats.get("reasoning_steps")),
+        "has_reasoning_content": bool(reasoning_parts),
         "has_session_hierarchy": bool(metadata["sub_agent_count"]),
     }
     return converted

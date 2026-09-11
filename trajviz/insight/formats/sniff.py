@@ -89,8 +89,6 @@ def _looks_like_icode_object(raw: dict) -> bool:
     ``state.messages`` with ``contents`` arrays, and stamps
     ``_chrys_export.format = chrys-expanded-session-v1``.
     """
-    if raw.get("_icode_format") is True:
-        return True
     export = raw.get("_chrys_export")
     if isinstance(export, dict) and export.get("format") == _CHRYS_EXPANDED_FORMAT:
         return True
