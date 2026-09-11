@@ -14,7 +14,7 @@ from ._layout import (
 import plotly.graph_objects as go
 
 from ..palette import SESSION_COLORS, TOOL_OUTCOME_COLORS
-from ..shell_cmd import tool_chart_name
+from ..shell_cmd import tool_call_hint, tool_chart_name
 from ._timeline import (
     _disambiguate_timeline_labels,
     _legend_label,
@@ -229,7 +229,7 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
     color_map, labels, agent_id_of = bind_timeline_agents(steps)
     fail_border = TOOL_OUTCOME_COLORS["failure"]
 
-    by_agent: dict[str, list[tuple[int, str, bool]]] = defaultdict(list)
+    by_agent: dict[str, list[tuple[int, str, bool, str]]] = defaultdict(list)
     tool_names: set[str] = set()
     saw_ok = saw_fail = False
     for s in steps:
@@ -242,7 +242,7 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
                 continue
             tool_name = _truncate_chart_label(tool_chart_name(tc))
             ok = not (tc.get("error") or tc.get("status") == "error")
-            by_agent[agent].append((idx, tool_name, ok))
+            by_agent[agent].append((idx, tool_name, ok, tool_call_hint(tc)))
             tool_names.add(tool_name)
             if ok:
                 saw_ok = True
@@ -263,6 +263,10 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
             color = SESSION_COLORS[color_map.get(agent_id, 0) % len(SESSION_COLORS)]
             label = _legend_label(agent_id, labels)
             oks = [p[2] for p in group]
+            hovers = [
+                ("Success" if p[2] else "Failure") + (f"<br>{p[3]}" if p[3] else "")
+                for p in group
+            ]
             fig.add_trace(
                 go.Scatter(
                     x=[p[0] for p in group],
@@ -283,7 +287,7 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
                     ),
                     # Step index in customdata drives Workflow jump on click.
                     customdata=[p[0] for p in group],
-                    hovertext=["Success" if p[2] else "Failure" for p in group],
+                    hovertext=hovers,
                     hovertemplate=(
                         f"{label}<br>Step %{{customdata}}<br>%{{y}}"
                         f"<br>%{{hovertext}}<extra></extra>"
@@ -318,6 +322,9 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
             marker = dict(color=color, size=9, symbol=symbol)
             if not ok:
                 marker["line"] = dict(width=2, color=fail_border)
+            hovers = [
+                name + (f"<br>{p[3]}" if p[3] else "") for p in subset
+            ]
             fig.add_trace(
                 go.Scatter(
                     x=[p[0] for p in subset],
@@ -326,8 +333,9 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
                     name=name,
                     marker=marker,
                     customdata=[p[0] for p in subset],
+                    hovertext=hovers,
                     hovertemplate=(
-                        f"Step %{{customdata}}<br>%{{y}}<br>{name}<extra></extra>"
+                        f"Step %{{customdata}}<br>%{{y}}<br>%{{hovertext}}<extra></extra>"
                     ),
                 )
             )

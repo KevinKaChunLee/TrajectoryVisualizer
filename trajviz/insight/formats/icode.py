@@ -75,6 +75,16 @@ def _icode_parse_arguments(arguments: Any) -> dict:
     return {"raw": arguments}
 
 
+def _icode_tool_title_hint(arguments: Any) -> str:
+    """Short human label (the command/pattern/etc.) from a tool call's arguments."""
+    args = _icode_parse_arguments(arguments)
+    for key in ("command", "file_path", "path", "pattern", "description", "prompt"):
+        v = args.get(key)
+        if isinstance(v, str) and v:
+            return v[:80]
+    return ""
+
+
 def _icode_normalize_tool(name: Any, arguments: Any, tool_kind: str = "") -> tuple[str, dict]:
     raw_name = name if isinstance(name, str) else ""
     canonical = _ICODE_TOOL_NAMES.get(raw_name.lower(), raw_name) if raw_name else ""
@@ -369,6 +379,25 @@ def _convert_icode_messages(
         if role == "assistant":
             parts = []
             has_tools = False
+            # Chrys splits some tool invocations across two function_call
+            # contents in one message: a named stub with empty arguments
+            # (approval request) followed by an anonymous call carrying the
+            # real arguments. Inherit the stub's name/kind so the anonymous
+            # call doesn't render as "?", and give the stub a title from the
+            # paired arguments so both halves show the intended command.
+            stubs: list[tuple[str, str]] = []
+            anon_arg_hints: list[str] = []
+            for item in _icode_iter_contents(message.get("contents")):
+                if item.get("type") in ("function_call", "tool_call", "toolCall"):
+                    stub_name = _icode_str(item.get("name"))
+                    stub_args = _icode_str(item.get("arguments"))
+                    if stub_name and not stub_args.strip():
+                        stub_kind = _icode_str(_icode_dict(item.get("additional_properties")).get("_chrys_tool_kind"))
+                        stubs.append((stub_name, stub_kind))
+                    elif not stub_name and stub_args.strip():
+                        anon_arg_hints.append(_icode_tool_title_hint(item.get("arguments")))
+            stub_iter = iter(stubs)
+            anon_hint_iter = iter(anon_arg_hints)
             for item in _icode_iter_contents(message.get("contents")):
                 ctype = item.get("type")
                 if ctype in ("reasoning", "thinking"):
@@ -381,7 +410,15 @@ def _convert_icode_messages(
                     call_id = _icode_str(item.get("call_id") or item.get("id"))
                     item_props = _icode_dict(item.get("additional_properties"))
                     tool_kind = _icode_str(item_props.get("_chrys_tool_kind"))
-                    part = _icode_tool_part(item.get("name"), item.get("arguments"), call_id, tool_kind)
+                    name = item.get("name")
+                    args = item.get("arguments")
+                    if not _icode_str(name) and _icode_str(args).strip():
+                        name, tool_kind = next(stub_iter, ("", tool_kind))
+                    part = _icode_tool_part(name, args, call_id, tool_kind)
+                    if _icode_str(name) and not _icode_str(args).strip():
+                        hint = next(anon_hint_iter, "")
+                        if hint:
+                            part["state"]["title"] = hint
                     if ts:
                         time_info = part["state"].setdefault("time", {})
                         if isinstance(time_info, dict) and "start" not in time_info:
