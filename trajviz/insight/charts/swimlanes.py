@@ -335,7 +335,7 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
                     customdata=[p[0] for p in subset],
                     hovertext=hovers,
                     hovertemplate=(
-                        f"Step %{{customdata}}<br>%{{y}}<br>%{{hovertext}}<extra></extra>"
+                        "Step %{customdata}<br>%{y}<br>%{hovertext}<extra></extra>"
                     ),
                 )
             )
