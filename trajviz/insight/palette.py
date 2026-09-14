@@ -14,6 +14,9 @@ SESSION_COLORS = [
     "#3b82f6", "#8b5cf6", "#059669", "#d97706", "#e11d48", "#0891b2",
 ]
 
+# Human-user lane on the agent swimlane (light Workflow --wf-border-user).
+USER_SWIMLANE_COLOR = "#1e40af"
+
 # Agent color palette — first entry is "main", rest cycle for sub-agents.
 AGENT_COLORS = [
     "#6b7280",  # main (grey)

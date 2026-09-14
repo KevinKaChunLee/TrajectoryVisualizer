@@ -113,7 +113,7 @@ class PackContextTests(unittest.TestCase):
         )
         issue = OverviewIssue(
             kind="antipattern",
-            title="1 Bash-for-reading",
+            title="Bash-for-reading (1×)",
             detail="sed/cat",
             why="shell reads",
             steps=(4,),

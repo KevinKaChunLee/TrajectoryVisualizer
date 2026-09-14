@@ -99,14 +99,14 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
 
         if error_class == "system":
             if count >= _SYSTEM_ERROR_HIGH:
-                title = f"Frequent scaffold errors: {_count_label(label, count)}"
+                title = f"Frequent system errors: {_count_label(label, count)}"
                 why = (
                     "Many Read/Grep/Edit-style failures in one run — each is usually "
                     "low risk, but volume suggests path, permission, or harness setup "
                     "problems worth checking."
                 )
             else:
-                title = f"Scaffold miss: {_count_label(label, count)}"
+                title = f"System error: {_count_label(label, count)}"
                 why = (
                     "Scaffold/tooling miss (search, read, or write) — usually low risk; "
                     "the agent can often recover without an author change."
@@ -115,7 +115,7 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
                 OverviewIssue(
                     kind="antipattern",
                     title=title,
-                    detail=example or "scaffold tool failure",
+                    detail=example or "system tool failure",
                     why=why,
                     steps=steps,
                     source_id=f"fail:system:{i}:{label}",
@@ -153,7 +153,7 @@ def _from_failure_chains(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="error",
-                title=f"{len(steps)}-step failure cascade",
+                title=f"Failure cascade ({len(steps)} steps)",
                 detail=f"steps {start}–{end}",
                 why=(
                     "Consecutive assistant steps failed without a clean recovery in between; "
@@ -176,7 +176,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
             out.append(
                 OverviewIssue(
                     kind="error",
-                    title=f"{error_count} tool error(s)",
+                    title=_count_label("Tool errors", error_count),
                     detail="detected from tool output (platform, permission, missing file)",
                     why=(
                         "Failed tool calls cost tokens and turns to recover from, and often "
@@ -207,7 +207,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"{len(streaks)} fruitless search streak(s)",
+                title=_count_label("Fruitless search streaks", len(streaks)),
                 detail=f"{total_wasted} wasted steps — {streak_desc}",
                 why=(
                     "Three or more consecutive searches that returned no matches; "
@@ -226,7 +226,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"{len(tool_selection)} Bash-for-reading",
+                title=_count_label("Bash-for-reading", len(tool_selection)),
                 detail="steps used sed/cat/head instead of Read tool",
                 why=(
                     "Shell reads bypass structured Read tooling — no line numbers, "
@@ -248,7 +248,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"{len(stalled)} stalled plan item(s)",
+                title=_count_label("Stalled plan items", len(stalled)),
                 detail=items_desc,
                 why=(
                     "Todo items stayed in_progress without completion — often a "
@@ -269,7 +269,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"{plan_resets} plan reset(s)",
+                title=_count_label("Plan resets", plan_resets),
                 detail="todo list content replaced with no overlapping items",
                 why=(
                     "A full plan rewrite mid-run usually means the agent abandoned context "
@@ -347,7 +347,7 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"{len(grew)} compaction(s) that grew the context window",
+                title=_count_label("Compactions that grew the context window", len(grew)),
                 detail=detail,
                 why=(
                     f"Compacting left the window at least as large as before (worst: "
@@ -376,7 +376,7 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"{len(premature)} premature compaction(s)",
+                title=_count_label("Premature compactions", len(premature)),
                 detail=f"window occupancy at compaction time: {pct_desc}",
                 why=(
                     "The context window was compacted well before it was full — usually "

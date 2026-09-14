@@ -16,6 +16,7 @@ from .palette import AGENT_COLORS, AGENT_CSS_COLORS
 from .parser import _optional_token_count
 from .step_errors import step_error_kind
 from .styles import WORKFLOW_CSS
+from .workflow_role import workflow_role
 
 
 _ROLE_COLORS = {
@@ -34,33 +35,6 @@ _ROLE_BADGE_STYLES = {
     "compaction": "background:var(--wf-border-default);color:white;",
     "tool": "background:var(--wf-border-reasoning);color:white;",
 }
-
-
-def workflow_role(step: dict) -> str:
-    """Role key used for Workflow badges and filters.
-
-    OpenCode (and similar) record Task prompts, compaction checkpoints, and
-    synthetic continues as ``role=user``. Those are agent-protocol messages,
-    not human turns, so Workflow must not badge them as User.
-    """
-    raw = step.get("role", "")
-    role = raw if isinstance(raw, str) else str(raw or "")
-    if role != "user":
-        return role
-    parts = step.get("parts") if isinstance(step.get("parts"), list) else []
-    if step.get("is_compaction_checkpoint") or any(
-        isinstance(part, dict) and part.get("type") == "compaction" for part in parts
-    ):
-        return "compaction"
-    text_parts = [
-        part for part in parts
-        if isinstance(part, dict) and part.get("type") == "text"
-    ]
-    if text_parts and all(part.get("synthetic") for part in text_parts):
-        return "system"
-    if step.get("is_sub_agent"):
-        return "task"
-    return "user"
 
 
 def workflow_role_label(step: dict) -> str:
@@ -1334,7 +1308,7 @@ def build_antipattern_summary_html(
     if error_count > 0:
         cards.append(_antipattern_card(
             "var(--ov-bad)",
-            f"{error_count} tool error(s)",
+            f"Tool errors ({error_count}×)",
             "detected from tool output (platform, permission, missing file)",
             "Failed tool calls cost tokens and turns to recover from, and often indicate "
             "environment problems (wrong path, missing dependency, sandbox limits) rather than agent mistakes — "
@@ -1360,7 +1334,7 @@ def build_antipattern_summary_html(
             )
         cards.append(_antipattern_card(
             "var(--ov-warn)",
-            f"{len(fruitless_streaks)} fruitless search streak(s)",
+            f"Fruitless search streaks ({len(fruitless_streaks)}×)",
             f"{total_wasted} wasted steps — {streak_desc}",
             "Three or more consecutive searches that returned no matches. Each one still "
             "consumes tokens and latency; sustained streaks suggest the agent is looking "
@@ -1373,7 +1347,7 @@ def build_antipattern_summary_html(
         bash_steps = [f.get("step") for f in tool_selection if f.get("step") is not None]
         cards.append(_antipattern_card(
             "var(--ov-accent)",
-            f"{len(tool_selection)} Bash-for-reading",
+            f"Bash-for-reading ({len(tool_selection)}×)",
             "steps used sed/cat/head instead of Read tool",
             "Reading files via shell pipes bypasses the Read tool's structure — "
             "no line numbers, no cross-turn cache, no output cap — which inflates "
@@ -1392,7 +1366,7 @@ def build_antipattern_summary_html(
             )
         cards.append(_antipattern_card(
             "var(--ov-warn)",
-            f"{len(stalled)} stalled plan item(s)",
+            f"Stalled plan items ({len(stalled)}×)",
             items_desc,
             "Items marked in_progress in TodoWrite but never marked completed, "
             "or completed more than 20 steps after they started. Often means the "
