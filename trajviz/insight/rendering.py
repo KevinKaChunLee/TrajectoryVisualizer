@@ -16,6 +16,7 @@ from .palette import AGENT_COLORS, AGENT_CSS_COLORS
 from .parser import _optional_token_count
 from .step_errors import step_error_kind
 from .styles import WORKFLOW_CSS
+from .workflow_role import workflow_role
 
 
 _ROLE_COLORS = {
@@ -34,33 +35,6 @@ _ROLE_BADGE_STYLES = {
     "compaction": "background:var(--wf-border-default);color:white;",
     "tool": "background:var(--wf-border-reasoning);color:white;",
 }
-
-
-def workflow_role(step: dict) -> str:
-    """Role key used for Workflow badges and filters.
-
-    OpenCode (and similar) record Task prompts, compaction checkpoints, and
-    synthetic continues as ``role=user``. Those are agent-protocol messages,
-    not human turns, so Workflow must not badge them as User.
-    """
-    raw = step.get("role", "")
-    role = raw if isinstance(raw, str) else str(raw or "")
-    if role != "user":
-        return role
-    parts = step.get("parts") if isinstance(step.get("parts"), list) else []
-    if step.get("is_compaction_checkpoint") or any(
-        isinstance(part, dict) and part.get("type") == "compaction" for part in parts
-    ):
-        return "compaction"
-    text_parts = [
-        part for part in parts
-        if isinstance(part, dict) and part.get("type") == "text"
-    ]
-    if text_parts and all(part.get("synthetic") for part in text_parts):
-        return "system"
-    if step.get("is_sub_agent"):
-        return "task"
-    return "user"
 
 
 def workflow_role_label(step: dict) -> str:

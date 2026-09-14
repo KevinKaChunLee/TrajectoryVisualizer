@@ -13,8 +13,9 @@ from ._layout import (
 )
 import plotly.graph_objects as go
 
-from ..palette import SESSION_COLORS, TOOL_OUTCOME_COLORS
+from ..palette import SESSION_COLORS, TOOL_OUTCOME_COLORS, USER_SWIMLANE_COLOR
 from ..shell_cmd import tool_call_hint, tool_chart_name
+from ..workflow_role import workflow_role
 from ._timeline import (
     _disambiguate_timeline_labels,
     _legend_label,
@@ -24,34 +25,32 @@ from ._timeline import (
     bind_timeline_agents,
 )
 
+USER_SWIMLANE_ID = "__user__"
+USER_SWIMLANE_LABEL = "user"
+
 
 def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figure:
     """Horizontal swimlane chart showing each agent's active step ranges and token contribution.
 
-    Always renders the user/main lane alongside any sub-agent lanes — user
-    prompts (or main-orchestrator steps) are meaningful information regardless
-    of whether one or many sub-agents are present.
+    Human user prompts occupy a dedicated ``user`` lane (top). Main and
+    sub-agent lanes sit below, even when only the parent agent is present.
+    Task / system / compaction turns that some formats store as ``role=user``
+    stay on the agent that owns them.
     """
     color_map, label_map, agent_id_of = bind_timeline_agents(steps)
-    real_agents = [a for a in color_map if a]
-    if not real_agents:
-        fig = _empty_figure(180, "No agent activity recorded.")
-        _apply_dark(fig, dark)
-        return fig
 
-    fig = go.Figure()
-    # Group steps by agent and find contiguous runs
+    # Group steps by lane and find contiguous runs
     agent_runs: dict[str, list[tuple[int, int, int, int]]] = defaultdict(list)
-    prev: dict[str, int | None] = {}
+    prev: dict[str, int] = {}
 
     for s in steps:
         if not isinstance(s, dict):
             continue
-        agent = agent_id_of(s)
+        agent = USER_SWIMLANE_ID if workflow_role(s) == "user" else agent_id_of(s)
         idx = int(s.get("index") if s.get("index") is not None else 0)
         tok = int((s.get("tokens") or {}).get("total") or 0)
         tools = int(s.get("tool_call_count") or 0)
-        if agent not in prev or prev[agent] is None:
+        if agent not in prev:
             agent_runs[agent].append((idx, idx, tok, tools))
         else:
             last = agent_runs[agent][-1]
@@ -61,12 +60,34 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
                 agent_runs[agent].append((idx, idx, tok, tools))
         prev[agent] = idx
 
-    lane_count = 0
-    for i, agent_id in enumerate(sorted(color_map.keys(), key=lambda a: color_map[a])):
-        label = _legend_label(agent_id, label_map)
-        lane_count += 1
-        hex_c = SESSION_COLORS[i % len(SESSION_COLORS)]
-        for start, end, tok, tools in agent_runs.get(agent_id, []):
+    if not agent_runs:
+        fig = _empty_figure(180, "No agent activity recorded.")
+        _apply_dark(fig, dark)
+        return fig
+
+    fig = go.Figure()
+
+    # Bottom → top: main, then other agents in palette order, user on top.
+    lane_ids = [
+        aid for aid in sorted(color_map.keys(), key=lambda a: color_map[a])
+        if aid in agent_runs
+    ]
+    if USER_SWIMLANE_ID in agent_runs:
+        lane_ids.append(USER_SWIMLANE_ID)
+
+    y_labels: list[str] = []
+    for agent_id in lane_ids:
+        label = (
+            USER_SWIMLANE_LABEL
+            if agent_id == USER_SWIMLANE_ID
+            else _legend_label(agent_id, label_map)
+        )
+        y_labels.append(label)
+        if agent_id == USER_SWIMLANE_ID:
+            hex_c = USER_SWIMLANE_COLOR
+        else:
+            hex_c = SESSION_COLORS[color_map.get(agent_id, 0) % len(SESSION_COLORS)]
+        for start, end, tok, tools in agent_runs[agent_id]:
             width = end - start + 1
             fig.add_trace(
                 go.Bar(
@@ -88,9 +109,12 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
         fig,
         "Agent Swimlane",
         xaxis="Step Index",
-        height=max(160, 80 * max(1, lane_count)),
+        height=max(160, 80 * max(1, len(lane_ids))),
         barmode="overlay",
         margin=dict(l=100, r=20, t=40, b=30),
+    )
+    fig.update_layout(
+        yaxis=dict(categoryorder="array", categoryarray=y_labels, automargin=True),
     )
     _apply_dark(fig, dark)
     return fig
