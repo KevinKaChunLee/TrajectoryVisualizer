@@ -10,6 +10,7 @@ from trajviz.insight.context_usage import (
     coerce_window_limit,
     context_pressure_series,
     detect_compaction_events,
+    detect_premature_compactions,
     infer_context_window_limit,
     pressure_agent_choices,
     resolve_context_window_limit,
@@ -493,6 +494,53 @@ class ChartBuilderTests(unittest.TestCase):
         for shape in fig.layout.shapes or []:
             self.assertEqual(shape.type, "line")
             self.assertEqual(shape.y0, shape.y1)
+
+
+class PrematureCompactionTests(unittest.TestCase):
+    @staticmethod
+    def _steps(before, after):
+        return [
+            _step(0, session_id="s", model_id="gpt-4o", tokens=_tokens(total=before, inp=before)),
+            _step(1, role="compaction", session_id="s", is_compaction_checkpoint=True,
+                  message_type="compaction"),
+            _step(2, session_id="s", model_id="gpt-4o", tokens=_tokens(total=after, inp=after)),
+        ]
+
+    def test_healthy_compaction_not_flagged(self):
+        # 100k of the 128k window, then a real cliff to 20k.
+        flagged = detect_premature_compactions(self._steps(100_000, 20_000))
+        self.assertEqual(flagged, [])
+
+    def test_low_occupancy_compaction_flagged(self):
+        flagged = detect_premature_compactions(self._steps(20_000, 8_000))
+        self.assertEqual(len(flagged), 1)
+        self.assertEqual(flagged[0]["reason"], "low_occupancy")
+        self.assertFalse(flagged[0]["grew"])
+        self.assertEqual(flagged[0]["occupancy_before"], 20_000)
+        self.assertEqual(flagged[0]["occupancy_after"], 8_000)
+        self.assertAlmostEqual(flagged[0]["before_pct"], 15.6, places=1)
+        self.assertEqual(flagged[0]["window_limit"], 128_000)
+
+    def test_window_growing_compaction_flagged(self):
+        flagged = detect_premature_compactions(self._steps(10_000, 12_000))
+        self.assertEqual(len(flagged), 1)
+        self.assertTrue(flagged[0]["grew"])
+        self.assertEqual(flagged[0]["reason"], "window_grew")
+
+    def test_override_limit_suppresses_premature_flag(self):
+        # Same low-occupancy compaction, but with the real 30k window known.
+        steps = self._steps(20_000, 8_000)
+        self.assertEqual(detect_premature_compactions(steps, window_limit="30k"), [])
+
+    def test_inferred_occupancy_drop_is_not_considered(self):
+        # A cliff with no explicit compaction record stays out of the detector;
+        # it is only heuristic pressure-series material.
+        steps = [
+            _step(0, session_id="s", tokens=_tokens(total=100_000, inp=100_000, cache_read=90_000)),
+            _step(1, session_id="s", tokens=_tokens(total=20_000, inp=20_000, cache_read=15_000)),
+            _step(2, session_id="s", tokens=_tokens(total=21_000, inp=21_000, cache_read=16_000)),
+        ]
+        self.assertEqual(detect_premature_compactions(steps), [])
 
 
 if __name__ == "__main__":
