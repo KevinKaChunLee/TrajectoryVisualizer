@@ -233,6 +233,12 @@ def parse_steps(raw: dict) -> list[dict]:
         }
         if reasoning is not None:
             tokens["reasoning"] = reasoning
+        # Formats that log per-message window contributions (ICode) resolve
+        # the live context-window occupancy in their converter; per-step
+        # totals are that step's own tokens, not the window size.
+        window = _optional_token_count(tokens_info, "context_window")
+        if window is not None and window > 0:
+            tokens["context_window"] = window
 
         t_created = safe_get(info, "time", "created", default=None)
         t_completed = safe_get(info, "time", "completed", default=None)

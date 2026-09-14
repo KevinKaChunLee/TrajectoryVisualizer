@@ -9,6 +9,11 @@ import unittest
 from pathlib import Path
 
 from trajviz.insight.charts import build_token_chart
+from trajviz.insight.context_usage import (
+    context_usage_breakdown,
+    detect_compaction_events,
+    step_context_occupancy,
+)
 from trajviz.insight.loaders import detect_format, load_trajectory
 from trajviz.insight.metrics import extract_agent_info
 from trajviz.insight.parser import parse_steps
@@ -154,6 +159,41 @@ class ICodeLoaderTests(unittest.TestCase):
         steps = parse_steps(load_trajectory(str(FIXTURE)))
         figure = build_token_chart(steps, format="icode")
         self.assertEqual([trace.name for trace in figure.data], ["Total"])
+
+    def test_context_utilization_per_step_tokens_and_compaction(self):
+        # Chrys ``_group.token_count`` is each message's own window
+        # contribution, split across the assistant call and its tool result.
+        # Token Usage by Step shows the group's own tokens; Context
+        # Utilization occupancy is the live window: running contributions
+        # minus compacted ranges plus their summaries.
+        loaded = load_trajectory(str(FIXTURE))
+        steps = parse_steps(loaded)
+        main = [s for s in steps if s.get("session_id") == "session-main-0001"]
+
+        # Per-step total is the group's contribution (40 + 20), not a
+        # monotonically increasing running window.
+        first_tool = next(s for s in main if s.get("message_id") == "chatcmpl-0001")
+        self.assertEqual(first_tool["tokens"]["total"], 60)
+        totals = [s["tokens"]["total"] for s in main if s["role"] == "assistant"]
+        self.assertEqual(totals[:3], [60, 55, 110])
+
+        # The compressed context covering messages [0, 2) emits a compaction
+        # checkpoint with its summary, and the window restarts from it.
+        compaction = next(s for s in main if s["role"] == "compaction")
+        self.assertTrue(compaction["is_compaction_checkpoint"])
+        self.assertIn("lanczos caller", compaction["parts"][0]["summary"])
+        self.assertTrue(any(e["kind"] == "compaction_message" for e in detect_compaction_events(steps)))
+
+        # Live window after the last step: 12 (summary) + 20 + 30 + 25 + 50
+        # + 60 + 70.
+        last_main = next(s for s in reversed(main) if s["role"] == "assistant")
+        self.assertEqual(step_context_occupancy(last_main)["occupancy"], 267)
+
+        breakdown = context_usage_breakdown(steps, raw=loaded)
+        self.assertEqual(breakdown["occupancy"], 267)
+        self.assertEqual(sum(breakdown["buckets"].values()), 267)
+        self.assertGreater(breakdown["buckets"]["summarized"], 0)
+        self.assertFalse(breakdown["scaled"])
 
     def test_human_readable_format_label(self):
         self.assertEqual(trajectory_format_label("icode"), "ICode")

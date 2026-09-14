@@ -10,6 +10,7 @@ from ..rendering import (
     _indices_for_step_range,
     _step_link_chips,
 )
+from ..context_usage import format_token_count
 from ..session import LoadedSession
 from .patterns import count_tool_errors
 
@@ -74,6 +75,7 @@ def collect_overview_issues(session: LoadedSession) -> list[OverviewIssue]:
     issues.extend(_from_failure_patterns(session))
     issues.extend(_from_failure_chains(session))
     issues.extend(_from_antipatterns(session))
+    issues.extend(_from_premature_compactions(session))
     issues.extend(_from_bottlenecks(session))
     return issues
 
@@ -320,6 +322,72 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
             )
         )
 
+    return out
+
+
+def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
+    """Compactions that ran before the window was full, or grew it."""
+    out: list[OverviewIssue] = []
+    flagged = getattr(session, "premature_compactions", None) or []
+    if not flagged:
+        return out
+
+    def _fmt(n: object) -> str:
+        return format_token_count(int(n)) if isinstance(n, (int, float)) else "?"
+
+    grew = [c for c in flagged if c.get("grew")]
+    if grew:
+        worst = max(grew, key=lambda c: int(c.get("occupancy_after") or 0))
+        detail = ", ".join(
+            f"step {c.get('step')}: {_fmt(c.get('occupancy_before'))} → {_fmt(c.get('occupancy_after'))}"
+            for c in grew[:4]
+        )
+        if len(grew) > 4:
+            detail += f", +{len(grew) - 4} more"
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"{len(grew)} compaction(s) that grew the context window",
+                detail=detail,
+                why=(
+                    f"Compacting left the window at least as large as before (worst: "
+                    f"{_fmt(worst.get('occupancy_before'))} → {_fmt(worst.get('occupancy_after'))}) — "
+                    "the stored summary cost more tokens than the compacted messages freed, "
+                    "so the compaction was wasted work at that point."
+                ),
+                steps=tuple(int(c.get("step", 0)) for c in grew),
+                source_id="antipattern:compaction_grew",
+            )
+        )
+
+    premature = [c for c in flagged if not c.get("grew")]
+    if premature:
+        pcts = [
+            float(c["before_pct"])
+            for c in premature
+            if isinstance(c.get("before_pct"), (int, float))
+        ]
+        limit = _fmt(premature[0].get("window_limit"))
+        pct_desc = (
+            f"{min(pcts):.0f}–{max(pcts):.0f}% of the assumed {limit}-token window"
+            if pcts
+            else "well below the window limit"
+        )
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"{len(premature)} premature compaction(s)",
+                detail=f"window occupancy at compaction time: {pct_desc}",
+                why=(
+                    "The context window was compacted well before it was full — usually "
+                    "an agent-initiated compress/compact call rather than a harness-forced "
+                    "one. Context was lost early; check the stored summaries kept what "
+                    "mattered."
+                ),
+                steps=tuple(int(c.get("step", 0)) for c in premature),
+                source_id="antipattern:compaction_premature",
+            )
+        )
     return out
 
 

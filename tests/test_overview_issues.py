@@ -25,6 +25,7 @@ def _session(**kwargs):
         repeated_searches=[],
         phase_regressions=[],
         performance_bottlenecks=[],
+        premature_compactions=[],
         file_interactions=[],
         format="",
     )
@@ -256,6 +257,32 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(issues[0].kind, "antipattern")
         self.assertIn(4, issues[0].steps)
         self.assertIn(6, issues[0].steps)
+
+    def test_premature_compactions_become_antipattern_issues(self):
+        issues = collect_overview_issues(
+            _session(
+                premature_compactions=[
+                    {"step": 139, "occupancy_before": 11_941, "occupancy_after": 12_766,
+                     "before_pct": 9.3, "window_limit": 128_000, "grew": True,
+                     "reason": "window_grew"},
+                    {"step": 245, "occupancy_before": 41_935, "occupancy_after": 12_130,
+                     "before_pct": 32.8, "window_limit": 128_000, "grew": False,
+                     "reason": "low_occupancy"},
+                    {"step": 259, "occupancy_before": 29_140, "occupancy_after": 12_162,
+                     "before_pct": 22.8, "window_limit": 128_000, "grew": False,
+                     "reason": "low_occupancy"},
+                ],
+            )
+        )
+        titles = [i.title for i in issues]
+        self.assertTrue(any("grew the context window" in t for t in titles))
+        self.assertTrue(any("premature compaction" in t for t in titles))
+        grew = next(i for i in issues if "grew the context window" in i.title)
+        premature = next(i for i in issues if "premature compaction" in i.title)
+        self.assertEqual(grew.steps, (139,))
+        self.assertEqual(premature.steps, (245, 259))
+        self.assertIn("23–33%", premature.detail)
+        self.assertIn("128k", premature.detail)
 
     def test_failure_cascade_skips_single_step_chains(self):
         issues = collect_overview_issues(

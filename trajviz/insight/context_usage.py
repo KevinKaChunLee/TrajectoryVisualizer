@@ -153,8 +153,16 @@ def step_context_occupancy(step: dict) -> dict:
     ``occupancy = fresh input + cache read``. Fresh input is inferred by
     :func:`trajviz.insight.parser.infer_non_cache_input` so Claude Code
     (cache-exclusive input) and OpenCode (cache-excluded input) agree.
+
+    Formats whose per-step totals are the step's own tokens rather than the
+    loaded prompt (ICode) carry a resolved ``tokens.context_window``; it is
+    the source of truth for occupancy. Its content is prompt (cache-hit)
+    tokens, so fresh is zero.
     """
     tokens = step.get("tokens") if isinstance(step.get("tokens"), dict) else {}
+    window = tokens.get("context_window")
+    if isinstance(window, (int, float)) and not isinstance(window, bool) and window > 0:
+        return {"fresh": 0, "cache_read": int(window), "occupancy": int(window)}
     tok_total = tokens.get("total", 0) or 0
     tok_input = tokens.get("input", 0) or 0
     tok_output = tokens.get("output", 0) or 0
@@ -582,6 +590,58 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
 
     events.sort(key=lambda e: (e["step"], e["kind"]))
     return events
+
+
+# A compaction below this fraction of the window limit ran well before the
+# window was full — usually agent-initiated, worth flagging as a possible
+# premature loss of context.
+PREMATURE_COMPACTION_RATIO = 0.5
+
+
+def detect_premature_compactions(
+    steps: list[dict],
+    raw: dict | None = None,
+    *,
+    window_limit: object = None,
+) -> list[dict]:
+    """Compactions that ran before the window was full or grew it.
+
+    Only explicit compaction events are considered (stored summaries,
+    compaction messages/parts, compress steps) — not inferred occupancy
+    drops. A compaction is flagged when it left the window at least as
+    large as before (``grew``: the summary cost more than the compacted
+    messages freed) or when the live window before it was below
+    ``PREMATURE_COMPACTION_RATIO`` of the window limit (``low_occupancy``).
+    """
+    flagged: list[dict] = []
+    limit = resolve_context_window_limit(steps, raw, override=window_limit)
+    for event in detect_compaction_events(steps):
+        if event.get("kind") not in _EXPLICIT_COMPACTION_KINDS:
+            continue
+        before = event.get("occupancy_before")
+        after = event.get("occupancy_after")
+        grew = isinstance(before, (int, float)) and isinstance(after, (int, float)) and int(after) >= int(before)
+        premature = isinstance(before, (int, float)) and int(before) < limit * PREMATURE_COMPACTION_RATIO
+        if not (grew or premature):
+            continue
+        flagged.append(
+            {
+                "step": int(event.get("step", 0)),
+                "agent": event.get("agent", ""),
+                "kind": event.get("kind", ""),
+                "occupancy_before": int(before) if isinstance(before, (int, float)) else None,
+                "occupancy_after": int(after) if isinstance(after, (int, float)) else None,
+                "before_pct": (
+                    round(100.0 * int(before) / limit, 1)
+                    if isinstance(before, (int, float)) and limit
+                    else None
+                ),
+                "window_limit": limit,
+                "grew": bool(grew),
+                "reason": "window_grew" if grew else "low_occupancy",
+            }
+        )
+    return flagged
 
 
 def pressure_agent_choices(steps: list[dict]) -> list[tuple[str, str]]:

@@ -10,6 +10,7 @@ from .analytics import compute_step_analytics
 from .context_usage import (
     PRESSURE_ALL_AGENTS,
     context_pressure_series,
+    detect_premature_compactions,
     pressure_agent_choices,
 )
 from .diagnostics import (
@@ -97,6 +98,7 @@ class LoadedSession:
     edit_thrash: list
     repeated_searches: list
     phase_regressions: list
+    premature_compactions: list
     truncated: bool = False
 
 
@@ -225,5 +227,6 @@ def build_loaded_session(path: str, raw: dict, *, detected: str | None = None) -
         edit_thrash=detect_edit_thrash(steps),
         repeated_searches=detect_repeated_searches(steps),
         phase_regressions=phase_regressions,
+        premature_compactions=detect_premature_compactions(steps, raw),
         truncated=truncated,
     )

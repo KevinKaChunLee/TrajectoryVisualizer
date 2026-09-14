@@ -53,6 +53,54 @@ def _icode_props(message: dict) -> dict:
     return _icode_dict(message.get("additional_properties"))
 
 
+def _icode_group_token_count(props: dict) -> int:
+    """Per-message contribution from Chrys ``_group.token_count`` (may be split)."""
+    count = _icode_dict(props.get("_group")).get("token_count")
+    if isinstance(count, bool) or not isinstance(count, (int, float)) or count <= 0:
+        return 0
+    return int(count)
+
+
+def _icode_compaction_boundaries(
+    messages: list,
+    compressed_contexts: list,
+) -> dict[int, dict]:
+    """Map raw message index → compaction info applied at that boundary.
+
+    Each Chrys compressed context replaces ``messages[start:end)`` with its
+    summary, so the smaller window is live from message ``end`` onward.
+    """
+    boundaries: dict[int, dict] = {}
+    for entry in compressed_contexts:
+        if not isinstance(entry, dict):
+            continue
+        start = entry.get("message_start")
+        end = entry.get("message_end")
+        if isinstance(start, bool) or isinstance(end, bool):
+            continue
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        if not (0 <= start < end <= len(messages)):
+            continue
+        summary = entry.get("summary_text")
+        summary = summary if isinstance(summary, str) else ""
+        # Same ≈4 chars/token heuristic as context_usage.estimate_tokens.
+        summary_tokens = max(1, (len(summary) + 3) // 4) if summary else 0
+        replaced = sum(
+            _icode_group_token_count(_icode_props(m))
+            for m in messages[start:end]
+            if isinstance(m, dict)
+        )
+        slot = boundaries.setdefault(end, {"delta": 0, "summaries": []})
+        slot["delta"] += summary_tokens - replaced
+        if summary:
+            slot["summaries"].append(summary)
+    return {
+        idx: {"delta": slot["delta"], "summary": "\n".join(slot["summaries"])}
+        for idx, slot in boundaries.items()
+    }
+
+
 def _icode_parse_arguments(arguments: Any) -> dict:
     if isinstance(arguments, dict):
         return dict(arguments)
@@ -214,6 +262,8 @@ def _convert_icode_messages(
     children_by_invocation: dict[str, dict] | None = None,
     children_by_call: dict[str, dict] | None = None,
     converted_children: dict[str, list[dict]] | None = None,
+    compressed_contexts: list | None = None,
+    system_overhead_tokens: int = 0,
 ) -> list[dict]:
     """Convert one ICode session's messages into OpenCode-shaped records."""
     children_by_invocation = children_by_invocation or {}
@@ -223,6 +273,11 @@ def _convert_icode_messages(
     pending_by_id: dict[str, list[dict]] = {}
     pending_anon: list[dict] = []
     inserts: dict[int, list[str]] = {}
+    # ``tokens.total`` = this message's ``_group.token_count``; ``context_window``
+    # = live occupancy (running contributions − compacteds + summaries + overhead).
+    window_tokens = system_overhead_tokens
+    part_owner: dict[int, dict] = {}
+    boundaries = _icode_compaction_boundaries(messages, compressed_contexts or [])
 
     def _append(
         role: str,
@@ -230,9 +285,8 @@ def _convert_icode_messages(
         parts: list,
         *,
         message_id: str = "",
-        tokens: dict | None = None,
         finish: str = "",
-    ) -> None:
+    ) -> dict:
         info: dict[str, Any] = {
             "role": role,
             "time": {"created": ts or 0},
@@ -249,11 +303,25 @@ def _convert_icode_messages(
             info["sessionDepth"] = session_depth
         if session_title:
             info["sessionTitle"] = session_title
-        if tokens:
-            info["tokens"] = tokens
         if finish:
             info["finish"] = finish
-        out.append({"info": info, "parts": parts, "message_id": message_id})
+        record = {"info": info, "parts": parts, "message_id": message_id}
+        out.append(record)
+        for part in parts:
+            if isinstance(part, dict) and part.get("type") == "tool":
+                part_owner[id(part)] = record
+        return record
+
+    def _credit_tokens(delta: int, record: dict | None = None) -> None:
+        nonlocal window_tokens
+        if delta:
+            window_tokens += delta
+        if record is None:
+            return
+        tokens = record["info"].setdefault("tokens", {})
+        if delta:
+            tokens["total"] = int(tokens.get("total", 0) or 0) + delta
+        tokens["context_window"] = window_tokens
 
     def _track(part: dict, call_id: str) -> None:
         if call_id:
@@ -267,20 +335,25 @@ def _convert_icode_messages(
             return queued.pop(0) if queued else None
         return pending_anon.pop(0) if pending_anon else None
 
-    for message in messages:
+    for raw_idx, message in enumerate(messages):
         if not isinstance(message, dict):
             continue
         props = _icode_props(message)
+        boundary = boundaries.get(raw_idx)
+        if boundary is not None:
+            window_tokens += boundary["delta"]
+            record = _append(
+                "compaction",
+                _iso_to_epoch_ms(props.get("_chrys_created_at")),
+                [{"type": "compaction", "summary": boundary["summary"]}],
+            )
+            record["info"]["type"] = "compaction"
+            _credit_tokens(0, record)
         if props.get("_chrys_kind") == "turn":
             continue
         role = _icode_str(message.get("role"))
         ts = _iso_to_epoch_ms(props.get("_chrys_created_at"))
-        count = _icode_dict(props.get("_group")).get("token_count")
-        tokens = (
-            {"total": int(count)}
-            if not isinstance(count, bool) and isinstance(count, (int, float)) and count > 0
-            else None
-        )
+        token_delta = _icode_group_token_count(props)
         message_id = _icode_str(message.get("message_id"))
 
         if role == "user":
@@ -290,7 +363,11 @@ def _convert_icode_messages(
                 if item.get("type") == "text" and item.get("text")
             ]
             if parts:
-                _append("user", ts, parts, message_id=message_id, tokens=tokens)
+                record = _append("user", ts, parts, message_id=message_id)
+                if token_delta:
+                    _credit_tokens(token_delta, record)
+            elif token_delta:
+                _credit_tokens(token_delta)
             continue
 
         if role == "assistant":
@@ -332,13 +409,16 @@ def _convert_icode_messages(
                     parts.append(part)
                     _track(part, call_id)
                     has_tools = True
-            if not parts and not tokens:
+            if not parts and not token_delta:
                 continue
-            _append(
-                "assistant", ts, parts,
-                message_id=message_id, tokens=tokens,
+            record = _append(
+                "assistant",
+                ts,
+                parts,
+                message_id=message_id,
                 finish="tool-calls" if has_tools else "stop",
             )
+            _credit_tokens(token_delta, record)
             continue
 
         if role != "tool":
@@ -353,7 +433,15 @@ def _convert_icode_messages(
             part = _take(call_id)
             if part is None:
                 part = _icode_tool_part("?", {}, call_id)
-                _append("assistant", ts, [part], message_id=message_id, tokens=tokens, finish="stop")
+                record = _append(
+                    "assistant",
+                    ts,
+                    [part],
+                    message_id=message_id,
+                    finish="stop",
+                )
+                _credit_tokens(token_delta, record)
+                token_delta = 0
             _icode_apply_tool_result(
                 part,
                 output=output,
@@ -362,6 +450,9 @@ def _convert_icode_messages(
                 ts=ts,
                 extra_metadata=extra,
             )
+            if token_delta:
+                _credit_tokens(token_delta, part_owner.get(id(part)))
+                token_delta = 0
             child_id = extra.get("sessionId")
             if child_id and converted_children.get(child_id):
                 parent_idx = len(out) - 1
@@ -400,6 +491,7 @@ def _convert_icode_session(
 ) -> list[dict]:
     meta = _icode_dict(session.get("meta"))
     state = _icode_dict(session.get("state"))
+    export = _icode_dict(session.get("_chrys_export"))
     session_id = _icode_child_session_id(meta) or parent_session_id
     nested = _icode_list(session.get("_chrys_sub_agent_sessions"))
     by_invocation: dict[str, dict] = {}
@@ -436,6 +528,8 @@ def _convert_icode_session(
         children_by_invocation=by_invocation,
         children_by_call=by_call,
         converted_children=converted_children,
+        compressed_contexts=_icode_list(export.get("compressed_contexts")),
+        system_overhead_tokens=_icode_int(_icode_dict(state.get("last_usage")).get("system_overhead_tokens")),
     )
 
 
