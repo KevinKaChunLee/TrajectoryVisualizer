@@ -1050,9 +1050,10 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     flex-wrap: wrap;
 }
 .overview-issue-title {
-    font-size: 12px;
+    font-size: 18px;
     font-weight: 600;
     color: var(--ov-text);
+    line-height: 1.35;
 }
 .overview-issue-detail {
     font-size: 12px;

@@ -104,7 +104,7 @@ class OverviewIssuesTests(unittest.TestCase):
         )
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].kind, "antipattern")
-        self.assertIn("Scaffold miss", issues[0].title)
+        self.assertIn("System error", issues[0].title)
         self.assertIn("low risk", issues[0].why)
 
     def test_frequent_system_errors_call_out_volume(self):
@@ -122,7 +122,7 @@ class OverviewIssuesTests(unittest.TestCase):
         )
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].kind, "antipattern")
-        self.assertIn("Frequent scaffold", issues[0].title)
+        self.assertIn("Frequent system errors", issues[0].title)
         self.assertIn("volume", issues[0].why)
 
     def test_bottleneck_issue_from_performance_bottlenecks(self):
@@ -276,9 +276,9 @@ class OverviewIssuesTests(unittest.TestCase):
         )
         titles = [i.title for i in issues]
         self.assertTrue(any("grew the context window" in t for t in titles))
-        self.assertTrue(any("premature compaction" in t for t in titles))
+        self.assertTrue(any("premature compaction" in t.lower() for t in titles))
         grew = next(i for i in issues if "grew the context window" in i.title)
-        premature = next(i for i in issues if "premature compaction" in i.title)
+        premature = next(i for i in issues if "premature compaction" in i.title.lower())
         self.assertEqual(grew.steps, (139,))
         self.assertEqual(premature.steps, (245, 259))
         self.assertIn("23–33%", premature.detail)
@@ -320,11 +320,16 @@ class OverviewIssuesTests(unittest.TestCase):
             )
         )
         titles = [i.title for i in issues]
-        self.assertTrue(any("plan reset" in t for t in titles))
+        self.assertTrue(any("plan reset" in t.lower() for t in titles))
         self.assertTrue(any("Failed edit retries" in t for t in titles))
         self.assertTrue(any("Repeated empty search" in t for t in titles))
         thrash = next(i for i in issues if "Failed edit retries" in i.title)
         self.assertEqual(thrash.steps, (5, 6, 7, 8))
+        for title in titles:
+            self.assertFalse(
+                title[:1].isdigit(),
+                f"issue title should not start with a digit: {title!r}",
+            )
 
 
 if __name__ == "__main__":

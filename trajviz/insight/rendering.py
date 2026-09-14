@@ -1308,7 +1308,7 @@ def build_antipattern_summary_html(
     if error_count > 0:
         cards.append(_antipattern_card(
             "var(--ov-bad)",
-            f"{error_count} tool error(s)",
+            f"Tool errors ({error_count}×)",
             "detected from tool output (platform, permission, missing file)",
             "Failed tool calls cost tokens and turns to recover from, and often indicate "
             "environment problems (wrong path, missing dependency, sandbox limits) rather than agent mistakes — "
@@ -1334,7 +1334,7 @@ def build_antipattern_summary_html(
             )
         cards.append(_antipattern_card(
             "var(--ov-warn)",
-            f"{len(fruitless_streaks)} fruitless search streak(s)",
+            f"Fruitless search streaks ({len(fruitless_streaks)}×)",
             f"{total_wasted} wasted steps — {streak_desc}",
             "Three or more consecutive searches that returned no matches. Each one still "
             "consumes tokens and latency; sustained streaks suggest the agent is looking "
@@ -1347,7 +1347,7 @@ def build_antipattern_summary_html(
         bash_steps = [f.get("step") for f in tool_selection if f.get("step") is not None]
         cards.append(_antipattern_card(
             "var(--ov-accent)",
-            f"{len(tool_selection)} Bash-for-reading",
+            f"Bash-for-reading ({len(tool_selection)}×)",
             "steps used sed/cat/head instead of Read tool",
             "Reading files via shell pipes bypasses the Read tool's structure — "
             "no line numbers, no cross-turn cache, no output cap — which inflates "
@@ -1366,7 +1366,7 @@ def build_antipattern_summary_html(
             )
         cards.append(_antipattern_card(
             "var(--ov-warn)",
-            f"{len(stalled)} stalled plan item(s)",
+            f"Stalled plan items ({len(stalled)}×)",
             items_desc,
             "Items marked in_progress in TodoWrite but never marked completed, "
             "or completed more than 20 steps after they started. Often means the "
