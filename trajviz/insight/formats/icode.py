@@ -61,13 +61,6 @@ def _icode_group_token_count(props: dict) -> int:
     return int(count)
 
 
-def _icode_estimate_tokens(text: str) -> int:
-    """Rough token count for a compaction summary (≈4 characters/token)."""
-    if not text:
-        return 0
-    return max(1, (len(text) + 3) // 4)
-
-
 def _icode_compaction_boundaries(
     messages: list,
     compressed_contexts: list,
@@ -91,12 +84,21 @@ def _icode_compaction_boundaries(
             continue
         summary = entry.get("summary_text")
         summary = summary if isinstance(summary, str) else ""
-        replaced = sum(_icode_group_token_count(_icode_props(m)) for m in messages[start:end] if isinstance(m, dict))
-        slot = boundaries.setdefault(end, {"delta": 0, "summary": ""})
-        slot["delta"] += _icode_estimate_tokens(summary) - replaced
+        # Same ≈4 chars/token heuristic as context_usage.estimate_tokens.
+        summary_tokens = max(1, (len(summary) + 3) // 4) if summary else 0
+        replaced = sum(
+            _icode_group_token_count(_icode_props(m))
+            for m in messages[start:end]
+            if isinstance(m, dict)
+        )
+        slot = boundaries.setdefault(end, {"delta": 0, "summaries": []})
+        slot["delta"] += summary_tokens - replaced
         if summary:
-            slot["summary"] = f"{slot['summary']}\n{summary}" if slot["summary"] else summary
-    return boundaries
+            slot["summaries"].append(summary)
+    return {
+        idx: {"delta": slot["delta"], "summary": "\n".join(slot["summaries"])}
+        for idx, slot in boundaries.items()
+    }
 
 
 def _icode_parse_arguments(arguments: Any) -> dict:
@@ -271,12 +273,9 @@ def _convert_icode_messages(
     pending_by_id: dict[str, list[dict]] = {}
     pending_anon: list[dict] = []
     inserts: dict[int, list[str]] = {}
-    # Chrys ``_group.token_count`` is each message's own contribution to the
-    # context window (often split across the assistant call and its tool
-    # result). Per-step token usage is that group's contribution, while
-    # context occupancy is the live window: running contributions minus
-    # compacted ranges plus their summaries.
-    window_tokens = 0
+    # ``tokens.total`` = this message's ``_group.token_count``; ``context_window``
+    # = live occupancy (running contributions − compacteds + summaries + overhead).
+    window_tokens = system_overhead_tokens
     part_owner: dict[int, dict] = {}
     boundaries = _icode_compaction_boundaries(messages, compressed_contexts or [])
 
@@ -309,7 +308,7 @@ def _convert_icode_messages(
         record = {"info": info, "parts": parts, "message_id": message_id}
         out.append(record)
         for part in parts:
-            if isinstance(part, dict):
+            if isinstance(part, dict) and part.get("type") == "tool":
                 part_owner[id(part)] = record
         return record
 
@@ -322,7 +321,7 @@ def _convert_icode_messages(
         tokens = record["info"].setdefault("tokens", {})
         if delta:
             tokens["total"] = int(tokens.get("total", 0) or 0) + delta
-        tokens["context_window"] = system_overhead_tokens + window_tokens
+        tokens["context_window"] = window_tokens
 
     def _track(part: dict, call_id: str) -> None:
         if call_id:
@@ -342,8 +341,6 @@ def _convert_icode_messages(
         props = _icode_props(message)
         boundary = boundaries.get(raw_idx)
         if boundary is not None:
-            # Compaction replaces messages [start, end) with a summary; the
-            # smaller window is live from this message onward.
             window_tokens += boundary["delta"]
             record = _append(
                 "compaction",
@@ -351,6 +348,7 @@ def _convert_icode_messages(
                 [{"type": "compaction", "summary": boundary["summary"]}],
             )
             record["info"]["type"] = "compaction"
+            _credit_tokens(0, record)
         if props.get("_chrys_kind") == "turn":
             continue
         role = _icode_str(message.get("role"))
