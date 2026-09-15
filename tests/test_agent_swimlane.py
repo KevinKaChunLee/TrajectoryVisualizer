@@ -135,17 +135,6 @@ class AgentSwimlaneTests(unittest.TestCase):
         by_name: dict[str, list] = {}
         for t in fig.data:
             by_name.setdefault(str(t.name), []).append(t)
-        main_traces = by_name["main"]
-        starts = []
-        for t in main_traces:
-            cd = t.customdata
-            if cd is None:
-                continue
-            starts.extend(int(v) for v in (cd if not isinstance(cd, (int, float)) else [cd]))
-        self.assertEqual(sorted(starts), [1, 5])
-        user = by_name[USER_SWIMLANE_LABEL][0]
-        user_cd = user.customdata
-        if isinstance(user_cd, (int, float)):
-            self.assertEqual(int(user_cd), 0)
-        else:
-            self.assertEqual([int(v) for v in user_cd], [0])
+        starts = sorted(int(t.customdata[0]) for t in by_name["main"])
+        self.assertEqual(starts, [1, 5])
+        self.assertEqual(list(by_name[USER_SWIMLANE_LABEL][0].customdata), [0])

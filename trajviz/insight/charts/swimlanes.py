@@ -35,8 +35,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     Human user prompts occupy a dedicated ``user`` lane (top). Main and
     sub-agent lanes sit below, even when only the parent agent is present.
     Task / system / compaction turns that some formats store as ``role=user``
-    stay on the agent that owns them. Clicking a segment jumps to that
-    segment's first step in Workflow (``customdata``).
+    stay on the agent that owns them.
     """
     color_map, label_map, agent_id_of = bind_timeline_agents(steps)
 
