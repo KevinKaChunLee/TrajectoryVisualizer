@@ -35,7 +35,8 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     Human user prompts occupy a dedicated ``user`` lane (top). Main and
     sub-agent lanes sit below, even when only the parent agent is present.
     Task / system / compaction turns that some formats store as ``role=user``
-    stay on the agent that owns them.
+    stay on the agent that owns them. Clicking a segment jumps to that
+    segment's first step in Workflow (``customdata``).
     """
     color_map, label_map, agent_id_of = bind_timeline_agents(steps)
 
@@ -100,7 +101,12 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
                     showlegend=False,
                     text=f"{width} steps, {tok:,} tok",
                     textposition="inside",
-                    hovertext=(f"{label}: steps {start}–{end}<br>{tok:,} tokens, {tools} tool calls"),
+                    # First step of this segment drives Workflow jump on click.
+                    customdata=[start],
+                    hovertext=(
+                        f"{label}: steps {start}–{end}<br>"
+                        f"{tok:,} tokens, {tools} tool calls"
+                    ),
                     hoverinfo="text",
                 )
             )
@@ -115,6 +121,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     )
     fig.update_layout(
         yaxis=dict(categoryorder="array", categoryarray=y_labels, automargin=True),
+        clickmode="event",
     )
     _apply_dark(fig, dark)
     return fig

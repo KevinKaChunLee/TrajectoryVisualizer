@@ -57,8 +57,10 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn('elem_id="duration-chart"', inspect.getsource(overview_tab.layout))
         self.assertIn('elem_id="tool-outcome-chart"', inspect.getsource(overview_tab.layout))
         self.assertIn('elem_id="tool-duration-chart"', inspect.getsource(overview_tab.layout))
+        self.assertIn('elem_id="agent-swimlane-chart"', inspect.getsource(overview_tab.layout))
         self.assertIn("tool-outcome-chart", source)
         self.assertIn("tool-duration-chart", source)
+        self.assertIn("agent-swimlane-chart", source)
 
     def test_workflow_jump_flash_style_exists(self):
         styles = Path("trajviz/insight/styles.py").read_text()
