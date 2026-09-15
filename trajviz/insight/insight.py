@@ -265,7 +265,7 @@ def build_ui() -> gr.Blocks:
                         /* Rebind on every schedule: Gradio Plotly.react / newPlot
                            reuses the graph div and drops .on() listeners, which
                            a one-shot bind flag would miss. */
-                        ['duration-chart', 'tool-outcome-chart', 'tool-duration-chart'].forEach((id) => {
+                        ['duration-chart', 'tool-outcome-chart', 'tool-duration-chart', 'agent-swimlane-chart'].forEach((id) => {
                             const root = document.getElementById(id);
                             if (!root) return;
                             const gd = root.querySelector('.js-plotly-plot')

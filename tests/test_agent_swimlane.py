@@ -123,3 +123,18 @@ class AgentSwimlaneTests(unittest.TestCase):
         fig = build_agent_swimlane_chart([])
         self.assertEqual(len(fig.data), 0)
         self.assertIn("No agent activity", fig.layout.annotations[0].text)
+
+    def test_segment_customdata_is_first_step_for_workflow_jump(self):
+        fig = build_agent_swimlane_chart([
+            _step(0, role="user", parts=[{"type": "text", "text": "hi"}]),
+            _step(1, tokens=4),
+            _step(2, tokens=5),
+            _step(5, tokens=6),
+        ])
+        self.assertEqual(fig.layout.clickmode, "event")
+        by_name: dict[str, list] = {}
+        for t in fig.data:
+            by_name.setdefault(str(t.name), []).append(t)
+        starts = sorted(int(t.customdata[0]) for t in by_name["main"])
+        self.assertEqual(starts, [1, 5])
+        self.assertEqual(list(by_name[USER_SWIMLANE_LABEL][0].customdata), [0])

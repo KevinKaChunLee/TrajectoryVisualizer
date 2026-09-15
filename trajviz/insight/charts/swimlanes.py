@@ -100,7 +100,12 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
                     showlegend=False,
                     text=f"{width} steps, {tok:,} tok",
                     textposition="inside",
-                    hovertext=(f"{label}: steps {start}–{end}<br>{tok:,} tokens, {tools} tool calls"),
+                    # First step of this segment drives Workflow jump on click.
+                    customdata=[start],
+                    hovertext=(
+                        f"{label}: steps {start}–{end}<br>"
+                        f"{tok:,} tokens, {tools} tool calls"
+                    ),
                     hoverinfo="text",
                 )
             )
@@ -115,6 +120,7 @@ def build_agent_swimlane_chart(steps: list[dict], dark: bool = False) -> go.Figu
     )
     fig.update_layout(
         yaxis=dict(categoryorder="array", categoryarray=y_labels, automargin=True),
+        clickmode="event",
     )
     _apply_dark(fig, dark)
     return fig
