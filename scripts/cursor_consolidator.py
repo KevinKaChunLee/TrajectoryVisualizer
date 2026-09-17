@@ -11,8 +11,11 @@ Cursor splits a conversation across:
 
 This consolidator snapshots the DB (copy + WAL) and never writes Cursor's
 files. It does **not** invent per-request billed tokens: Cursor does not
-persist them. Session-level ``promptTokenBreakdown`` is a context-window
-occupancy snapshot, stamped as such in ``export_metadata.token_semantics``.
+persist them. Session-level ``promptTokenBreakdown`` and user-bubble
+``contextWindowStatusAtCreation`` are occupancy snapshots. Per-step
+``info.tokens.input/output/total`` are ≈4-chars/token estimates of logged
+text and tools. Tool clocks come from Composer ``startedAtMs`` /
+``completedAtMs``. Semantics are stamped on ``export_metadata.token_semantics``.
 
 Usage:
     python scripts/cursor_consolidator.py <chat-id> [output-file]
@@ -32,11 +35,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable, Iterator, Sequence
@@ -50,8 +54,15 @@ except ImportError:  # Direct execution from scripts/.
 SCHEMA_VERSION = 1
 SOURCE_FORMAT = "cursor_composer"
 GENERATOR_NAME = "cursor_consolidator"
-TOKEN_SEMANTICS = "context_window_snapshot"
+TOKEN_SEMANTICS = "context_window_snapshot+estimated_log_tokens"
 MAX_DEPTH = 8
+_USER_BUBBLE_ALIGN_MS = 120_000
+_TIMESTAMP_RE = re.compile(r"<timestamp>\s*(.*?)\s*</timestamp>", re.I | re.S)
+_USER_QUERY_RE = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.I | re.S)
+_INJECTED_USER_RE = re.compile(
+    r"^\s*<(available_subagent_types|agent_skills|open_and_recently_viewed_files)\b",
+    re.I,
+)
 
 # Internal Composer tool names → JSONL ``tool_use.name`` spellings.
 _BUBBLE_TOOL_TO_JSONL = {
@@ -431,6 +442,9 @@ def _extract_tool_former(bubble: dict[str, Any]) -> dict[str, Any] | None:
     result = _maybe_json(former.get("result"))
     status = _as_str(former.get("status")) or "completed"
     error = former.get("error")
+    additional = _as_dict(former.get("additionalData"))
+    start_ms = _as_int(additional.get("startedAtMs")) or _as_int(bubble.get("startedAtMs"))
+    end_ms = _as_int(bubble.get("completedAtMs"))
     return {
         "name": name,
         "jsonl_name": _BUBBLE_TOOL_TO_JSONL.get(name, name),
@@ -441,16 +455,290 @@ def _extract_tool_former(bubble: dict[str, Any]) -> dict[str, Any] | None:
         "status": status,
         "error": error,
         "tool_call_id": _as_str(former.get("toolCallId")),
+        "start_ms": start_ms,
+        "end_ms": end_ms,
     }
 
 
+def _iso_to_ms(value: Any) -> int | None:
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return int(parsed.timestamp() * 1000)
+    return _as_int(value)
+
+
+def _bubble_span(bubble: dict[str, Any] | None) -> tuple[int | None, int | None]:
+    if not bubble:
+        return None, None
+    start = _as_int(bubble.get("startedAtMs")) or _iso_to_ms(bubble.get("createdAt"))
+    end = _as_int(bubble.get("completedAtMs"))
+    think = _as_int(bubble.get("thinkingDurationMs"))
+    turn = _as_int(bubble.get("turnDurationMs"))
+    if end is None and start and turn:
+        end = start + turn
+    if end is None and start and think:
+        end = start + think
+    return start, end
+
+
+def _occupancy_from_bubble(
+    bubble: dict[str, Any] | None,
+    token_limit: list[int] | None = None,
+) -> int | None:
+    """Occupancy from Composer ``contextWindowStatusAtCreation``.
+
+    Most user bubbles store only ``percentageRemainingFloat``. ``tokensUsed`` /
+    ``tokenLimit`` appear on a subset of rows. Derive used tokens from the
+    remaining percentage and the last known limit when the absolute count is
+    missing, so a single ``tokensUsed`` cannot stick for the rest of the chat.
+    """
+    if not bubble:
+        return None
+    status = bubble.get("contextWindowStatusAtCreation")
+    if not isinstance(status, dict):
+        return None
+    cap_holder = token_limit if token_limit is not None else [0]
+    limit = (
+        _as_int(status.get("tokenLimit"))
+        or _as_int(status.get("maxTokens"))
+        or (cap_holder[0] if cap_holder[0] > 0 else None)
+    )
+    if limit and limit > 0:
+        cap_holder[0] = limit
+    used = _as_int(status.get("tokensUsed"))
+    if used and used > 0:
+        return used
+    remaining = status.get("percentageRemainingFloat")
+    if not isinstance(remaining, (int, float)) or isinstance(remaining, bool):
+        remaining = status.get("percentageRemaining")
+    if not isinstance(remaining, (int, float)) or isinstance(remaining, bool):
+        return None
+    remaining_f = float(remaining)
+    if remaining_f < 0 or remaining_f > 100:
+        return None
+    cap = cap_holder[0]
+    if cap <= 0:
+        return None
+    estimated = int(round(cap * (1.0 - remaining_f / 100.0)))
+    return estimated if estimated > 0 else None
+
+
+def _event_text(event: dict[str, Any]) -> str:
+    content = _as_list(_as_dict(event.get("message")).get("content"))
+    chunks: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            chunks.append(text)
+    return "\n".join(chunks)
+
+
+def _normalize_user_text(text: str) -> str:
+    query = _USER_QUERY_RE.search(text)
+    body = query.group(1) if query else text
+    body = re.sub(r"<[^>]+>", " ", body)
+    return re.sub(r"\s+", " ", body).strip().lower()
+
+
+def _is_injected_user_event(text: str) -> bool:
+    return bool(_INJECTED_USER_RE.search(text))
+
+
+def _parse_jsonl_timestamp_ms(text: str) -> int | None:
+    match = _TIMESTAMP_RE.search(text)
+    if not match:
+        return None
+    raw = re.sub(r"\s+", " ", match.group(1)).strip()
+    offset = re.search(r"\(UTC([+-])(\d{1,2})(?::(\d{2}))?\)\s*$", raw)
+    body = re.sub(r"\s*\(UTC[+-]\d{1,2}(?::\d{2})?\)\s*$", "", raw)
+    body = re.sub(r"^[A-Za-z]+,\s*", "", body)
+    body = re.sub(r",\s+(\d):", r", 0\1:", body)
+    parsed: datetime | None = None
+    for fmt in ("%b %d, %Y, %I:%M %p", "%b %d, %Y, %I:%M:%S %p", "%B %d, %Y, %I:%M %p"):
+        try:
+            parsed = datetime.strptime(body, fmt)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        return None
+    if offset:
+        sign = 1 if offset.group(1) == "+" else -1
+        hours = sign * int(offset.group(2))
+        minutes = sign * int(offset.group(3) or 0)
+        parsed = parsed.replace(tzinfo=timezone(timedelta(hours=hours, minutes=minutes)))
+    else:
+        parsed = parsed.replace(tzinfo=UTC)
+    return int(parsed.timestamp() * 1000)
+
+
+def _user_texts_match(jsonl_text: str, bubble: dict[str, Any]) -> bool:
+    left = _normalize_user_text(jsonl_text)
+    right = _normalize_user_text(
+        _as_str(bubble.get("text")) or _as_str(bubble.get("richText"))
+    )
+    if not left or not right:
+        return False
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    if len(shorter) < 12:
+        return left == right
+    return shorter in longer
+
+
+def _match_user_bubble(
+    event: dict[str, Any],
+    user_bubbles: Sequence[dict[str, Any]],
+    used: list[bool],
+) -> dict[str, Any] | None:
+    text = _event_text(event)
+    stamp = _parse_jsonl_timestamp_ms(text)
+    if stamp is not None:
+        best_i = -1
+        best_delta: int | None = None
+        for index, bubble in enumerate(user_bubbles):
+            if used[index]:
+                continue
+            created = _iso_to_ms(bubble.get("createdAt")) or _as_int(bubble.get("startedAtMs"))
+            if not created:
+                continue
+            delta = abs(created - stamp)
+            if delta > _USER_BUBBLE_ALIGN_MS:
+                continue
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best_i = index
+        if best_i >= 0:
+            used[best_i] = True
+            return user_bubbles[best_i]
+        return None
+    if not _is_injected_user_event(text):
+        for index, bubble in enumerate(user_bubbles):
+            if used[index]:
+                continue
+            if _user_texts_match(text, bubble):
+                used[index] = True
+                return bubble
+        for index, bubble in enumerate(user_bubbles):
+            if used[index]:
+                continue
+            used[index] = True
+            return bubble
+    return None
+
+
+def _chars_to_tokens(chars: int) -> int:
+    if chars <= 0:
+        return 0
+    return max(1, (chars + 3) // 4)
+
+
+def _estimate_step_tokens(role: str, parts: Sequence[dict[str, Any]]) -> dict[str, int]:
+    text_chars = 0
+    tool_in_chars = 0
+    tool_out_chars = 0
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "text":
+            text_chars += len(_as_str(part.get("text")))
+            continue
+        if part.get("type") != "tool":
+            continue
+        state = _as_dict(part.get("state"))
+        tool_in_chars += len(_stringify_output(state.get("input")))
+        output = state.get("output")
+        tool_out_chars += (
+            len(output) if isinstance(output, str) else len(_stringify_output(output))
+        )
+    text_tok = _chars_to_tokens(text_chars)
+    call_tok = _chars_to_tokens(tool_in_chars)
+    result_tok = _chars_to_tokens(tool_out_chars)
+    if role == "user":
+        if text_tok <= 0:
+            return {}
+        return {"input": text_tok, "output": 0, "total": text_tok}
+    output_tok = text_tok + call_tok
+    total = output_tok + result_tok
+    if total <= 0:
+        return {}
+    return {"input": result_tok, "output": output_tok, "total": total}
+
+
+def _apply_matched_tool_timing(state: dict[str, Any], matched: dict[str, Any] | None) -> None:
+    if not matched:
+        return
+    start = matched.get("start_ms")
+    end = matched.get("end_ms")
+    time_info: dict[str, int] = {}
+    if isinstance(start, int) and start > 0:
+        time_info["start"] = start
+    if isinstance(end, int) and end > 0:
+        time_info["end"] = end
+    if not time_info:
+        return
+    state["time"] = time_info
+    if "start" in time_info and "end" in time_info and time_info["end"] >= time_info["start"]:
+        metadata = state.setdefault("metadata", {})
+        if isinstance(metadata, dict) and "totalDurationMs" not in metadata:
+            metadata["totalDurationMs"] = time_info["end"] - time_info["start"]
+
+
+def _message_time(
+    bubble: dict[str, Any] | None, parts: Sequence[dict[str, Any]]
+) -> dict[str, int]:
+    starts: list[int] = []
+    ends: list[int] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        time_info = _as_dict(_as_dict(part.get("state")).get("time"))
+        start = _as_int(time_info.get("start"))
+        end = _as_int(time_info.get("end"))
+        if start:
+            starts.append(start)
+        if end:
+            ends.append(end)
+    has_part_times = bool(starts or ends)
+    bubble_start, bubble_end = _bubble_span(bubble)
+    # Prefer tool clocks when present so a leftover type-2 bubble cannot
+    # stretch this JSONL turn into a neighbouring tool's span.
+    if not has_part_times:
+        if bubble_start:
+            starts.append(bubble_start)
+        if bubble_end:
+            ends.append(bubble_end)
+    elif bubble_start and (not starts or bubble_start <= min(starts)):
+        starts.append(bubble_start)
+        if bubble_end:
+            ends.append(bubble_end)
+    if not starts and not ends:
+        return {}
+    created = min(starts) if starts else min(ends)
+    completed = max(ends) if ends else max(starts)
+    if completed < created:
+        completed = created
+    out = {"created": created, "completed": completed}
+    think = _as_int((bubble or {}).get("thinkingDurationMs"))
+    if think:
+        out["thinkingMs"] = think
+    return out
+
+
 def _bubble_role(bubble: dict[str, Any]) -> str:
+    if bubble.get("isSimulatedMsg"):
+        return ""
+    # Tool UI rows are matched by name/path, not 1:1 with JSONL assistant turns.
+    if _extract_tool_former(bubble) is not None:
+        return ""
     bubble_type = bubble.get("type")
     if bubble_type == 1:
         return "user"
     if bubble_type == 2:
-        return "assistant"
-    if _extract_tool_former(bubble) is not None:
         return "assistant"
     return ""
 
@@ -534,43 +822,25 @@ def _composer_info(chat_id: str, composer: dict[str, Any] | None) -> dict[str, A
 def _align_role_bubbles(
     events: Sequence[dict[str, Any]], bubbles: Sequence[dict[str, Any]]
 ) -> list[dict[str, Any] | None]:
-    """Pair JSONL role rows with Composer bubbles of the same role, in order."""
-    by_role: dict[str, list[dict[str, Any]]] = {"user": [], "assistant": []}
-    for bubble in bubbles:
-        role = _bubble_role(bubble)
-        if role in by_role:
-            by_role[role].append(bubble)
+    """Pair JSONL role rows with Composer bubbles.
+
+    Assistant thinking/text bubbles stay in order. User bubbles are matched by
+    JSONL ``<timestamp>`` / prompt text so duplicate or injected user rows do
+    not steal a later turn's occupancy snapshot.
+    """
+    user_bubbles = [bubble for bubble in bubbles if _bubble_role(bubble) == "user"]
+    assistant_bubbles = [bubble for bubble in bubbles if _bubble_role(bubble) == "assistant"]
+    used_users = [False] * len(user_bubbles)
     aligned: list[dict[str, Any] | None] = []
     for event in events:
         role = _as_str(event.get("role"))
-        if role not in by_role:
+        if role == "user":
+            aligned.append(_match_user_bubble(event, user_bubbles, used_users))
+        elif role == "assistant":
+            aligned.append(assistant_bubbles.pop(0) if assistant_bubbles else None)
+        else:
             aligned.append(None)
-            continue
-        bucket = by_role[role]
-        aligned.append(bucket.pop(0) if bucket else None)
     return aligned
-
-
-def _assistant_time(bubble: dict[str, Any] | None, session_cursor: list[int]) -> dict[str, int]:
-    if not bubble:
-        return {}
-    turn_ms = _as_int(bubble.get("turnDurationMs"))
-    think_ms = _as_int(bubble.get("thinkingDurationMs"))
-    duration = turn_ms or think_ms
-    if not duration or duration <= 0:
-        time_info: dict[str, int] = {}
-        if think_ms and think_ms > 0:
-            time_info["thinkingMs"] = think_ms
-        return time_info
-    start = session_cursor[0]
-    if start <= 0:
-        start = 1
-    completed = start + duration
-    session_cursor[0] = completed
-    time_info = {"created": start, "completed": completed}
-    if think_ms and think_ms > 0:
-        time_info["thinkingMs"] = think_ms
-    return time_info
 
 
 def events_to_messages(
@@ -583,18 +853,19 @@ def events_to_messages(
     model: str = "",
     bubbles: Sequence[dict[str, Any]] | None = None,
     child_ids: Sequence[str] | None = None,
-    session_cursor: list[int] | None = None,
+    occupancy_limit: list[int] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Convert Cursor JSONL events into OpenCode-shaped ``info`` + ``parts`` messages."""
     bubbles = list(bubbles or [])
     aligned = _align_role_bubbles(events, bubbles)
     tool_pool = [item for item in (_extract_tool_former(b) for b in bubbles) if item]
     child_queue = list(child_ids or [])
-    cursor = session_cursor if session_cursor is not None else [0]
     messages: list[dict[str, Any]] = []
     tool_index = 0
     last_assistant: dict[str, Any] | None = None
+    last_occupancy: int | None = None
     is_sub = depth > 0
+    cap = occupancy_limit if occupancy_limit is not None else [0]
 
     for event_index, event in enumerate(events):
         event_type = event.get("type")
@@ -658,6 +929,7 @@ def events_to_messages(
                 }
                 if error is not None:
                     state["error"] = error
+                _apply_matched_tool_timing(state, matched)
                 parts.append({
                     "type": "tool",
                     "tool": name,
@@ -680,16 +952,75 @@ def events_to_messages(
             info["parentSessionID"] = parent_session_id
         if model:
             info["modelID"] = model
-        if role == "assistant":
-            time_info = _assistant_time(bubble, cursor)
-            if time_info:
-                info["time"] = time_info
-            last_assistant = None
+        time_info = _message_time(bubble, parts)
+        if time_info:
+            info["time"] = time_info
+        occupancy = _occupancy_from_bubble(bubble, cap)
+        if occupancy:
+            last_occupancy = occupancy
+        tokens = _estimate_step_tokens(role, parts)
+        if last_occupancy:
+            tokens["context_window"] = last_occupancy
+        if tokens:
+            info["tokens"] = tokens
         message = {"info": info, "parts": parts}
         if role == "assistant":
             last_assistant = message
         messages.append(message)
     return messages, tool_index
+
+
+def _apply_session_occupancy_snapshot(
+    messages: Sequence[dict[str, Any]], info: dict[str, Any],
+) -> None:
+    """Ramp assistant ``context_window`` from 0 to the Composer tray snapshot.
+
+    Subagent chats rarely store per-bubble ``contextWindowStatusAtCreation``.
+    ``promptTokenBreakdown.totalUsedTokens`` is the end-of-session occupancy.
+    Intermediate points follow cumulative estimated log tokens, scaled so the
+    last assistant lands on that snapshot. A single-assistant session keeps
+    the snapshot (a ramp needs two points).
+    """
+    snapshot = _as_int(_as_dict(info.get("promptTokenBreakdown")).get("totalUsedTokens"))
+    if not snapshot or snapshot <= 0:
+        return
+    if any(
+        _as_int(_as_dict(_as_dict(message.get("info")).get("tokens")).get("context_window"))
+        for message in messages
+        if isinstance(message, dict)
+    ):
+        return
+    running = 0
+    assistant_slots: list[tuple[dict[str, Any], int]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        msg_info = message.get("info")
+        if not isinstance(msg_info, dict):
+            continue
+        tokens = msg_info.setdefault("tokens", {})
+        if not isinstance(tokens, dict):
+            continue
+        running += _as_int(tokens.get("total")) or 0
+        if msg_info.get("role") == "assistant":
+            assistant_slots.append((tokens, running))
+    if not assistant_slots:
+        return
+    last_run = assistant_slots[-1][1]
+    count = len(assistant_slots)
+    for index, (tokens, run) in enumerate(assistant_slots):
+        if count == 1:
+            used = snapshot
+        elif index == 0:
+            used = 0
+        elif index == count - 1:
+            used = snapshot
+        elif last_run > 0:
+            used = int(round(snapshot * run / last_run))
+            used = min(max(used, 0), snapshot)
+        else:
+            used = int(round(snapshot * index / (count - 1)))
+        tokens["context_window"] = used
 
 
 def _session_entry(
@@ -779,7 +1110,6 @@ def _consolidate_with_connection(
     visited: set[str] | None = None,
     all_messages: list[dict[str, Any]] | None = None,
     sessions: list[dict[str, Any]] | None = None,
-    session_cursor: list[int] | None = None,
 ) -> dict[str, Any]:
     visited = visited if visited is not None else set()
     all_messages = all_messages if all_messages is not None else []
@@ -819,10 +1149,13 @@ def _consolidate_with_connection(
         raise ConsolidationError(f"No JSONL transcript for chat {chat_id}")
 
     info = _composer_info(chat_id, composer)
-    if session_cursor is None:
-        session_cursor = [int(info["time"].get("created") or 0)]
     child_ids = discover_child_ids(folder, composer)
     agent = "cursor" if depth == 0 else "cursor (subagent)"
+    occupancy_limit = [
+        _as_int(_as_dict(info.get("promptTokenBreakdown")).get("maxTokens"))
+        or _as_int(info.get("contextTokenLimit"))
+        or 0
+    ]
     messages, _tool_count = events_to_messages(
         events,
         session_id=chat_id,
@@ -832,8 +1165,11 @@ def _consolidate_with_connection(
         model=_as_str(info.get("model")),
         bubbles=bubbles,
         child_ids=child_ids,
-        session_cursor=session_cursor,
+        occupancy_limit=occupancy_limit,
     )
+    if occupancy_limit[0] > 0:
+        info["contextTokenLimit"] = occupancy_limit[0]
+    _apply_session_occupancy_snapshot(messages, info)
     all_messages.extend(messages)
     sessions.append(
         _session_entry(
@@ -861,7 +1197,6 @@ def _consolidate_with_connection(
             visited=visited,
             all_messages=all_messages,
             sessions=sessions,
-            session_cursor=session_cursor,
         )
 
     if depth > 0:

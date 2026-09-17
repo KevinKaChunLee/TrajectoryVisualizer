@@ -27,7 +27,9 @@
         "sessionID": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
         "agent": "cursor",
         "isSubAgent": false,
-        "sessionDepth": 0
+        "sessionDepth": 0,
+        "time": {"created": 1000, "completed": 1000},
+        "tokens": {"input": 5, "output": 0, "total": 5, "context_window": 800}
       },
       "parts": [
         {
@@ -49,7 +51,8 @@
         "sessionDepth": 0,
         "modelID": "grok-4.6",
         "finish": "success",
-        "time": {"created": 1000, "completed": 2500, "thinkingMs": 400}
+        "time": {"created": 1000, "completed": 2500, "thinkingMs": 400},
+        "tokens": {"input": 6, "output": 20, "total": 26, "context_window": 800}
       },
       "parts": [
         {
@@ -67,7 +70,8 @@
             "status": "completed",
             "input": {"path": "/workspace/demo/app.py"},
             "output": "{\"totalLinesInFile\": 40}",
-            "metadata": {}
+            "metadata": {"totalDurationMs": 200},
+            "time": {"start": 2100, "end": 2300}
           },
           "id": "call-read",
           "sessionID": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
@@ -176,7 +180,7 @@
     "chat_id": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
     "transcript_path": "parent.jsonl",
     "database_path": "state.vscdb",
-    "token_semantics": "context_window_snapshot",
+    "token_semantics": "context_window_snapshot+estimated_log_tokens",
     "complete": true,
     "warnings": []
   }

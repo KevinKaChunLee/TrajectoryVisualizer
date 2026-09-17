@@ -122,8 +122,9 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
     """Normalize a cursor_consolidator export into the shared step-model dict.
 
     Per-request billed tokens are **not** synthesized. Cursor stores a
-    context-window occupancy snapshot (``info.promptTokenBreakdown``), which
-    is copied onto metadata and must not be treated as step token usage.
+    context-window occupancy snapshot (``info.promptTokenBreakdown`` and
+    user-bubble ``tokens.context_window``). Per-step ``tokens.input/output/total``
+    are consolidator estimates of logged text and tools, not API usage.
     """
     info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
     messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
@@ -138,6 +139,8 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
     tool_breakdown: dict[str, int] = {}
     failed_tool_calls = 0
     sub_agent_ids: set[str] = set()
+    token_totals = {"total": 0, "input": 0, "output": 0}
+    has_step_timing = False
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -152,8 +155,14 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
         message_id = msg_info.get("id") or ""
         if msg_info.get("isSubAgent") and session_id:
             sub_agent_ids.add(str(session_id))
-        # Never copy empty Composer tokenCount zeros — omit tokens entirely.
-        msg_info.pop("tokens", None)
+        tokens = msg_info.get("tokens")
+        if isinstance(tokens, dict):
+            token_totals["total"] += _cursor_int(tokens.get("total"))
+            token_totals["input"] += _cursor_int(tokens.get("input"))
+            token_totals["output"] += _cursor_int(tokens.get("output"))
+        time_info = msg_info.get("time") if isinstance(msg_info.get("time"), dict) else {}
+        if _cursor_int(time_info.get("created")) or _cursor_int(time_info.get("completed")):
+            has_step_timing = True
         parts = _normalize_parts(
             message.get("parts") if isinstance(message.get("parts"), list) else [],
             session_id=str(session_id),
@@ -168,6 +177,10 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
             status = str((part.get("state") or {}).get("status") or part.get("status") or "")
             if status.lower() in {"error", "failed", "failure"}:
                 failed_tool_calls += 1
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            time_span = state.get("time") if isinstance(state.get("time"), dict) else {}
+            if _cursor_int(time_span.get("start")) or _cursor_int(time_span.get("end")):
+                has_step_timing = True
         converted_messages.append({"info": msg_info, "parts": parts})
 
     exported_sub = statistics.get("subagent_sessions", 0)
@@ -188,8 +201,8 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
     if not isinstance(breakdown, dict):
         breakdown = None
     snapshot_total = _cursor_int((breakdown or {}).get("totalUsedTokens"))
-    snapshot_limit = _cursor_int((breakdown or {}).get("maxTokens")) or _cursor_int(
-        info.get("contextTokenLimit")
+    snapshot_limit = _cursor_int(info.get("contextTokenLimit")) or _cursor_int(
+        (breakdown or {}).get("maxTokens")
     )
     summary = info.get("summary") if isinstance(info.get("summary"), dict) else {}
 
@@ -223,7 +236,7 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
         "export_generated_at": export.get("generated_at", ""),
         "export_complete": export.get("complete"),
         "export_warnings": export.get("warnings", []),
-        "token_semantics": export.get("token_semantics") or "context_window_snapshot",
+        "token_semantics": export.get("token_semantics") or "context_window_snapshot+estimated_log_tokens",
         "context_snapshot": {
             "total_used_tokens": snapshot_total,
             "max_tokens": snapshot_limit,
@@ -247,8 +260,15 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
         "files_changed": summary.get("files", 0) or 0,
     }
     raw.setdefault("input", {"prompt": "", "prompt_length": 0})
-    # Occupancy snapshot is not billed step usage — leave token_usage empty.
-    raw["token_usage"] = {}
+    # Estimated log tokens fill the step charts; occupancy stays on context_window.
+    if token_totals["total"] or token_totals["input"] or token_totals["output"]:
+        raw["token_usage"] = {
+            "total_tokens": token_totals["total"],
+            "prompt_tokens": token_totals["input"],
+            "completion_tokens": token_totals["output"],
+        }
+    else:
+        raw["token_usage"] = {}
     raw["stats"] = {
         "total_messages": user_count + asst_count,
         "user_messages": user_count,
@@ -262,7 +282,7 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
     raw["_cursor_format"] = True
     raw["_source_format"] = "cursor"
     raw["_capabilities"] = {
-        "has_timing": bool(duration_seconds),
+        "has_timing": bool(duration_seconds or has_step_timing),
         "has_tool_calls": bool(total_tool_calls),
         "has_runtime_token_usage": False,
         "has_reasoning_content": False,

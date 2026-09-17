@@ -113,25 +113,41 @@ class CursorConsolidatorTests(unittest.TestCase):
             "workspaceIdentifier": {"uri": {"path": "/workspace/demo"}},
             "fullConversationHeadersOnly": [
                 {"bubbleId": "bubble-user", "type": 1},
-                {"bubbleId": "bubble-asst", "type": 2},
+                {"bubbleId": "bubble-think", "type": 2},
+                {"bubbleId": "bubble-read", "type": 2},
             ],
             "usageData": {},
         }
         bubbles = {
-            "bubble-user": {"_v": 3, "type": 1, "bubbleId": "bubble-user"},
-            "bubble-asst": {
+            "bubble-user": {
+                "_v": 3,
+                "type": 1,
+                "bubbleId": "bubble-user",
+                "createdAt": "1970-01-01T00:00:01.000Z",
+                "contextWindowStatusAtCreation": {"tokensUsed": 800, "maxTokens": 256000},
+            },
+            "bubble-think": {
                 "_v": 3,
                 "type": 2,
-                "bubbleId": "bubble-asst",
+                "bubbleId": "bubble-think",
+                "startedAtMs": 1000,
                 "thinkingDurationMs": 400,
                 "turnDurationMs": 1500,
                 "tokenCount": {"inputTokens": 0, "outputTokens": 0},
+            },
+            "bubble-read": {
+                "_v": 3,
+                "type": 2,
+                "bubbleId": "bubble-read",
+                "startedAtMs": 2100,
+                "completedAtMs": 2300,
                 "toolFormerData": {
                     "toolCallId": "call-read",
                     "status": "completed",
                     "name": "read_file_v2",
                     "rawArgs": json.dumps({"path": "/workspace/demo/app.py"}),
                     "result": {"totalLinesInFile": 40},
+                    "additionalData": {"startedAtMs": 2100},
                 },
             },
         }
@@ -140,6 +156,20 @@ class CursorConsolidatorTests(unittest.TestCase):
         connection.execute(
             "INSERT INTO cursorDiskKV VALUES (?, ?)",
             (f"composerData:{PARENT_ID}", json.dumps(composer)),
+        )
+        connection.execute(
+            "INSERT INTO cursorDiskKV VALUES (?, ?)",
+            (
+                f"composerData:{CHILD_ID}",
+                json.dumps({
+                    "composerId": CHILD_ID,
+                    "name": "explore child",
+                    "promptTokenBreakdown": {
+                        "totalUsedTokens": 500,
+                        "maxTokens": 256000,
+                    },
+                }),
+            ),
         )
         for bubble_id, payload in bubbles.items():
             connection.execute(
@@ -168,7 +198,7 @@ class CursorConsolidatorTests(unittest.TestCase):
         meta = result["export_metadata"]
         self.assertEqual(meta["source_format"], "cursor_composer")
         self.assertEqual(meta["schema_version"], 1)
-        self.assertEqual(meta["token_semantics"], "context_window_snapshot")
+        self.assertEqual(meta["token_semantics"], "context_window_snapshot+estimated_log_tokens")
         self.assertEqual(meta["chat_id"], PARENT_ID)
         self.assertEqual(result["info"]["title"], "Cursor fixture")
         self.assertEqual(result["info"]["model"], "grok-4.6")
@@ -180,10 +210,21 @@ class CursorConsolidatorTests(unittest.TestCase):
         parent_asst = result["messages"][1]
         self.assertEqual(parent_asst["info"]["role"], "assistant")
         self.assertEqual(parent_asst["info"]["finish"], "success")
-        self.assertNotIn("tokens", parent_asst["info"])
+        self.assertEqual(parent_asst["info"]["time"]["created"], 1000)
+        self.assertEqual(parent_asst["info"]["time"]["completed"], 2500)
+        self.assertEqual(parent_asst["info"]["time"]["thinkingMs"], 400)
+        self.assertGreater(parent_asst["info"]["tokens"]["total"], 0)
+        self.assertGreater(parent_asst["info"]["tokens"]["output"], 0)
+        self.assertEqual(parent_asst["info"]["tokens"]["context_window"], 800)
+        parent_user = result["messages"][0]
+        self.assertEqual(parent_user["info"]["tokens"]["context_window"], 800)
+        self.assertEqual(parent_user["info"]["time"]["created"], 1000)
         tools = [part for part in parent_asst["parts"] if part["type"] == "tool"]
         self.assertEqual(tools[0]["tool"], "Read")
         self.assertEqual(tools[0]["state"]["status"], "completed")
+        self.assertEqual(tools[0]["state"]["time"]["start"], 2100)
+        self.assertEqual(tools[0]["state"]["time"]["end"], 2300)
+        self.assertEqual(tools[0]["state"]["metadata"]["totalDurationMs"], 200)
         self.assertIn("totalLinesInFile", tools[0]["state"]["output"])
         self.assertEqual(tools[1]["tool"], "Task")
         self.assertEqual(tools[1]["state"]["metadata"]["sessionId"], CHILD_ID)
@@ -193,6 +234,7 @@ class CursorConsolidatorTests(unittest.TestCase):
         self.assertEqual(child_asst["info"]["parentSessionID"], PARENT_ID)
         self.assertEqual(child_asst["parts"][0]["tool"], "Grep")
         self.assertEqual(child_asst["parts"][0]["state"]["status"], "unknown")
+        self.assertEqual(child_asst["info"]["tokens"]["context_window"], 500)
 
     def test_loader_detects_export_as_cursor_not_opencode(self) -> None:
         from trajviz.insight.loaders import detect_format, load_trajectory
@@ -206,14 +248,22 @@ class CursorConsolidatorTests(unittest.TestCase):
         self.assertEqual(detect_format(loaded), "cursor")
         self.assertEqual(loaded["metadata"]["agent"], "cursor")
         self.assertFalse(loaded["_capabilities"]["has_runtime_token_usage"])
+        self.assertTrue(loaded["_capabilities"]["has_timing"])
         self.assertEqual(loaded["metadata"]["context_snapshot"]["total_used_tokens"], 1200)
-        self.assertEqual(loaded["token_usage"], {})
+        self.assertGreater(loaded["token_usage"]["total_tokens"], 0)
         steps = parse_steps(loaded)
         self.assertEqual(len(steps), 4)
+        self.assertEqual(steps[1]["duration"], 1.5)
+        self.assertEqual(steps[1]["tokens"]["context_window"], 800)
+        self.assertGreater(steps[1]["tokens"]["total"], 0)
+        self.assertEqual(steps[1]["tool_calls"][0]["time_start"], 2100)
+        self.assertEqual(steps[1]["tool_calls"][0]["time_end"], 2300)
+        self.assertEqual(steps[1]["tool_calls"][0]["duration_ms"], 200)
         self.assertEqual(steps[1]["tool_calls"][0]["tool_name"], "Read")
         self.assertIn("40", steps[1]["tool_calls"][0]["output"])
         self.assertTrue(steps[3]["is_sub_agent"])
         self.assertEqual(steps[1]["tool_calls"][1]["metadata"]["sessionId"], CHILD_ID)
+        self.assertEqual(steps[3]["tokens"]["context_window"], 500)
 
     def test_jsonl_only_when_db_missing(self) -> None:
         with patch.object(consolidator, "resolve_state_vscdb", return_value=None):
@@ -251,3 +301,109 @@ class CursorConsolidatorTests(unittest.TestCase):
         self.assertIn("Cursor fixture", text)
         listed_ids = [line.split()[0] for line in text.splitlines() if line.strip()]
         self.assertEqual(listed_ids, [PARENT_ID])
+
+
+class CursorOccupancyMappingTests(unittest.TestCase):
+    def test_percentage_remaining_uses_last_token_limit(self) -> None:
+        limit = [300_000]
+        used = consolidator._occupancy_from_bubble(
+            {
+                "contextWindowStatusAtCreation": {
+                    "tokensUsed": 268224,
+                    "tokenLimit": 300000,
+                    "percentageRemainingFloat": 10.592,
+                }
+            },
+            limit,
+        )
+        self.assertEqual(used, 268224)
+        self.assertEqual(limit[0], 300_000)
+        later = consolidator._occupancy_from_bubble(
+            {
+                "contextWindowStatusAtCreation": {
+                    "percentageRemainingFloat": 37.13203125,
+                    "percentageRemaining": 37,
+                }
+            },
+            limit,
+        )
+        self.assertEqual(later, 188604)
+
+    def test_duplicate_jsonl_user_does_not_steal_later_occupancy_bubble(self) -> None:
+        events = [
+            {
+                "role": "user",
+                "message": {"content": [{
+                    "type": "text",
+                    "text": (
+                        "<timestamp>Wednesday, Sep 16, 2026, 11:26 AM (UTC+8)</timestamp> "
+                        "<user_query> First prompt </user_query>"
+                    ),
+                }]},
+            },
+            {
+                "role": "user",
+                "message": {"content": [{
+                    "type": "text",
+                    "text": (
+                        "<timestamp>Wednesday, Sep 16, 2026, 11:26 AM (UTC+8)</timestamp> "
+                        "<user_query> First prompt </user_query>"
+                    ),
+                }]},
+            },
+            {
+                "role": "user",
+                "message": {"content": [{
+                    "type": "text",
+                    "text": (
+                        "<timestamp>Wednesday, Sep 16, 2026, 3:08 PM (UTC+8)</timestamp> "
+                        "<user_query> Second prompt </user_query>"
+                    ),
+                }]},
+            },
+        ]
+        bubbles = [
+            {
+                "type": 1,
+                "bubbleId": "b0",
+                "createdAt": "2026-09-16T03:25:59.000Z",
+                "text": "First prompt",
+            },
+            {
+                "type": 1,
+                "bubbleId": "b1",
+                "createdAt": "2026-09-16T07:08:11.000Z",
+                "text": "Second prompt",
+                "contextWindowStatusAtCreation": {
+                    "tokensUsed": 268224,
+                    "tokenLimit": 300000,
+                    "percentageRemainingFloat": 10.592,
+                },
+            },
+        ]
+        aligned = consolidator._align_role_bubbles(events, bubbles)
+        self.assertEqual(aligned[0]["bubbleId"], "b0")
+        self.assertIsNone(aligned[1])
+        self.assertEqual(aligned[2]["bubbleId"], "b1")
+        messages, _ = consolidator.events_to_messages(
+            events, session_id="s1", bubbles=bubbles, occupancy_limit=[256000],
+        )
+        self.assertNotIn("context_window", messages[0]["info"].get("tokens", {}))
+        self.assertNotIn("context_window", messages[1]["info"].get("tokens", {}))
+        self.assertEqual(messages[2]["info"]["tokens"]["context_window"], 268224)
+
+    def test_session_snapshot_ramps_from_zero(self) -> None:
+        messages = [
+            {"info": {"role": "user", "tokens": {"total": 10}}},
+            {"info": {"role": "assistant", "tokens": {"total": 10}}},
+            {"info": {"role": "assistant", "tokens": {"total": 30}}},
+            {"info": {"role": "assistant", "tokens": {"total": 60}}},
+        ]
+        consolidator._apply_session_occupancy_snapshot(
+            messages, {"promptTokenBreakdown": {"totalUsedTokens": 1000}},
+        )
+        windows = [m["info"]["tokens"]["context_window"] for m in messages[1:]]
+        self.assertEqual(windows[0], 0)
+        self.assertEqual(windows[-1], 1000)
+        self.assertLess(windows[1], windows[2])
+        self.assertGreater(windows[1], 0)

@@ -149,7 +149,7 @@ JSON, are recognized regardless of the dropdown):
 | Format | Detection | Notes |
 |---|---|---|
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
-| Cursor | `export_metadata.source_format: cursor_composer` | Consolidated from local `agent-transcripts` JSONL + Composer `state.vscdb`. Tool inputs always; tool outputs / context-window snapshot when the DB row is present. Cursor does not persist per-request billed tokens. |
+| Cursor | `export_metadata.source_format: cursor_composer` | Consolidated from local `agent-transcripts` JSONL + Composer `state.vscdb`. Tool inputs always; tool outputs, step clocks (`startedAtMs`/`completedAtMs`), and context-window occupancy when the DB row is present. Per-step token bars are ≈4-chars/token estimates of logged text and tools — Cursor does not persist billed per-request tokens. |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
 | ICode | `_chrys_export.format: chrys-expanded-session-v1` (or `meta` + `state.messages`) | Normalized from a Chrys expanded-session JSON; `glob` / `grep` / `sh` / `explore_agent` mapped into the shared step model. Nested `_chrys_sub_agent_sessions` are flattened. |
@@ -254,8 +254,10 @@ with the consolidator:
    ```
 4. Upload `cursor_trajectory.json` in the Insight dashboard. The loader
    detects `export_metadata.source_format: cursor_composer`. Context occupancy
-   (`promptTokenBreakdown`) is a **window snapshot**, not per-step billed
-   tokens — Overview token totals stay empty rather than inventing zeros.
+   (`promptTokenBreakdown` and `tokens.context_window`) is a **window snapshot**.
+   Per-step duration comes from Composer tool/thinking clocks. Per-step token
+   bars use a ≈4 chars/token estimate of logged text and tools, not billed
+   API usage.
 
 ### OpenCode
 
