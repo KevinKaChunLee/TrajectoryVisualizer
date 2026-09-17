@@ -260,7 +260,6 @@ def _convert_cursor_to_internal(raw: dict) -> dict:
         "files_changed": summary.get("files", 0) or 0,
     }
     raw.setdefault("input", {"prompt": "", "prompt_length": 0})
-    # Estimated log tokens fill the step charts; occupancy stays on context_window.
     if token_totals["total"] or token_totals["input"] or token_totals["output"]:
         raw["token_usage"] = {
             "total_tokens": token_totals["total"],

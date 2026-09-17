@@ -486,8 +486,8 @@ def _bubble_span(bubble: dict[str, Any] | None) -> tuple[int | None, int | None]
 
 def _occupancy_from_bubble(
     bubble: dict[str, Any] | None,
-    token_limit: list[int] | None = None,
-) -> int | None:
+    token_limit: int = 0,
+) -> tuple[int | None, int]:
     """Occupancy from Composer ``contextWindowStatusAtCreation``.
 
     Most user bubbles store only ``percentageRemainingFloat``. ``tokensUsed`` /
@@ -496,34 +496,31 @@ def _occupancy_from_bubble(
     missing, so a single ``tokensUsed`` cannot stick for the rest of the chat.
     """
     if not bubble:
-        return None
+        return None, token_limit
     status = bubble.get("contextWindowStatusAtCreation")
     if not isinstance(status, dict):
-        return None
-    cap_holder = token_limit if token_limit is not None else [0]
+        return None, token_limit
     limit = (
         _as_int(status.get("tokenLimit"))
         or _as_int(status.get("maxTokens"))
-        or (cap_holder[0] if cap_holder[0] > 0 else None)
+        or (token_limit if token_limit > 0 else None)
     )
-    if limit and limit > 0:
-        cap_holder[0] = limit
+    cap = limit if limit and limit > 0 else token_limit
     used = _as_int(status.get("tokensUsed"))
     if used and used > 0:
-        return used
+        return used, cap
     remaining = status.get("percentageRemainingFloat")
     if not isinstance(remaining, (int, float)) or isinstance(remaining, bool):
         remaining = status.get("percentageRemaining")
     if not isinstance(remaining, (int, float)) or isinstance(remaining, bool):
-        return None
+        return None, cap
     remaining_f = float(remaining)
     if remaining_f < 0 or remaining_f > 100:
-        return None
-    cap = cap_holder[0]
+        return None, cap
     if cap <= 0:
-        return None
+        return None, cap
     estimated = int(round(cap * (1.0 - remaining_f / 100.0)))
-    return estimated if estimated > 0 else None
+    return (estimated if estimated > 0 else None), cap
 
 
 def _event_text(event: dict[str, Any]) -> str:
@@ -543,10 +540,6 @@ def _normalize_user_text(text: str) -> str:
     body = query.group(1) if query else text
     body = re.sub(r"<[^>]+>", " ", body)
     return re.sub(r"\s+", " ", body).strip().lower()
-
-
-def _is_injected_user_event(text: str) -> bool:
-    return bool(_INJECTED_USER_RE.search(text))
 
 
 def _parse_jsonl_timestamp_ms(text: str) -> int | None:
@@ -596,6 +589,8 @@ def _match_user_bubble(
     used: list[bool],
 ) -> dict[str, Any] | None:
     text = _event_text(event)
+    if _INJECTED_USER_RE.search(text):
+        return None
     stamp = _parse_jsonl_timestamp_ms(text)
     if stamp is not None:
         best_i = -1
@@ -616,18 +611,17 @@ def _match_user_bubble(
             used[best_i] = True
             return user_bubbles[best_i]
         return None
-    if not _is_injected_user_event(text):
-        for index, bubble in enumerate(user_bubbles):
-            if used[index]:
-                continue
-            if _user_texts_match(text, bubble):
-                used[index] = True
-                return bubble
-        for index, bubble in enumerate(user_bubbles):
-            if used[index]:
-                continue
+    for index, bubble in enumerate(user_bubbles):
+        if used[index]:
+            continue
+        if _user_texts_match(text, bubble):
             used[index] = True
             return bubble
+    for index, bubble in enumerate(user_bubbles):
+        if used[index]:
+            continue
+        used[index] = True
+        return bubble
     return None
 
 
@@ -651,10 +645,7 @@ def _estimate_step_tokens(role: str, parts: Sequence[dict[str, Any]]) -> dict[st
             continue
         state = _as_dict(part.get("state"))
         tool_in_chars += len(_stringify_output(state.get("input")))
-        output = state.get("output")
-        tool_out_chars += (
-            len(output) if isinstance(output, str) else len(_stringify_output(output))
-        )
+        tool_out_chars += len(_stringify_output(state.get("output")))
     text_tok = _chars_to_tokens(text_chars)
     call_tok = _chars_to_tokens(tool_in_chars)
     result_tok = _chars_to_tokens(tool_out_chars)
@@ -733,7 +724,7 @@ def _bubble_role(bubble: dict[str, Any]) -> str:
     if bubble.get("isSimulatedMsg"):
         return ""
     # Tool UI rows are matched by name/path, not 1:1 with JSONL assistant turns.
-    if _extract_tool_former(bubble) is not None:
+    if isinstance(bubble.get("toolFormerData"), dict):
         return ""
     bubble_type = bubble.get("type")
     if bubble_type == 1:
@@ -819,8 +810,29 @@ def _composer_info(chat_id: str, composer: dict[str, Any] | None) -> dict[str, A
     }
 
 
+def _partition_composer_bubbles(
+    bubbles: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    users: list[dict[str, Any]] = []
+    assistants: list[dict[str, Any]] = []
+    tools: list[dict[str, Any]] = []
+    for bubble in bubbles:
+        former = _extract_tool_former(bubble)
+        if former is not None:
+            tools.append(former)
+            continue
+        role = _bubble_role(bubble)
+        if role == "user":
+            users.append(bubble)
+        elif role == "assistant":
+            assistants.append(bubble)
+    return users, assistants, tools
+
+
 def _align_role_bubbles(
-    events: Sequence[dict[str, Any]], bubbles: Sequence[dict[str, Any]]
+    events: Sequence[dict[str, Any]],
+    user_bubbles: list[dict[str, Any]],
+    assistant_bubbles: list[dict[str, Any]],
 ) -> list[dict[str, Any] | None]:
     """Pair JSONL role rows with Composer bubbles.
 
@@ -828,16 +840,15 @@ def _align_role_bubbles(
     JSONL ``<timestamp>`` / prompt text so duplicate or injected user rows do
     not steal a later turn's occupancy snapshot.
     """
-    user_bubbles = [bubble for bubble in bubbles if _bubble_role(bubble) == "user"]
-    assistant_bubbles = [bubble for bubble in bubbles if _bubble_role(bubble) == "assistant"]
     used_users = [False] * len(user_bubbles)
+    pending_assistants = list(assistant_bubbles)
     aligned: list[dict[str, Any] | None] = []
     for event in events:
         role = _as_str(event.get("role"))
         if role == "user":
             aligned.append(_match_user_bubble(event, user_bubbles, used_users))
         elif role == "assistant":
-            aligned.append(assistant_bubbles.pop(0) if assistant_bubbles else None)
+            aligned.append(pending_assistants.pop(0) if pending_assistants else None)
         else:
             aligned.append(None)
     return aligned
@@ -853,19 +864,18 @@ def events_to_messages(
     model: str = "",
     bubbles: Sequence[dict[str, Any]] | None = None,
     child_ids: Sequence[str] | None = None,
-    occupancy_limit: list[int] | None = None,
-) -> tuple[list[dict[str, Any]], int]:
+    occupancy_limit: int = 0,
+) -> tuple[list[dict[str, Any]], int, int]:
     """Convert Cursor JSONL events into OpenCode-shaped ``info`` + ``parts`` messages."""
-    bubbles = list(bubbles or [])
-    aligned = _align_role_bubbles(events, bubbles)
-    tool_pool = [item for item in (_extract_tool_former(b) for b in bubbles) if item]
+    user_bubbles, assistant_bubbles, tool_pool = _partition_composer_bubbles(bubbles or [])
+    aligned = _align_role_bubbles(events, user_bubbles, assistant_bubbles)
     child_queue = list(child_ids or [])
     messages: list[dict[str, Any]] = []
     tool_index = 0
     last_assistant: dict[str, Any] | None = None
     last_occupancy: int | None = None
     is_sub = depth > 0
-    cap = occupancy_limit if occupancy_limit is not None else [0]
+    cap = occupancy_limit
 
     for event_index, event in enumerate(events):
         event_type = event.get("type")
@@ -955,11 +965,11 @@ def events_to_messages(
         time_info = _message_time(bubble, parts)
         if time_info:
             info["time"] = time_info
-        occupancy = _occupancy_from_bubble(bubble, cap)
-        if occupancy:
+        occupancy, cap = _occupancy_from_bubble(bubble, cap)
+        if occupancy is not None:
             last_occupancy = occupancy
         tokens = _estimate_step_tokens(role, parts)
-        if last_occupancy:
+        if last_occupancy is not None:
             tokens["context_window"] = last_occupancy
         if tokens:
             info["tokens"] = tokens
@@ -967,7 +977,7 @@ def events_to_messages(
         if role == "assistant":
             last_assistant = message
         messages.append(message)
-    return messages, tool_index
+    return messages, tool_index, cap
 
 
 def _apply_session_occupancy_snapshot(
@@ -985,7 +995,7 @@ def _apply_session_occupancy_snapshot(
     if not snapshot or snapshot <= 0:
         return
     if any(
-        _as_int(_as_dict(_as_dict(message.get("info")).get("tokens")).get("context_window"))
+        "context_window" in _as_dict(_as_dict(message.get("info")).get("tokens"))
         for message in messages
         if isinstance(message, dict)
     ):
@@ -998,12 +1008,15 @@ def _apply_session_occupancy_snapshot(
         msg_info = message.get("info")
         if not isinstance(msg_info, dict):
             continue
-        tokens = msg_info.setdefault("tokens", {})
+        tokens = msg_info.get("tokens")
         if not isinstance(tokens, dict):
-            continue
+            tokens = {}
         running += _as_int(tokens.get("total")) or 0
-        if msg_info.get("role") == "assistant":
-            assistant_slots.append((tokens, running))
+        if msg_info.get("role") != "assistant":
+            continue
+        if "tokens" not in msg_info or not isinstance(msg_info["tokens"], dict):
+            msg_info["tokens"] = tokens
+        assistant_slots.append((tokens, running))
     if not assistant_slots:
         return
     last_run = assistant_slots[-1][1]
@@ -1151,12 +1164,12 @@ def _consolidate_with_connection(
     info = _composer_info(chat_id, composer)
     child_ids = discover_child_ids(folder, composer)
     agent = "cursor" if depth == 0 else "cursor (subagent)"
-    occupancy_limit = [
+    occupancy_limit = (
         _as_int(_as_dict(info.get("promptTokenBreakdown")).get("maxTokens"))
         or _as_int(info.get("contextTokenLimit"))
         or 0
-    ]
-    messages, _tool_count = events_to_messages(
+    )
+    messages, _tool_count, occupancy_limit = events_to_messages(
         events,
         session_id=chat_id,
         parent_session_id=parent_id,
@@ -1167,8 +1180,8 @@ def _consolidate_with_connection(
         child_ids=child_ids,
         occupancy_limit=occupancy_limit,
     )
-    if occupancy_limit[0] > 0:
-        info["contextTokenLimit"] = occupancy_limit[0]
+    if occupancy_limit > 0:
+        info["contextTokenLimit"] = occupancy_limit
     _apply_session_occupancy_snapshot(messages, info)
     all_messages.extend(messages)
     sessions.append(

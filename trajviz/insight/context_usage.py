@@ -128,13 +128,25 @@ def _context_window_tokens(step: dict) -> int | None:
     return None
 
 
+def _snapshot_agents(steps: list[dict]) -> set[str]:
+    return {
+        _pressure_agent(step)
+        for step in steps
+        if _is_occupancy_step(step) and _context_window_tokens(step) is not None
+    }
+
+
 def _snapshot_drop_host(steps: list[dict], prev_idx: int, new_idx: int, new_step: dict) -> dict:
     """Prefer the user turn between occupancy plateaus as the compaction host."""
-    users = [
-        step for step in steps
-        if step.get("role") == "user"
-        and prev_idx < int(step.get("index", -1)) < new_idx
-    ]
+    users: list[dict] = []
+    for step in steps:
+        idx = int(step.get("index", -1))
+        if idx <= prev_idx:
+            continue
+        if idx >= new_idx:
+            break
+        if step.get("role") == "user":
+            users.append(step)
     if len(users) == 1:
         return users[0]
     return new_step
@@ -188,10 +200,9 @@ def step_context_occupancy(step: dict) -> dict:
     tokens, so fresh is zero.
     """
     tokens = step.get("tokens") if isinstance(step.get("tokens"), dict) else {}
-    if "context_window" in tokens:
-        window = tokens.get("context_window")
-        if isinstance(window, (int, float)) and not isinstance(window, bool) and window >= 0:
-            return {"fresh": 0, "cache_read": int(window), "occupancy": int(window)}
+    window = _context_window_tokens(step)
+    if window is not None:
+        return {"fresh": 0, "cache_read": window, "occupancy": window}
     tok_total = tokens.get("total", 0) or 0
     tok_input = tokens.get("input", 0) or 0
     tok_output = tokens.get("output", 0) or 0
@@ -565,11 +576,7 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
             events.append(prune_event)
             explicit_steps.add(host_idx)
 
-    snapshot_agents = {
-        _pressure_agent(step)
-        for step in steps
-        if _is_occupancy_step(step) and _context_window_tokens(step) is not None
-    }
+    snapshot_agents = _snapshot_agents(steps)
     occ_seq: dict[str, list[tuple[int, int, dict]]] = defaultdict(list)
     for step in steps:
         if not _is_occupancy_step(step):
@@ -603,8 +610,6 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
         for i in range(1, len(points)):
             prev_idx, prev_occ, prev_step = points[i - 1]
             idx, occ, step = points[i]
-            if occ >= prev_occ:
-                continue
             dropped = prev_occ - occ
             if occ >= prev_occ * drop_ratio:
                 continue
@@ -734,11 +739,7 @@ def context_pressure_series(
     if target is not None:
         events = [e for e in events if e["agent"] == target]
 
-    snapshot_agents = {
-        _pressure_agent(step)
-        for step in steps
-        if _is_occupancy_step(step) and _context_window_tokens(step) is not None
-    }
+    snapshot_agents = _snapshot_agents(steps)
 
     agents_order: list[str] = []
     seen: set[str] = set()

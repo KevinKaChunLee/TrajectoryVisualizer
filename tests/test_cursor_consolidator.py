@@ -305,8 +305,7 @@ class CursorConsolidatorTests(unittest.TestCase):
 
 class CursorOccupancyMappingTests(unittest.TestCase):
     def test_percentage_remaining_uses_last_token_limit(self) -> None:
-        limit = [300_000]
-        used = consolidator._occupancy_from_bubble(
+        used, cap = consolidator._occupancy_from_bubble(
             {
                 "contextWindowStatusAtCreation": {
                     "tokensUsed": 268224,
@@ -314,20 +313,21 @@ class CursorOccupancyMappingTests(unittest.TestCase):
                     "percentageRemainingFloat": 10.592,
                 }
             },
-            limit,
+            256_000,
         )
         self.assertEqual(used, 268224)
-        self.assertEqual(limit[0], 300_000)
-        later = consolidator._occupancy_from_bubble(
+        self.assertEqual(cap, 300_000)
+        later, cap = consolidator._occupancy_from_bubble(
             {
                 "contextWindowStatusAtCreation": {
                     "percentageRemainingFloat": 37.13203125,
                     "percentageRemaining": 37,
                 }
             },
-            limit,
+            cap,
         )
         self.assertEqual(later, 188604)
+        self.assertEqual(cap, 300_000)
 
     def test_duplicate_jsonl_user_does_not_steal_later_occupancy_bubble(self) -> None:
         events = [
@@ -381,12 +381,13 @@ class CursorOccupancyMappingTests(unittest.TestCase):
                 },
             },
         ]
-        aligned = consolidator._align_role_bubbles(events, bubbles)
+        users, assistants, _tools = consolidator._partition_composer_bubbles(bubbles)
+        aligned = consolidator._align_role_bubbles(events, users, assistants)
         self.assertEqual(aligned[0]["bubbleId"], "b0")
         self.assertIsNone(aligned[1])
         self.assertEqual(aligned[2]["bubbleId"], "b1")
-        messages, _ = consolidator.events_to_messages(
-            events, session_id="s1", bubbles=bubbles, occupancy_limit=[256000],
+        messages, _tool_count, _cap = consolidator.events_to_messages(
+            events, session_id="s1", bubbles=bubbles, occupancy_limit=256000,
         )
         self.assertNotIn("context_window", messages[0]["info"].get("tokens", {}))
         self.assertNotIn("context_window", messages[1]["info"].get("tokens", {}))
