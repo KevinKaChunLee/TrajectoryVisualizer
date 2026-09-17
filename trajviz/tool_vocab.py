@@ -9,13 +9,14 @@ Every consumer now imports from here; add new scaffold tool names HERE only.
 """
 
 # Tools whose successful invocation writes file content. Mixed casings are the
-# literal spellings emitted by the supported scaffolds (Claude Code, OpenCode,
+# literal spellings emitted by the supported scaffolds (Claude Code, Cursor, OpenCode,
 # CodeArts, ICode, Codex CLI, Pi, DeepSeek Harness adapters).
 WRITE_TOOL_NAMES: frozenset[str] = frozenset({
     "Edit", "edit", "Write", "write",
     "NotebookEdit", "patch",
     "MultiEdit", "multiedit",
     "str_replace_editor", "create_file",
+    "StrReplace",
 })
 
 # Path-bearing input keys used by write tools across scaffolds, in precedence
@@ -83,9 +84,10 @@ SPAWN_TOOL_NAMES: frozenset[str] = frozenset({
     "spawn_agent",
 })
 
-# Shell tool spellings across Claude Code, OpenCode/Pi/DSH, and adapters.
+# Shell tool spellings across Claude Code, Cursor, OpenCode/Pi/DSH, and adapters.
 BASH_TOOL_NAMES: frozenset[str] = frozenset({
     "Bash", "bash", "BashCommand",
+    "Shell",
 })
 
 # Scaffold/harness primitives (search, file I/O). Failures of these are

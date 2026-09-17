@@ -4,7 +4,7 @@
 
 TrajViz loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
 
-Supports trajectories from **Claude Code**, **OpenCode**, **CodeArts**, **ICode**, **Codex CLI**, **Pi**, and **DeepSeek Harness** out of the box.
+Supports trajectories from **Claude Code**, **Cursor**, **OpenCode**, **CodeArts**, **ICode**, **Codex CLI**, **Pi**, and **DeepSeek Harness** out of the box.
 
 ---
 
@@ -149,6 +149,7 @@ JSON, are recognized regardless of the dropdown):
 | Format | Detection | Notes |
 |---|---|---|
 | Claude Code | `format: ccsession-trajectory` | Full support: tokens, cache, tool calls, thinking. Produced by [ccsession](https://github.com/rshu/ccsession) (see below). |
+| Cursor | `export_metadata.source_format: cursor_composer` | Consolidated from local `agent-transcripts` JSONL + Composer `state.vscdb`. Tool inputs always; tool outputs / context-window snapshot when the DB row is present. Cursor does not persist per-request billed tokens. |
 | OpenCode | `info` + `messages` shape | Includes sub-agent sessions |
 | CodeArts | `export_metadata.source_format: codearts_opencode_sqlite` with schema version 2 | Preserved token breakdown and consolidated parent/sub-agent sessions |
 | ICode | `_chrys_export.format: chrys-expanded-session-v1` (or `meta` + `state.messages`) | Normalized from a Chrys expanded-session JSON; `glob` / `grep` / `sh` / `explore_agent` mapped into the shared step model. Nested `_chrys_sub_agent_sessions` are flattened. |
@@ -229,6 +230,32 @@ trajviz expects.
 5. Upload the resulting `trajectory.json` in the
    Insight dashboard — the loader detects the `format: ccsession-trajectory`
    marker and normalizes the step model automatically.
+
+### Cursor
+
+Cursor stores each Agent chat as JSONL under
+`~/.cursor/projects/<workspace>/agent-transcripts/<chat-id>/` plus Composer
+metadata in `state.vscdb`. TrajViz does not read those stores live — export
+with the consolidator:
+
+1. Copy the chat id from the chat header menu (**Copy ID**, not Copy Request
+   ID). It is also the transcript folder name.
+2. Export that chat (parent + subagents, joined with Composer metadata):
+   ```bash
+   python scripts/cursor_consolidator.py <chat-id> cursor_trajectory.json
+   ```
+   On this WSL setup the DB is typically
+   `/mnt/c/Users/<user>/AppData/Roaming/Cursor/User/globalStorage/state.vscdb`.
+   Override with `CURSOR_STATE_VSCDB` or `--db` if needed. `CURSOR_PROJECTS_DIR`
+   overrides `~/.cursor/projects`.
+3. List known chats:
+   ```bash
+   python scripts/cursor_consolidator.py --list
+   ```
+4. Upload `cursor_trajectory.json` in the Insight dashboard. The loader
+   detects `export_metadata.source_format: cursor_composer`. Context occupancy
+   (`promptTokenBreakdown`) is a **window snapshot**, not per-step billed
+   tokens — Overview token totals stay empty rather than inventing zeros.
 
 ### OpenCode
 
@@ -371,6 +398,7 @@ Helper utilities that live in `scripts/` (run from the repo root):
 
 | File | Purpose |
 |---|---|
+| `cursor_consolidator.py` | Read-only export of a Cursor Agent chat: JSONL transcripts + Composer `state.vscdb`, including subagent sessions. See the **Cursor** collection section above. |
 | `codearts_consolidator.py` | Read-only export from a CodeArts `opencode.db` with recursive child sessions, or lossless archival merge of legacy `messages_<n>.json` shards. See the **CodeArts** collection section above. |
 | `opencode_consolidator.py` | Recursively merge an OpenCode parent session and child sub-agent sessions into a single JSON. See the **OpenCode** collection section above. |
 | `step_labeler_v2.py` | **Preferred** LLM step classifier. Emits one label record for **every** parsed step: assistant steps via the LLM, user steps as deterministic `user/user_prompt`, with `index`/`raw_index` preserved for exact source mapping. |
