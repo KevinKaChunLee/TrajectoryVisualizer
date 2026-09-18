@@ -84,7 +84,7 @@ def _is_event_record(raw: dict) -> bool:
 def _unwrap_singleton_object_payload(payload: Any) -> Any:
     """If JSONL parsed as a single object-format dict, treat it as that object.
 
-    Happens when a Claude/OpenCode/CodeArts/ICode dump is saved as ``.jsonl`` and
+    Happens when a Claude/OpenCode/CodeArts/Cursor/ICode dump is saved as ``.jsonl`` and
     a trailing truncated line forced the JSONL parser (``json.loads`` of
     the whole file then fails).
     """

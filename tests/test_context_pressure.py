@@ -294,6 +294,36 @@ class CompactionDetectionTests(unittest.TestCase):
         events = detect_compaction_events(steps)
         self.assertFalse(any(e["kind"] == "occupancy_drop" for e in events))
 
+    def test_context_window_snapshot_drop_is_compaction_not_estimated_swings(self):
+        """Cursor copies context_window onto assistants; estimated input still
+        swings on earlier steps and must not spawn fake compaction markers.
+
+        A ~30% snapshot drop (268k → 189k) is below the billed 0.7 ratio but
+        is still summarization.
+        """
+        def _snap(idx, window, *, role="assistant", inp=10):
+            tokens = _tokens(total=inp, inp=inp)
+            if window:
+                tokens["context_window"] = window
+            return _step(idx, role=role, session_id="s", tokens=tokens)
+
+        steps = [
+            _snap(0, None, inp=5000),
+            _snap(1, None, inp=10),
+            _snap(2, 268_224),
+            _snap(3, 268_224),
+            _snap(4, 188_604, role="user", inp=40),
+            _snap(5, 188_604),
+            _snap(6, 188_604),
+        ]
+        events = detect_compaction_events(steps)
+        drops = [e for e in events if e["kind"] == "occupancy_drop"]
+        self.assertEqual(len(drops), 1)
+        self.assertEqual(drops[0]["step"], 4)
+        self.assertEqual(drops[0]["occupancy_before"], 268_224)
+        self.assertEqual(drops[0]["occupancy_after"], 188_604)
+        self.assertEqual(drops[0]["dropped"], 268_224 - 188_604)
+
     def test_no_false_drop_when_agents_interleave(self):
         steps = [
             _step(0, is_sub_agent=False, tokens=_tokens(total=10_000, inp=10_000)),
@@ -340,10 +370,18 @@ class CompactionDetectionTests(unittest.TestCase):
 
 
 class WindowLimitTests(unittest.TestCase):
-    def test_codearts_metadata_wins(self):
+    def test_codearts_metadata_wins(self) -> None:
         steps = [_step(0, model_id="claude-sonnet-4", tokens=_tokens(total=10, inp=10))]
         limit = infer_context_window_limit(steps, raw={"metadata": {"context_tokens": 32_000}})
         self.assertEqual(limit, 32_000)
+
+    def test_cursor_context_snapshot_max_tokens(self) -> None:
+        steps = [_step(0, tokens=_tokens(total=10, inp=10))]
+        limit = infer_context_window_limit(
+            steps,
+            raw={"metadata": {"context_snapshot": {"max_tokens": 300_000}}},
+        )
+        self.assertEqual(limit, 300_000)
 
     def test_claude_prefix_table(self):
         steps = [_step(0, model_id="claude-sonnet-4-5", tokens=_tokens(total=10, inp=10))]

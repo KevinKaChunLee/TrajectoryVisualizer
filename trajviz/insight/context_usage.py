@@ -59,6 +59,11 @@ PRESSURE_MAIN_AGENT = "__main__"
 # Occupancy is a compaction candidate when it falls below this fraction of the
 # previous non-zero same-agent occupancy.
 _OCCUPANCY_DROP_RATIO = 0.7
+# Cursor-style ``tokens.context_window`` snapshots are piecewise-constant
+# (copied onto every assistant until the next user turn). A 30% drop is still
+# a real summarization; billed per-turn occupancy stays on 0.7 to ignore jitter.
+_SNAPSHOT_DROP_RATIO = 0.95
+_SNAPSHOT_DROP_MIN_TOKENS = 1000
 # Tools pruned in one OpenCode pass share timestamps within this window.
 _PRUNE_WAVE_GAP_MS = 30_000
 
@@ -112,6 +117,41 @@ def _is_occupancy_step(step: dict) -> bool:
     return step.get("role") == "assistant"
 
 
+def _context_window_tokens(step: dict) -> int | None:
+    """Explicit per-step window occupancy, or None when the step has none."""
+    tokens = step.get("tokens") if isinstance(step.get("tokens"), dict) else {}
+    if "context_window" not in tokens:
+        return None
+    window = tokens.get("context_window")
+    if isinstance(window, (int, float)) and not isinstance(window, bool) and window >= 0:
+        return int(window)
+    return None
+
+
+def _snapshot_agents(steps: list[dict]) -> set[str]:
+    return {
+        _pressure_agent(step)
+        for step in steps
+        if _is_occupancy_step(step) and _context_window_tokens(step) is not None
+    }
+
+
+def _snapshot_drop_host(steps: list[dict], prev_idx: int, new_idx: int, new_step: dict) -> dict:
+    """Prefer the user turn between occupancy plateaus as the compaction host."""
+    users: list[dict] = []
+    for step in steps:
+        idx = int(step.get("index", -1))
+        if idx <= prev_idx:
+            continue
+        if idx >= new_idx:
+            break
+        if step.get("role") == "user":
+            users.append(step)
+    if len(users) == 1:
+        return users[0]
+    return new_step
+
+
 def _agent_pressure_label(agent_id: str, steps: list[dict]) -> str:
     if not agent_id:
         return "main"
@@ -160,9 +200,9 @@ def step_context_occupancy(step: dict) -> dict:
     tokens, so fresh is zero.
     """
     tokens = step.get("tokens") if isinstance(step.get("tokens"), dict) else {}
-    window = tokens.get("context_window")
-    if isinstance(window, (int, float)) and not isinstance(window, bool) and window > 0:
-        return {"fresh": 0, "cache_read": int(window), "occupancy": int(window)}
+    window = _context_window_tokens(step)
+    if window is not None:
+        return {"fresh": 0, "cache_read": window, "occupancy": window}
     tok_total = tokens.get("total", 0) or 0
     tok_input = tokens.get("input", 0) or 0
     tok_output = tokens.get("output", 0) or 0
@@ -222,6 +262,10 @@ def infer_context_window_limit(
             coerced = coerce_window_limit(md.get(key))
             if coerced:
                 return coerced
+        snap = md.get("context_snapshot") if isinstance(md.get("context_snapshot"), dict) else {}
+        coerced = coerce_window_limit(snap.get("max_tokens"))
+        if coerced:
+            return coerced
         base = raw.get("chat_base_info")
         if isinstance(base, dict):
             coerced = coerce_window_limit(base.get("contextToken"))
@@ -532,32 +576,44 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
             events.append(prune_event)
             explicit_steps.add(host_idx)
 
+    snapshot_agents = _snapshot_agents(steps)
     occ_seq: dict[str, list[tuple[int, int, dict]]] = defaultdict(list)
     for step in steps:
         if not _is_occupancy_step(step):
             continue
-        occ = step_context_occupancy(step)["occupancy"]
-        if occ <= 0:
-            continue
-        occ_seq[_pressure_agent(step)].append(
+        agent_id = _pressure_agent(step)
+        if agent_id in snapshot_agents:
+            occ = _context_window_tokens(step)
+            if occ is None:
+                continue
+        else:
+            occ = step_context_occupancy(step)["occupancy"]
+            if occ <= 0:
+                continue
+        occ_seq[agent_id].append(
             (int(step.get("index", 0)), occ, step),
         )
 
     explicit_at = {(e["agent"], e["step"]) for e in events}
     for agent_id, points in occ_seq.items():
+        uses_snapshot = agent_id in snapshot_agents
         # Without cache_read, occupancy equals per-turn fresh input, not
         # cumulative context-window size.  Input naturally swings between
         # turns (a large tool output followed by a short reply), so an
         # occupancy drop is just normal variance, not compaction.
-        if not any(
+        if not uses_snapshot and not any(
             step_context_occupancy(step)["cache_read"] > 0
             for _idx, _occ, step in points
         ):
             continue
+        drop_ratio = _SNAPSHOT_DROP_RATIO if uses_snapshot else _OCCUPANCY_DROP_RATIO
         for i in range(1, len(points)):
             prev_idx, prev_occ, prev_step = points[i - 1]
             idx, occ, step = points[i]
-            if occ >= prev_occ * _OCCUPANCY_DROP_RATIO:
+            dropped = prev_occ - occ
+            if occ >= prev_occ * drop_ratio:
+                continue
+            if uses_snapshot and dropped < _SNAPSHOT_DROP_MIN_TOKENS:
                 continue
             if idx in explicit_steps or (agent_id, idx) in explicit_at:
                 continue
@@ -574,19 +630,22 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
             if any(abs(idx - estep) <= 1 and eagent == agent_id
                    for eagent, estep in explicit_at):
                 continue
-            if i + 1 < len(points):
-                next_occ = points[i + 1][1]
-                # Recovered on the next turn → cache/prefix jitter, not compaction.
-                if next_occ >= prev_occ * 0.8:
+            if not uses_snapshot:
+                if i + 1 < len(points):
+                    next_occ = points[i + 1][1]
+                    # Recovered on the next turn → cache/prefix jitter, not compaction.
+                    if next_occ >= prev_occ * 0.8:
+                        continue
+                elif occ >= prev_occ * 0.4:
+                    # Last point: only count a severe drop we cannot confirm.
                     continue
-            elif occ >= prev_occ * 0.4:
-                # Last point: only count a severe drop we cannot confirm.
-                continue
+            host = _snapshot_drop_host(steps, prev_idx, idx, step) if uses_snapshot else step
+            host_idx = int(host.get("index", idx))
             events.append(_event(
-                step, "occupancy_drop", agent_id,
+                host, "occupancy_drop", agent_id,
                 occupancy_before=prev_occ, occupancy_after=occ,
             ))
-            explicit_steps.add(idx)
+            explicit_steps.add(host_idx)
 
     events.sort(key=lambda e: (e["step"], e["kind"]))
     return events
@@ -680,6 +739,8 @@ def context_pressure_series(
     if target is not None:
         events = [e for e in events if e["agent"] == target]
 
+    snapshot_agents = _snapshot_agents(steps)
+
     agents_order: list[str] = []
     seen: set[str] = set()
     points_by_agent: dict[str, list[dict]] = {}
@@ -689,6 +750,8 @@ def context_pressure_series(
             continue
         agent_id = _pressure_agent(step)
         if target is not None and agent_id != target:
+            continue
+        if agent_id in snapshot_agents and _context_window_tokens(step) is None:
             continue
         if agent_id not in seen:
             seen.add(agent_id)

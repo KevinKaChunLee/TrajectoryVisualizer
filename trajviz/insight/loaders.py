@@ -1,4 +1,4 @@
-"""Trajectory format detection and conversion (Claude Code, OpenCode, CodeArts, ICode, Codex, Pi, DSH).
+"""Trajectory format detection and conversion (Claude Code, Cursor, OpenCode, CodeArts, ICode, Codex, Pi, DSH).
 
 Converters live in ``trajviz.insight.formats``. This module is the public
 facade: ``detect_format``, ``load_trajectory``, and the names callers already
@@ -12,6 +12,7 @@ from typing import Any
 from .formats.claude_code import _convert_claude_code_to_internal
 from .formats.codearts import _convert_codearts_metadata
 from .formats.codex import _convert_codex_to_internal
+from .formats.cursor import _convert_cursor_to_internal
 from .formats.icode import _convert_icode_to_internal
 from .formats.common import (  # noqa: F401  (re-exported public / test API)
     _classify_tool_error,
@@ -42,6 +43,7 @@ from .formats.sniff import (
 # import this mapping instead of maintaining their own drifting copies.
 FORMAT_LABELS = {
     "ccsession": "Claude Code",
+    "cursor": "Cursor",
     "codearts": "CodeArts",
     "icode": "ICode",
     "opencode": "OpenCode",
@@ -93,7 +95,7 @@ def detect_format(raw: Any) -> str:
     """Detect trajectory format from parsed content.
 
     Accepts a JSON object or an event array. Returns ``ccsession``,
-    ``opencode``, ``codearts``, ``icode``, ``codex``, ``pi``, ``dsh``,
+    ``opencode``, ``codearts``, ``cursor``, ``icode``, ``codex``, ``pi``, ``dsh``,
     or ``unknown``.
     """
     if isinstance(raw, list):
@@ -207,6 +209,8 @@ def _apply_format(payload: Any, fmt: str, *, source_path: str | None = None) -> 
         return _convert_codearts_metadata(payload)
     if fmt == "icode":
         return _convert_icode_to_internal(payload)
+    if fmt == "cursor":
+        return _convert_cursor_to_internal(payload)
     if fmt == "opencode":
         return _convert_opencode_metadata(payload)
     return {"_error": f"Unknown trajectory format: {fmt}"}

@@ -313,6 +313,7 @@ class FormatLabelsTests(unittest.TestCase):
             FORMAT_LABELS,
             {
                 "ccsession": "Claude Code",
+                "cursor": "Cursor",
                 "codearts": "CodeArts",
                 "icode": "ICode",
                 "opencode": "OpenCode",
@@ -346,6 +347,7 @@ class FormatSelectionTests(unittest.TestCase):
         self.assertEqual(check_format_selection("opencode", "ccsession"), "mismatch")
         self.assertEqual(check_format_selection("codearts", "opencode"), "mismatch")
         self.assertEqual(check_format_selection("icode", "opencode"), "mismatch")
+        self.assertEqual(check_format_selection("cursor", "opencode"), "mismatch")
         self.assertEqual(check_format_selection("pi", "ccsession"), "mismatch")
         self.assertEqual(check_format_selection("codex", "opencode"), "mismatch")
 

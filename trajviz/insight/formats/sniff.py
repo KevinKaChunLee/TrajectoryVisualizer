@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-_OBJECT_FORMATS = frozenset({"ccsession", "codearts", "icode", "opencode"})
+_OBJECT_FORMATS = frozenset({"ccsession", "codearts", "cursor", "icode", "opencode"})
 _EVENT_FORMATS = frozenset({"codex", "pi", "dsh"})
 _FORMAT_STAMPS = {
     "ccsession": "_cc_format",
     "codearts": "_codearts_format",
+    "cursor": "_cursor_format",
     "icode": "_icode_format",
     "codex": "_codex_format",
     "pi": "_pi_format",
@@ -127,12 +128,24 @@ def _detect_object_format(raw: dict) -> str:
         return "dsh"
     if raw.get("_icode_format") is True:
         return "icode"
+    if raw.get("_cursor_format") is True:
+        return "cursor"
     if raw.get("format") == "ccsession-trajectory":
         return "ccsession"
     # CodeArts exports use an OpenCode-compatible ``info + messages``
     # envelope.  Check their explicit export marker before the generic
     # OpenCode shape so the UI does not mislabel the originating product.
     export_metadata = raw.get("export_metadata")
+    # Cursor consolidator exports also use info+messages; their marker must
+    # win before the generic OpenCode shape (and before CodeArts, which has
+    # its own source_format).
+    if (
+        isinstance(export_metadata, dict)
+        and export_metadata.get("source_format") == "cursor_composer"
+        and isinstance(raw.get("info"), dict)
+        and isinstance(raw.get("messages"), list)
+    ):
+        return "cursor"
     if raw.get("_codearts_format") is True or (
         isinstance(export_metadata, dict)
         and export_metadata.get("schema_version") == 2

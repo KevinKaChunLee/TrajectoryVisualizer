@@ -12,6 +12,7 @@ import html
 import math
 import os
 from collections import Counter
+from collections.abc import Sequence
 from typing import Any
 
 from trajviz.converge.alignment import (
@@ -21,6 +22,7 @@ from trajviz.converge.alignment import (
 )
 from trajviz.converge.canonical import (
     CanonicalAction,
+    _normalize_target,
     assign_effect_labels,
     canonicalize_steps,
 )
@@ -104,12 +106,63 @@ def _file_touch_map(actions: list[CanonicalAction]) -> dict[str, dict[str, int]]
     for action in actions:
         if action.action_type not in ("FILE_READ", "FILE_WRITE") or not action.target:
             continue
-        cell = touches.setdefault(action.target, {"read": 0, "write": 0})
+        key = _normalize_target(action.target)
+        if not key or key == ".":
+            continue
+        cell = touches.setdefault(key, {"read": 0, "write": 0})
         if action.action_type == "FILE_READ":
             cell["read"] += 1
         else:
             cell["write"] += 1
     return touches
+
+
+def _unify_path_keys(paths: Sequence[str]) -> dict[str, str]:
+    """Collapse relative vs absolute aliases onto the longer absolute path."""
+    ordered = sorted(
+        paths,
+        key=lambda path: (0 if str(path).startswith("/") else 1, -len(str(path)), path),
+    )
+    reps: list[str] = []
+    mapping: dict[str, str] = {}
+    for path in ordered:
+        found = None
+        for rep in reps:
+            if path == rep or rep.endswith("/" + path) or path.endswith("/" + rep):
+                found = rep
+                break
+        if found is None:
+            reps.append(path)
+            mapping[path] = path
+        else:
+            mapping[path] = found
+    return mapping
+
+
+def _merge_touch_aliases(
+    touch_by_run: dict[str, dict[str, dict[str, int]]],
+    run_ids: Sequence[str],
+) -> dict[str, dict[str, dict[str, int]]]:
+    all_paths: set[str] = set()
+    for touches in touch_by_run.values():
+        all_paths.update(touches)
+    alias = _unify_path_keys(all_paths)
+    merged: dict[str, dict[str, dict[str, int]]] = {rid: {} for rid in run_ids}
+    for rid in run_ids:
+        for path, cell in (touch_by_run.get(rid) or {}).items():
+            key = alias.get(path, path)
+            dest = merged[rid].setdefault(key, {"read": 0, "write": 0})
+            dest["read"] += int(cell.get("read") or 0)
+            dest["write"] += int(cell.get("write") or 0)
+    return merged
+
+
+def _row_read_runs(row: dict, ids: Sequence[str]) -> list[str]:
+    cells = row.get("cells") or {}
+    return [
+        rid for rid in ids
+        if int((cells.get(rid) or {}).get("read") or 0) > 0
+    ]
 
 
 def _short_path(path: str, limit: int = 56) -> str:
@@ -119,6 +172,102 @@ def _short_path(path: str, limit: int = 56) -> str:
     if len(base) + 3 >= limit:
         return "…" + base[-(limit - 1) :]
     return "…" + path[-(limit - 1) :]
+
+
+def _path_parts(path: str) -> list[str]:
+    text = _normalize_target(str(path) or "")
+    if not text or text == ".":
+        return []
+    return [part for part in text.split("/") if part and part != "."]
+
+
+def _user_home_prefix(parts: Sequence[str]) -> list[str]:
+    """``/home/<user>``, ``/Users/<user>``, or WSL ``/mnt/<drive>/…`` home."""
+    segs = list(parts)
+    if len(segs) >= 3 and segs[0] in ("home", "Users"):
+        return segs[:2]
+    if len(segs) >= 5 and segs[0] == "mnt" and segs[2] in ("Users", "home"):
+        return segs[:4]
+    if len(segs) >= 3 and segs[0] == "mnt":
+        return segs[:2]
+    return []
+
+
+def _drop_fs_root(parts: list[str]) -> list[str]:
+    prefix = _user_home_prefix(parts)
+    return parts[len(prefix) :] if prefix else parts
+
+
+def _shared_home_label(paths: Sequence[str]) -> tuple[str, str]:
+    """Label/full path for a unique user home, else empty."""
+    homes = [prefix for prefix in (_user_home_prefix(_path_parts(path)) for path in paths) if prefix]
+    if not homes or any(prefix != homes[0] for prefix in homes):
+        return "", ""
+    label = "/".join(homes[0])
+    return label, "/" + label
+
+
+def _folder_parent_index(paths: Sequence[str]) -> dict[str, list[tuple[str, ...]]]:
+    """Map each folder name to the parent paths it appears under (anchored files only)."""
+    seen: dict[str, set[tuple[str, ...]]] = {}
+    for path in paths:
+        parts = _path_parts(path)
+        if not _user_home_prefix(parts):
+            continue
+        acc: list[str] = []
+        for folder in _drop_fs_root(parts)[:-1]:
+            parent = tuple(acc)
+            seen.setdefault(folder, set()).add(parent)
+            acc.append(folder)
+    return {name: sorted(parents) for name, parents in seen.items()}
+
+
+def _display_path_parts(
+    path: str,
+    folder_index: dict[str, list[tuple[str, ...]]],
+) -> list[str]:
+    """Home-relative parts, grafting relative ``src/…`` under a unique folder if needed."""
+    raw = _path_parts(path)
+    parts = _drop_fs_root(raw)
+    if not parts:
+        return raw[-1:] or [str(path)]
+    if _user_home_prefix(raw) or len(parts) < 2:
+        return parts
+    parents = folder_index.get(parts[0]) or []
+    if len(parents) != 1:
+        return parts
+    return list(parents[0]) + parts
+
+
+def _empty_tree_node(name: str = "") -> dict:
+    return {"name": name, "dirs": {}, "files": []}
+
+
+def _file_tree_from_rows(rows: Sequence[dict]) -> dict:
+    paths = [str(row.get("path") or "") for row in rows]
+    folder_index = _folder_parent_index(paths)
+    tree = _empty_tree_node()
+    for row in rows:
+        parts = _display_path_parts(str(row.get("path") or ""), folder_index)
+        if not parts:
+            tree["files"].append({**row, "name": str(row.get("path") or "")})
+            continue
+        node = tree
+        for folder in parts[:-1]:
+            node = node["dirs"].setdefault(folder, _empty_tree_node(folder))
+        node["files"].append({**row, "name": parts[-1]})
+    return tree
+
+
+def _collect_tree_files(node: dict, prefix: list[str] | None = None) -> list[tuple[str, dict]]:
+    prefix = list(prefix or [])
+    out: list[tuple[str, dict]] = []
+    for name, child in sorted((node.get("dirs") or {}).items()):
+        out.extend(_collect_tree_files(child, prefix + [name]))
+    for row in node.get("files") or []:
+        rel = "/".join(prefix + [str(row.get("name") or row.get("path") or "")])
+        out.append((rel, row))
+    return out
 
 
 def _short_label(text: str, limit: int = 56) -> str:
@@ -167,14 +316,30 @@ def _coverage_kind(n_runs: int, thresh: int) -> str:
 
 
 _KIND_RANK = {"consensus": 0, "partial": 1, "unique": 2}
+_ACTION_MATRIX_PREVIEW = 60
+_RUN_PALETTE = 6
+
+
+def _run_class(index: int) -> str:
+    return f"rg-run-{int(index) % _RUN_PALETTE}"
+
+
+def _run_swatch_html(index: int, label: str, extra_class: str = "rg-legend-run") -> str:
+    return (
+        f"<span class='{extra_class} {_run_class(index)}'>"
+        f"<span class='rg-run-swatch' aria-hidden='true'></span>"
+        f"{html.escape(str(label))}</span>"
+    )
+
+
+_TOOL_MATRIX_PREVIEW = 50
+_SKILL_MATRIX_PREVIEW = 40
 
 
 def _build_count_matrix(
     counts_by_run: dict[str, Counter[str]],
     run_ids: list[str],
     thresh: int,
-    *,
-    limit: int = 50,
 ) -> tuple[list[dict], int]:
     """Build presence/count matrix rows for string keys across runs."""
     key_counts: Counter[str] = Counter()
@@ -197,7 +362,7 @@ def _build_count_matrix(
             }
         )
     rows.sort(key=lambda r: (_KIND_RANK[r["kind"]], -r["n_runs"], r["key"].lower()))
-    return rows[:limit], len(rows)
+    return rows, len(rows)
 
 
 def build_run_scorecard_row(
@@ -315,7 +480,10 @@ def build_behavioral_comparison(
             if sig is not None:
                 sig_counts_by_run[rid][sig] += 1
 
-    touch_by_run = {rid: _file_touch_map(actions_by_id[rid]) for rid in ids}
+    touch_by_run = _merge_touch_aliases(
+        {rid: _file_touch_map(actions_by_id[rid]) for rid in ids},
+        ids,
+    )
     sig_counts: Counter[tuple[str, str]] = Counter()
     for rid in ids:
         for sig in sig_counts_by_run[rid]:
@@ -349,7 +517,6 @@ def build_behavioral_comparison(
     action_rows.sort(
         key=lambda r: (_KIND_RANK[r["kind"]], -r["n_runs"], r["type"], r["target"]),
     )
-    action_matrix = action_rows[:60]
 
     file_rows: list[dict] = []
     for path in all_paths:
@@ -376,14 +543,13 @@ def build_behavioral_comparison(
         )
 
     file_rows.sort(key=lambda r: (_KIND_RANK[r["kind"]], -r["n_runs"], r["path"]))
-    file_matrix = file_rows[:50]
 
     # Tools / skills from parsed steps (when available)
     usage_by_run = {r["run_id"]: extract_capability_usage(r.get("steps") or []) for r in runs}
     tool_counts = {rid: usage_by_run[rid]["tools"] for rid in ids}
     skill_counts = {rid: usage_by_run[rid]["skills"] for rid in ids}
-    tool_matrix, tool_total = _build_count_matrix(tool_counts, ids, thresh, limit=50)
-    skill_matrix, skill_total = _build_count_matrix(skill_counts, ids, thresh, limit=40)
+    tool_matrix, tool_total = _build_count_matrix(tool_counts, ids, thresh)
+    skill_matrix, skill_total = _build_count_matrix(skill_counts, ids, thresh)
 
     # Waste patterns: each non-baseline run vs baseline alignment extras
     patterns_by_run: dict[str, list[dict]] = {baseline_id: []}
@@ -421,9 +587,9 @@ def build_behavioral_comparison(
         "baseline_run_id": baseline_id,
         "similarity": matrix,
         "consensus_threshold": thresh,
-        "action_matrix": action_matrix,
+        "action_matrix": action_rows,
         "action_matrix_total": len(action_rows),
-        "file_matrix": file_matrix,
+        "file_matrix": file_rows,
         "file_matrix_total": len(file_rows),
         "tool_matrix": tool_matrix,
         "tool_matrix_total": tool_total,
@@ -673,7 +839,7 @@ def _render_similarity_html(behavior: dict) -> str:
     return "".join(parts)
 
 
-def _rw_badges(cell: dict) -> str:
+def _rw_badges(cell: dict, *, tone: str = "", run_i: int = 0) -> str:
     """Compact read/write count chips for one run×file cell."""
     read = int(cell.get("read") or 0)
     write = int(cell.get("write") or 0)
@@ -682,11 +848,190 @@ def _rw_badges(cell: dict) -> str:
     bits: list[str] = []
     if read > 0:
         label = "R" if read == 1 else f"R×{read}"
-        bits.append(f"<span class='rg-badge rg-badge-r' title='{read} read(s)'>{label}</span>")
+        extra = " rg-badge-r"
+        if tone == "shared":
+            extra = " rg-badge-shared"
+        elif tone == "run":
+            extra = f" rg-badge-run {_run_class(run_i)}"
+        bits.append(
+            f"<span class='rg-badge{extra}' title='{read} read(s)'>{label}</span>"
+        )
     if write > 0:
         label = "W" if write == 1 else f"W×{write}"
         bits.append(f"<span class='rg-badge rg-badge-w' title='{write} write(s)'>{label}</span>")
     return "".join(bits)
+
+
+def _kind_counts(files: Sequence[dict]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for row in files:
+        counts[str(row.get("kind") or "partial")] += 1
+    return counts
+
+
+def _read_mix_segments(
+    files: Sequence[dict],
+    ids: Sequence[str],
+    labels: dict,
+) -> list[tuple[str, int, str]]:
+    """Folder mix: mutual reads, then unique reads per trajectory."""
+    n = len(ids)
+    shared = 0
+    unique: Counter[str] = Counter()
+    other = 0
+    for row in files:
+        readers = _row_read_runs(row, ids)
+        if n >= 2 and len(readers) == n:
+            shared += 1
+        elif len(readers) == 1:
+            unique[readers[0]] += 1
+        else:
+            other += 1
+    segs: list[tuple[str, int, str]] = []
+    if shared:
+        segs.append(("rg-mix-shared", shared, f"{shared} both"))
+    for index, rid in enumerate(ids):
+        count = int(unique.get(rid) or 0)
+        if count:
+            name = labels.get(rid, rid)
+            segs.append((f"rg-mix-run {_run_class(index)}", count, f"{count} {name}"))
+    if other:
+        segs.append(("rg-mix-partial", other, f"{other} other"))
+    return segs
+
+
+def _mix_bar_html(segments: Sequence[tuple[str, int, str]], total: int) -> str:
+    if total <= 0 or not segments:
+        return ""
+    segs: list[str] = []
+    labels: list[str] = []
+    for css, count, label in segments:
+        pct = 100.0 * count / total
+        segs.append(f"<span class='rg-mix-seg {css}' style='width:{pct:.2f}%'></span>")
+        labels.append(label)
+    return (
+        f"<span class='rg-mix-bar' role='img' aria-label='{html.escape(', '.join(labels))}'>"
+        f"{''.join(segs)}</span>"
+    )
+
+
+def _mix_label_html(segments: Sequence[tuple[str, int, str]]) -> str:
+    return html.escape(" · ".join(label for _css, _count, label in segments)) if segments else ""
+
+
+def _file_read_badge(
+    row: dict,
+    ids: Sequence[str],
+    labels: dict,
+    n: int,
+    readers: list[str],
+) -> str:
+    if n >= 2 and len(readers) == n:
+        return '<span class="rg-both-read">both read</span>'
+    if len(readers) == 1:
+        rid = readers[0]
+        index = list(ids).index(rid)
+        name = labels.get(rid, rid)
+        return (
+            f"<span class='rg-kind rg-kind-run {_run_class(index)}'>"
+            f"{html.escape(str(name))} only</span>"
+        )
+    return _kind_badge(str(row.get("kind") or "partial"), int(row.get("n_runs") or 0), n)
+
+
+def _aggregate_dir_cells(files: Sequence[dict], ids: Sequence[str]) -> dict[str, dict[str, int]]:
+    out = {rid: {"read": 0, "write": 0} for rid in ids}
+    for row in files:
+        cells = row.get("cells") or {}
+        for rid in ids:
+            cell = cells.get(rid) or {}
+            out[rid]["read"] += int(cell.get("read") or 0)
+            out[rid]["write"] += int(cell.get("write") or 0)
+    return out
+
+
+def _tree_run_cells_html(
+    cells: dict,
+    ids: Sequence[str],
+    *,
+    shared: bool = False,
+) -> str:
+    bits: list[str] = []
+    for index, rid in enumerate(ids):
+        tone = "shared" if shared else "run"
+        bits.append(
+            f"<span class='rg-tree-cell'>"
+            f"{_rw_badges(cells.get(rid) or {'read': 0, 'write': 0}, tone=tone, run_i=index)}"
+            f"</span>"
+        )
+    return "".join(bits)
+
+
+def _render_tree_file_html(
+    row: dict,
+    ids: Sequence[str],
+    labels: dict,
+    n: int,
+    name: str,
+) -> str:
+    path = str(row.get("path") or "")
+    readers = _row_read_runs(row, ids)
+    both = n >= 2 and len(readers) == n
+    classes = ["rg-tree-file"]
+    if both:
+        classes.append("rg-tree-both")
+    elif len(readers) == 1:
+        classes.append("rg-tree-unique")
+        classes.append(_run_class(list(ids).index(readers[0])))
+    return (
+        f"<div class='{' '.join(classes)}' title='{html.escape(path)}'>"
+        f"<span class='rg-tree-name'><code>{html.escape(name)}</code></span>"
+        f"{_tree_run_cells_html(row.get('cells') or {}, ids, shared=both)}"
+        f"<span class='rg-tree-mix'>{_file_read_badge(row, ids, labels, n, readers)}</span>"
+        "</div>"
+    )
+
+
+def _render_tree_node_html(
+    node: dict,
+    ids: Sequence[str],
+    labels: dict,
+    n: int,
+    *,
+    rel: list[str],
+) -> str:
+    parts: list[str] = []
+    for name in sorted(node.get("dirs") or {}):
+        child = node["dirs"][name]
+        child_files = _collect_tree_files(child)
+        file_rows = [row for _rel, row in child_files]
+        if not child.get("dirs") and len(child.get("files") or []) == 1:
+            row = child["files"][0]
+            shown = "/".join([name, str(row.get("name") or "")])
+            parts.append(_render_tree_file_html(row, ids, labels, n, shown))
+            continue
+        segments = _read_mix_segments(file_rows, ids, labels)
+        cells = _aggregate_dir_cells(file_rows, ids)
+        folder = name + "/"
+        open_attr = " open" if len(rel) < 2 else ""
+        parts.append(f"<details class='rg-tree-dir'{open_attr}>")
+        parts.append("<summary class='rg-tree-summary'>")
+        parts.append(
+            f"<span class='rg-tree-name'><span class='rg-dir-caret' aria-hidden='true'></span>"
+            f"<code>{html.escape(folder)}</code>"
+            f"{_mix_bar_html(segments, len(child_files))}"
+            f"<span class='rg-dir-count'>{len(child_files)} files</span></span>"
+        )
+        parts.append(_tree_run_cells_html(cells, ids))
+        parts.append(f"<span class='rg-tree-mix'>{_mix_label_html(segments)}</span>")
+        parts.append("</summary>")
+        parts.append(_render_tree_node_html(child, ids, labels, n, rel=rel + [name]))
+        parts.append("</details>")
+    for row in sorted(node.get("files") or [], key=lambda item: str(item.get("name") or "").lower()):
+        parts.append(
+            _render_tree_file_html(row, ids, labels, n, str(row.get("name") or ""))
+        )
+    return "".join(parts)
 
 
 def _kind_badge(kind: str, n_runs: int, n_total: int) -> str:
@@ -720,11 +1065,55 @@ def _action_cell(cell: dict) -> str:
     return f"<span class='rg-action-hit' title='{count} times'>✓×{count}</span>"
 
 
+def _expandable_coverage_table(
+    *,
+    toggle_id: str,
+    first_header: str,
+    ids: list[str],
+    labels: dict,
+    rows: list[dict],
+    preview: int,
+    noun: str,
+    render_row,
+) -> str:
+    """One coverage table with a CSS-only 'show all' control when truncated."""
+    expandable = preview > 0 and len(rows) > preview
+    parts = ["<div class='rg-matrix'>"]
+    if expandable:
+        parts.append(
+            f"<input type='checkbox' id='{html.escape(toggle_id)}' class='rg-matrix-toggle'>"
+        )
+    parts.append(
+        "<div class='rg-file-scroll'>"
+        "<table class='cvg-outcome-table rg-file-table'><thead><tr>"
+        f"<th>{html.escape(first_header)}</th>"
+    )
+    for rid in ids:
+        parts.append(
+            f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>"
+        )
+    parts.append("<th>Coverage</th></tr></thead><tbody>")
+    for index, row in enumerate(rows):
+        extra = " rg-matrix-tail" if expandable and index >= preview else ""
+        parts.append(render_row(row, extra))
+    parts.append("</tbody></table></div>")
+    if expandable:
+        hidden = len(rows) - preview
+        parts.append(
+            f"<label for='{html.escape(toggle_id)}' class='rg-matrix-toggle-label'>"
+            f"<span class='rg-matrix-show'>Show all {len(rows)} {html.escape(noun)} "
+            f"({hidden} more)</span>"
+            f"<span class='rg-matrix-hide'>Show first {preview} {html.escape(noun)}</span>"
+            "</label>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _render_action_matrix_html(behavior: dict) -> str:
     ids = behavior.get("run_ids") or []
     labels = behavior.get("labels") or {}
     rows = behavior.get("action_matrix") or []
-    total = int(behavior.get("action_matrix_total") or len(rows))
     n = len(ids)
     parts = [
         "<h4 style='margin:1em 0 0.35em;font-size:14px;'>Action coverage</h4>",
@@ -738,14 +1127,7 @@ def _render_action_matrix_html(behavior: dict) -> str:
         parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No non-file actions across these runs.</div>")
         return "".join(parts)
 
-    parts.append(
-        "<div class='rg-file-scroll'><table class='cvg-outcome-table rg-file-table'><thead><tr><th>Action</th>"
-    )
-    for rid in ids:
-        parts.append(f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>")
-    parts.append("<th>Coverage</th></tr></thead><tbody>")
-
-    for row in rows:
+    def render_row(row: dict, extra: str) -> str:
         atype = str(row.get("type") or "")
         target = str(row.get("target") or "")
         short = str(row.get("short_target") or target)
@@ -754,23 +1136,34 @@ def _render_action_matrix_html(behavior: dict) -> str:
         cells = row.get("cells") or {}
         full = str(row.get("label") or _fmt_signature((atype, target)))
         target_html = (
-            f"<code title='{html.escape(target)}'>{html.escape(short)}</code>" if target and target != "*" else ""
+            f"<code title='{html.escape(target)}'>{html.escape(short)}</code>"
+            if target and target != "*"
+            else ""
         )
-        parts.append(f"<tr class='rg-row-{kind}'>")
-        parts.append(
-            f"<td class='rg-file-path' title='{html.escape(full)}'>{_action_type_badge(atype)} {target_html}</td>"
-        )
+        bits = [
+            f"<tr class='rg-row-{kind}{extra}'>",
+            f"<td class='rg-file-path' title='{html.escape(full)}'>{_action_type_badge(atype)} {target_html}</td>",
+        ]
         for rid in ids:
             cell = cells.get(rid) or {"present": False, "count": 0}
-            parts.append(f"<td style='text-align:center;white-space:nowrap;'>{_action_cell(cell)}</td>")
-        parts.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td>")
-        parts.append("</tr>")
-    parts.append("</tbody></table></div>")
-    if total > len(rows):
-        parts.append(
-            f"<div style='font-size:12px;color:var(--ov-muted);margin-top:4px;'>"
-            f"Showing {len(rows)} of {total} actions</div>"
+            bits.append(
+                f"<td style='text-align:center;white-space:nowrap;'>{_action_cell(cell)}</td>"
+            )
+        bits.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td></tr>")
+        return "".join(bits)
+
+    parts.append(
+        _expandable_coverage_table(
+            toggle_id="rg-expand-actions",
+            first_header="Action",
+            ids=ids,
+            labels=labels,
+            rows=rows,
+            preview=_ACTION_MATRIX_PREVIEW,
+            noun="actions",
+            render_row=render_row,
         )
+    )
     return "".join(parts)
 
 
@@ -778,47 +1171,96 @@ def _render_file_matrix_html(behavior: dict) -> str:
     ids = behavior.get("run_ids") or []
     labels = behavior.get("labels") or {}
     rows = behavior.get("file_matrix") or []
-    total = int(behavior.get("file_matrix_total") or len(rows))
     n = len(ids)
+    both_label = "both" if n == 2 else "all runs"
+    legend = [_run_swatch_html(index, labels.get(rid, rid)) for index, rid in enumerate(ids)]
+    legend.append(
+        f"<span class='rg-both-read'>both read</span> = read in {html.escape(both_label)}"
+    )
     parts = [
         "<h4 style='margin:1em 0 0.35em;font-size:14px;'>File coverage</h4>",
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "<span class='rg-badge rg-badge-r'>R</span> / "
-        "<span class='rg-badge rg-badge-r'>R×N</span> read count &nbsp;"
-        "<span class='rg-badge rg-badge-w'>W</span> / "
-        "<span class='rg-badge rg-badge-w'>W×N</span> write count &nbsp;·&nbsp; "
-        "shared = consensus threshold, unique = one run only"
-        "</div>",
+        "Unique reads are tinted by trajectory; mutual reads stay green. "
+        + " · ".join(legend)
+        + "</div>",
     ]
     if not rows:
         parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No file reads/writes across these runs.</div>")
         return "".join(parts)
 
-    parts.append("<div class='rg-file-scroll'><table class='cvg-outcome-table rg-file-table'><thead><tr><th>File</th>")
-    for rid in ids:
-        parts.append(f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>")
-    parts.append("<th>Coverage</th></tr></thead><tbody>")
-
-    for row in rows:
-        path = str(row.get("path") or "")
-        short = str(row.get("short") or path)
-        kind = str(row.get("kind") or "partial")
-        n_runs = int(row.get("n_runs") or 0)
-        cells = row.get("cells") or {}
-        row_cls = f"rg-row-{kind}"
-        parts.append(f"<tr class='{row_cls}'>")
-        parts.append(f"<td class='rg-file-path' title='{html.escape(path)}'><code>{html.escape(short)}</code></td>")
-        for rid in ids:
-            cell = cells.get(rid) or {"read": 0, "write": 0}
-            parts.append(f"<td style='text-align:center;white-space:nowrap;'>{_rw_badges(cell)}</td>")
-        parts.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td>")
-        parts.append("</tr>")
-    parts.append("</tbody></table></div>")
-    if total > len(rows):
+    root_label, root_full = _shared_home_label(str(row.get("path") or "") for row in rows)
+    tree = _file_tree_from_rows(rows)
+    both_reads = [
+        (rel, row) for rel, row in _collect_tree_files(tree)
+        if len(_row_read_runs(row, ids)) == n and n >= 2
+    ]
+    totals = _kind_counts(rows)
+    summary = [
+        f"{len(rows)} files",
+        f"{len(both_reads)} read in {both_label}",
+        f"{int(totals.get('unique') or 0)} unique",
+    ]
+    only_bits: list[str] = []
+    for index, rid in enumerate(ids):
+        n_only = 0
+        for row in rows:
+            reads = _row_read_runs(row, ids)
+            if reads == [rid]:
+                n_only += 1
+        if n_only:
+            only_bits.append(
+                _run_swatch_html(index, f"{n_only} only in {labels.get(rid, rid)}")
+            )
+    if root_label:
         parts.append(
-            f"<div style='font-size:12px;color:var(--ov-muted);margin-top:4px;'>"
-            f"Showing {len(rows)} of {total} files</div>"
+            "<div class='rg-file-root' title='"
+            + html.escape(root_full)
+            + "'>Paths relative to <code>/"
+            + html.escape(root_label)
+            + "</code></div>"
         )
+    parts.append(
+        "<div class='rg-file-summary'>"
+        + html.escape(" · ".join(summary))
+        + (" · " + " · ".join(only_bits) if only_bits else "")
+        + "</div>"
+    )
+    if both_reads:
+        preview = 24
+        parts.append("<details class='rg-both-list'" + (" open" if len(both_reads) <= preview else "") + ">")
+        parts.append(
+            f"<summary>Read in {html.escape(both_label)} "
+            f"({len(both_reads)} files)</summary>"
+        )
+        parts.append("<ul class='rg-both-paths'>")
+        shown = both_reads if len(both_reads) <= preview else both_reads[:preview]
+        for rel, row in shown:
+            parts.append(
+                f"<li title='{html.escape(str(row.get('path') or rel))}'>"
+                f"<code>{html.escape(rel)}</code></li>"
+            )
+        if len(both_reads) > preview:
+            parts.append(
+                f"<li class='rg-both-more'>{len(both_reads) - preview} more in the tree below</li>"
+            )
+        parts.append("</ul></details>")
+
+    parts.append(
+        f"<div class='rg-tree' style='--rg-run-cols:{max(n, 1)};'>"
+        "<div class='rg-tree-head'>"
+        "<span>Folder / file</span>"
+    )
+    for index, rid in enumerate(ids):
+        parts.append(
+            _run_swatch_html(
+                index,
+                labels.get(rid, rid),
+                extra_class="rg-tree-cell rg-tree-runhead",
+            )
+        )
+    parts.append("<span>Mix</span></div>")
+    parts.append(_render_tree_node_html(tree, ids, labels, n, rel=[]))
+    parts.append("</div>")
     return "".join(parts)
 
 
@@ -826,17 +1268,17 @@ def _render_count_matrix_html(
     behavior: dict,
     *,
     matrix_key: str,
-    total_key: str,
     title: str,
     blurb: str,
     empty: str,
     noun: str,
+    toggle_id: str,
+    preview: int,
 ) -> str:
     """Shared renderer for tool / skill presence matrices."""
     ids = behavior.get("run_ids") or []
     labels = behavior.get("labels") or {}
     rows = behavior.get(matrix_key) or []
-    total = int(behavior.get(total_key) or len(rows))
     n = len(ids)
     parts = [
         f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>{html.escape(title)}</h4>",
@@ -846,34 +1288,36 @@ def _render_count_matrix_html(
         parts.append(f"<div style='font-size:12px;color:var(--ov-muted);'>{html.escape(empty)}</div>")
         return "".join(parts)
 
-    parts.append(
-        "<div class='rg-file-scroll'>"
-        "<table class='cvg-outcome-table rg-file-table'><thead><tr>"
-        f"<th>{html.escape(noun)}</th>"
-    )
-    for rid in ids:
-        parts.append(f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>")
-    parts.append("<th>Coverage</th></tr></thead><tbody>")
-
-    for row in rows:
+    def render_row(row: dict, extra: str) -> str:
         key = str(row.get("key") or "")
         short = str(row.get("short") or key)
         kind = str(row.get("kind") or "partial")
         n_runs = int(row.get("n_runs") or 0)
         cells = row.get("cells") or {}
-        parts.append(f"<tr class='rg-row-{kind}'>")
-        parts.append(f"<td class='rg-file-path' title='{html.escape(key)}'><code>{html.escape(short)}</code></td>")
+        bits = [
+            f"<tr class='rg-row-{kind}{extra}'>",
+            f"<td class='rg-file-path' title='{html.escape(key)}'><code>{html.escape(short)}</code></td>",
+        ]
         for rid in ids:
             cell = cells.get(rid) or {"present": False, "count": 0}
-            parts.append(f"<td style='text-align:center;white-space:nowrap;'>{_action_cell(cell)}</td>")
-        parts.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td>")
-        parts.append("</tr>")
-    parts.append("</tbody></table></div>")
-    if total > len(rows):
-        parts.append(
-            f"<div style='font-size:12px;color:var(--ov-muted);margin-top:4px;'>"
-            f"Showing {len(rows)} of {total} {html.escape(noun.lower())}s</div>"
+            bits.append(
+                f"<td style='text-align:center;white-space:nowrap;'>{_action_cell(cell)}</td>"
+            )
+        bits.append(f"<td style='white-space:nowrap;'>{_kind_badge(kind, n_runs, n)}</td></tr>")
+        return "".join(bits)
+
+    parts.append(
+        _expandable_coverage_table(
+            toggle_id=toggle_id,
+            first_header=noun,
+            ids=ids,
+            labels=labels,
+            rows=rows,
+            preview=preview,
+            noun=f"{noun.lower()}s",
+            render_row=render_row,
         )
+    )
     return "".join(parts)
 
 
@@ -895,20 +1339,22 @@ def _render_behavior_html(behavior: dict | None) -> str:
         _render_count_matrix_html(
             behavior,
             matrix_key="tool_matrix",
-            total_key="tool_matrix_total",
             title="Tool coverage",
             blurb="All tool names used across runs (including MCP tools).",
             empty="No tools recorded across these runs.",
             noun="Tool",
+            toggle_id="rg-expand-tools",
+            preview=_TOOL_MATRIX_PREVIEW,
         ),
         _render_count_matrix_html(
             behavior,
             matrix_key="skill_matrix",
-            total_key="skill_matrix_total",
             title="Skill coverage",
             blurb="Skills triggered via the Skill tool (name from tool input).",
             empty="No Skill-tool invocations recorded across these runs.",
             noun="Skill",
+            toggle_id="rg-expand-skills",
+            preview=_SKILL_MATRIX_PREVIEW,
         ),
         _render_action_matrix_html(behavior),
         _render_file_matrix_html(behavior),
