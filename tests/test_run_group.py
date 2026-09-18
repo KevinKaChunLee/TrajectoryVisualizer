@@ -934,5 +934,250 @@ class ScorecardDisplayTests(unittest.TestCase):
         self.assertNotEqual(short, "list_issues")
 
 
+class CoverageMatrixExpandTests(unittest.TestCase):
+    def test_keeps_all_actions_and_files_with_show_all_toggle(self):
+        from trajviz.insight.run_group import _ACTION_MATRIX_PREVIEW
+
+        n_files = 62
+        n_actions = _ACTION_MATRIX_PREVIEW + 7
+        runs = [
+            {
+                "run_id": "a",
+                "label": "A",
+                "actions": (
+                    [_action("FILE_READ", f"src/f{i}.py", i) for i in range(n_files)]
+                    + [_action("SEARCH", f"query-{i}", n_files + i) for i in range(n_actions)]
+                ),
+            },
+            {
+                "run_id": "b",
+                "label": "B",
+                "actions": (
+                    [_action("FILE_READ", f"src/f{i}.py", i) for i in range(n_files)]
+                    + [_action("SEARCH", f"query-{i}", n_files + i) for i in range(n_actions)]
+                ),
+            },
+        ]
+        behavior = build_behavioral_comparison(runs)
+        self.assertEqual(len(behavior["file_matrix"]), n_files)
+        self.assertEqual(behavior["file_matrix_total"], n_files)
+        self.assertEqual(len(behavior["action_matrix"]), n_actions)
+        self.assertEqual(behavior["action_matrix_total"], n_actions)
+        html = build_run_group_behavior_html({"behavior": behavior, "ok": True})
+        self.assertIn(f"Show all {n_actions} actions", html)
+        self.assertIn("src/", html)
+        self.assertIn(f"{n_files} files", html)
+        self.assertIn(f"f{n_files - 1}.py", html)
+        self.assertIn(f"query-{n_actions - 1}", html)
+        self.assertIn("rg-tree-dir", html)
+        self.assertNotIn("rg-expand-files", html)
+        self.assertIn("rg-expand-actions", html)
+        self.assertEqual(html.count("rg-matrix-tail"), n_actions - _ACTION_MATRIX_PREVIEW)
+        self.assertNotIn("Showing ", html)
+
+    def test_small_matrices_have_no_toggle(self):
+        behavior = build_behavioral_comparison(
+            [
+                {
+                    "run_id": "a",
+                    "label": "A",
+                    "actions": [_action("FILE_READ", "a.py", 1), _action("SEARCH", "todo", 2)],
+                },
+                {
+                    "run_id": "b",
+                    "label": "B",
+                    "actions": [_action("FILE_READ", "a.py", 1)],
+                },
+            ]
+        )
+        html = build_run_group_behavior_html({"behavior": behavior, "ok": True})
+        self.assertNotIn("rg-matrix-toggle", html)
+        self.assertNotIn("Show all", html)
+        self.assertIn("a.py", html)
+        self.assertIn("todo", html)
+
+
+class FileCoverageFolderTests(unittest.TestCase):
+    def test_groups_shared_folder_and_keeps_root_files_flat(self):
+        from trajviz.insight.run_group import _render_file_matrix_html
+
+        runs = [
+            {
+                "run_id": "a",
+                "label": "Claude",
+                "actions": [
+                    _action("FILE_READ", "src/a.py", 1),
+                    _action("FILE_READ", "src/b.py", 2),
+                    _action("FILE_READ", "src/nested/c.py", 3),
+                    _action("FILE_READ", "README.md", 4),
+                    _action("FILE_WRITE", "src/a.py", 5),
+                ],
+            },
+            {
+                "run_id": "b",
+                "label": "Codex",
+                "actions": [
+                    _action("FILE_READ", "src/a.py", 1),
+                    _action("FILE_READ", "other.py", 2),
+                ],
+            },
+        ]
+        behavior = build_behavioral_comparison(runs)
+        html = _render_file_matrix_html(behavior)
+        self.assertIn("rg-file-summary", html)
+        self.assertIn("src/", html)
+        self.assertIn("files", html)
+        self.assertIn("rg-mix-bar", html)
+        self.assertIn("README.md", html)
+        self.assertIn("other.py", html)
+        self.assertIn("only in Codex", html)
+        self.assertIn("Read in both", html)
+        self.assertIn("src/a.py", html)
+        self.assertIn("rg-tree-both", html)
+        self.assertIn("rg-badge-shared", html)
+        self.assertIn("rg-tree-unique", html)
+        self.assertIn("rg-run-0", html)
+        self.assertIn("rg-run-1", html)
+        self.assertIn("Claude only", html)
+        self.assertIn("Codex only", html)
+        self.assertIn("rg-run-swatch", html)
+
+    def test_single_file_folder_stays_a_row(self):
+        from trajviz.insight.run_group import _render_file_matrix_html
+
+        behavior = build_behavioral_comparison(
+            [
+                {
+                    "run_id": "a",
+                    "label": "A",
+                    "actions": [_action("FILE_READ", "src/main.py", 1)],
+                },
+                {
+                    "run_id": "b",
+                    "label": "B",
+                    "actions": [_action("FILE_READ", "src/main.py", 1)],
+                },
+            ]
+        )
+        html = _render_file_matrix_html(behavior)
+        self.assertIn("src/main.py", html)
+        self.assertIn("rg-tree-both", html)
+        self.assertNotIn("rg-tree-dir", html)
+
+    def test_home_absolutes_keep_project_under_work(self):
+        from trajviz.insight.run_group import _file_tree_from_rows
+
+        root = "/home/kevin/Work/TrajectoryVisualizer"
+        runs = [
+            {
+                "run_id": "a",
+                "label": "A",
+                "actions": [
+                    _action("FILE_READ", f"{root}/src/a.py", 1),
+                    _action("FILE_READ", f"{root}/src/b.py", 2),
+                    _action("FILE_READ", f"{root}/tests/test_a.py", 3),
+                    _action("FILE_READ", f"{root}/README.md", 4),
+                    _action("FILE_READ", "/home/kevin/.cursor/projects/foo/bar.py", 5),
+                ],
+            },
+            {
+                "run_id": "b",
+                "label": "B",
+                "actions": [
+                    _action("FILE_READ", f"{root}/src/a.py", 1),
+                    _action("FILE_READ", f"{root}/tests/test_b.py", 2),
+                    _action("FILE_READ", "src/rel.py", 3),
+                ],
+            },
+        ]
+        behavior = build_behavioral_comparison(runs)
+        tree = _file_tree_from_rows(behavior["file_matrix"])
+        self.assertIn("Work", tree["dirs"])
+        work = tree["dirs"]["Work"]
+        self.assertIn("TrajectoryVisualizer", work["dirs"])
+        proj = work["dirs"]["TrajectoryVisualizer"]
+        self.assertIn("src", proj["dirs"])
+        self.assertIn("tests", proj["dirs"])
+        self.assertNotIn("src", tree["dirs"])
+        self.assertNotIn("home", tree["dirs"])
+        self.assertIn(".cursor", tree["dirs"])
+        src_names = {row.get("name") for row in proj["dirs"]["src"]["files"]}
+        self.assertIn("rel.py", src_names)
+
+    def test_wsl_unc_merges_with_posix_and_lists_both_reads(self):
+        from trajviz.converge.canonical import _normalize_target
+        from trajviz.insight.run_group import _render_file_matrix_html
+
+        unc = r"\\wsl.localhost\Ubuntu-26.04\home\kevin\Work\telephony_call_manager\src\app.py"
+        posix = "/home/kevin/Work/telephony_call_manager/src/app.py"
+        self.assertEqual(_normalize_target(unc), posix)
+        runs = [
+            {
+                "run_id": "a",
+                "label": "Claude",
+                "actions": [
+                    _action("FILE_READ", unc, 1),
+                    _action("FILE_READ", r"\\wsl.localhost\Ubuntu-26.04\home\kevin\Work\telephony_call_manager\src\only_a.py", 2),
+                ],
+            },
+            {
+                "run_id": "b",
+                "label": "Codex",
+                "actions": [
+                    _action("FILE_READ", posix, 1),
+                    _action("FILE_READ", "/home/kevin/Work/telephony_call_manager/tests/test_app.py", 2),
+                ],
+            },
+        ]
+        behavior = build_behavioral_comparison(runs)
+        paths = {r["path"] for r in behavior["file_matrix"]}
+        self.assertIn(posix, paths)
+        self.assertEqual(len([p for p in paths if p.endswith("/app.py")]), 1)
+        app = next(r for r in behavior["file_matrix"] if r["path"] == posix)
+        self.assertEqual(app["cells"]["a"]["read"], 1)
+        self.assertEqual(app["cells"]["b"]["read"], 1)
+        html = _render_file_matrix_html(behavior)
+        self.assertIn("telephony_call_manager", html)
+        self.assertIn("Read in both", html)
+        self.assertIn("Work/telephony_call_manager/src/app.py", html)
+        self.assertNotIn("wsl.localhost", html)
+        self.assertIn("Work/", html)
+        self.assertIn("src/", html)
+        self.assertIn("tests/", html)
+
+    def test_project_stays_nested_under_work(self):
+        from trajviz.insight.run_group import _file_tree_from_rows
+
+        root = "/home/kevin/Work/telephony_call_manager"
+        runs = [
+            {
+                "run_id": "a",
+                "label": "A",
+                "actions": [
+                    _action("FILE_READ", f"{root}/src/a.py", 1),
+                    _action("FILE_READ", f"{root}/src/b.py", 2),
+                    _action("FILE_READ", f"{root}/tests/test_a.py", 3),
+                    _action("FILE_READ", "/home/kevin/Work/notes.md", 4),
+                ],
+            },
+            {
+                "run_id": "b",
+                "label": "B",
+                "actions": [
+                    _action("FILE_READ", f"{root}/src/a.py", 1),
+                ],
+            },
+        ]
+        behavior = build_behavioral_comparison(runs)
+        tree = _file_tree_from_rows(behavior["file_matrix"])
+        self.assertIn("Work", tree["dirs"])
+        work = tree["dirs"]["Work"]
+        self.assertIn("telephony_call_manager", work["dirs"])
+        self.assertIn("src", work["dirs"]["telephony_call_manager"]["dirs"])
+        self.assertNotIn("src", tree["dirs"])
+        names = {row.get("name") for row in work["files"]}
+        self.assertIn("notes.md", names)
+
+
 if __name__ == "__main__":
     unittest.main()

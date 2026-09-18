@@ -93,16 +93,24 @@ def _is_in_place_edit(base_cmd: str, command: str) -> bool:
     return False
 
 
+_WSL_UNC_RE = re.compile(
+    r"(?i)^(?://*)(?:wsl\.localhost|wsl\$)/[^/]+(/home/.*)$"
+)
+
+
 def _normalize_target(path: str) -> str:
     """Normalize a file path for comparison.
 
-    Handles cross-platform paths (Windows backslashes → forward slashes)
-    and strips drive letters for portability.
+    Handles Windows backslashes, drive letters, and WSL UNC shares
+    (``\\\\wsl.localhost\\Ubuntu-26.04\\home\\...`` → ``/home/...``).
     """
     if not path:
         return path
     import posixpath
-    p = path.replace("\\", "/")
+    p = path.strip().replace("\\", "/")
+    match = _WSL_UNC_RE.match(p)
+    if match:
+        p = match.group(1)
     if len(p) >= 2 and p[1] == ":" and p[0].isalpha():
         p = p[2:]
     return posixpath.normpath(p)
