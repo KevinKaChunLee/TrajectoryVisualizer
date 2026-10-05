@@ -29,6 +29,7 @@ import unittest
 from trajviz.insight import patterns
 from trajviz.insight.metrics import build_message_metrics, compute_metrics
 from trajviz.insight.patterns import (
+    _step_has_success,
     classify_structural_phase,
     detect_fruitless_streaks,
     detect_phase_anomalies,
@@ -158,6 +159,52 @@ class FruitlessSearchTreatsMissingOutputAsEmpty(unittest.TestCase):
             for i in range(3)
         ]
         self.assertEqual([s["length"] for s in detect_fruitless_streaks(steps)], [3])
+
+
+class RecoveryWalkSharesOneFailureDefinition(unittest.TestCase):
+    """`_step_has_success` must agree with every other failure surface.
+
+    The local copy this replaces was case-sensitive and consulted the exit code
+    only when the status was blank. OpenCode marks a bash invocation
+    ``completed`` regardless of its exit status, so a failed command read as a
+    *recovery* here while `tool_failure.tool_call_failed` — and therefore
+    tool_success_rate, the cluster labels and the Workflow badges — called it a
+    failure. PR #13 corrected that reading everywhere except this walk.
+
+    This MOVES a published value: `recovery_path` changes on 449 of the 1,500
+    OpenCode corpus trajectories (591 clusters), and the honest
+    "no recovery found" count rises from 236 to 325. claude_code and codex are
+    bit-identical, because neither emits `metadata.exit`.
+    """
+
+    def test_a_completed_call_with_a_nonzero_exit_is_not_a_recovery(self):
+        step = {"tool_calls": [{"tool_name": "bash", "status": "completed",
+                                "metadata": {"exit": 1}}]}
+        self.assertFalse(_step_has_success(step))
+
+    def test_a_completed_call_with_a_zero_exit_is_a_recovery(self):
+        step = {"tool_calls": [{"tool_name": "bash", "status": "completed",
+                                "metadata": {"exit": 0}}]}
+        self.assertTrue(_step_has_success(step))
+
+    def test_status_matching_is_case_insensitive(self):
+        for status in ("Error", "TIMEOUT", "Failed", "timed_out", "canceled"):
+            with self.subTest(status=status):
+                self.assertFalse(_step_has_success({"tool_calls": [{"status": status}]}))
+
+    def test_an_error_field_alone_defeats_a_success_status(self):
+        step = {"tool_calls": [{"status": "completed", "error": "boom"}]}
+        self.assertFalse(_step_has_success(step))
+
+    def test_a_step_with_no_tool_calls_is_not_a_recovery(self):
+        # Load-bearing: detect_failure_patterns walks forward until a step
+        # "has success", so a bare text step must not end the walk.
+        self.assertFalse(_step_has_success({"tool_calls": []}))
+        self.assertFalse(_step_has_success({}))
+
+    def test_one_good_call_beside_a_failed_one_still_recovers(self):
+        step = {"tool_calls": [{"status": "error"}, {"status": "success"}]}
+        self.assertTrue(_step_has_success(step))
 
 
 if __name__ == "__main__":

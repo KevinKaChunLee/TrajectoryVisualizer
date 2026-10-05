@@ -8,7 +8,7 @@ from collections import Counter
 
 from trajviz.insight.parser import spawned_child_session_id
 from trajviz.insight.shell_cmd import shell_runs_search
-from trajviz.insight.tool_failure import tool_call_failed
+from trajviz.insight.tool_failure import step_has_success, tool_call_failed
 from trajviz.tool_vocab import (
     BASH_TOOL_NAMES,
     WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES,
@@ -243,18 +243,15 @@ def detect_tool_sequences(
 # ---------------------------------------------------------------------------
 
 def _step_has_success(step: dict) -> bool:
-    """Return True if the step has at least one successful tool call."""
-    for tc in step.get("tool_calls", []):
-        status = tc.get("status", "")
-        if status and status not in ("error", "failed", "failure", "cancelled", "timeout"):
-            return True
-        # No explicit error status and no bad exit code -> treat as success
-        meta = tc.get("metadata", {})
-        if not isinstance(meta, dict):
-            meta = {}
-        if status == "" and meta.get("exit", 0) in (None, 0):
-            return True
-    return False
+    """Return True if the step has at least one successful tool call.
+
+    Delegates to ``tool_failure.step_has_success`` so the recovery walk shares
+    one definition of "failed" with every other surface. The local copy this
+    replaces was case-sensitive and consulted the exit code only when the
+    status was blank, which made OpenCode's ``completed`` + non-zero
+    ``metadata.exit`` read as a success here and a failure everywhere else.
+    """
+    return step_has_success(step)
 
 
 def detect_failure_patterns(steps: list[dict]) -> list[dict]:
