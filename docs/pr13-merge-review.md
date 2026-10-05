@@ -222,7 +222,7 @@ An architecture walkthrough of the whole package surfaced 66 candidate gaps.
 Each was triaged against the live tree with its blast radius measured *before*
 any edit: **53 fix-safe, 8 document-only, 4 number-moving, 1 not a defect**. All
 66 are now dispositioned. Suite **844 → 998 passing**, 2 skipped, **xfails
-6 → 0**, ruff clean, DECAF present so the 39 attribution tests ran.
+6 → 0**, ruff clean, DECAF present so the environment-gated attribution tests ran.
 
 Measurements below come from a differential over 2,500 real trajectory exports
 (500 each from Claude Code, Codex and three OpenCode model variants), run under
@@ -293,7 +293,12 @@ stale.** The direction is toward honesty in both cases.
 
 ### Still not possible without a secret
 
-The 39 DECAF-gated tests remain outside CI. This repository is public and the
+The DECAF-gated tests remain outside CI — **38** of them, measured by blocking
+the `awe` import and diffing the run: 14 in `test_attribution.py`, 20 in
+`test_attribution_live.py`, 3 in `test_concurrency_isolation.py` and 1 in
+`test_dsh_source_identity.py`. (An earlier note in this file said 39; that
+counted a `test_attribution_ui.py` case which is gated on absent reference data
+rather than on `awe`.) This repository is public and the
 repository carrying `DECAF/awe` is private, so the checkout needs a credential
 and every credential is a secret — there is no token-free variant. Vendoring
 `awe` would publish an unpublished method into a public repository; stubbing it

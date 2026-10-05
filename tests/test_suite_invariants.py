@@ -173,14 +173,25 @@ class SuiteInvariantTests(unittest.TestCase):
 class EnvironmentGatedCoverageTests(unittest.TestCase):
     """Guards for the two ways coverage can shrink without a failing test."""
 
-    # Attribution tests only run where the optional DECAF integration is
-    # importable, so they are invisible in a default run. Pinned by count so
-    # they cannot be deleted, renamed out of the convention, or un-gated
-    # silently — the usual way a skipped block quietly becomes an empty one.
+    # Test-function inventory of every module holding environment-gated tests.
+    # Those tests only run where the optional DECAF integration is importable,
+    # so whatever skips is invisible in a default run — which is exactly how a
+    # skipped block quietly becomes an empty one. Pinning the count means the
+    # modules cannot be deleted, renamed out of the convention, or un-gated
+    # without someone editing this list on purpose. Not every test counted here
+    # skips; the inventory is the guard, not the skip set.
+    #
+    # Measured by blocking the ``awe`` import and diffing the run: 38 tests go
+    # from passing to skipped — 14 in test_attribution, 20 of the 21 in
+    # test_attribution_live, 3 in test_concurrency_isolation, and 1 of the 8 in
+    # test_dsh_source_identity. test_attribution_ui is gated on absent reference
+    # data rather than on ``awe``, which is why it is in this pin but not in
+    # that 38.
     _GATED_MODULES = {
         "test_attribution.py": 14,
         "test_attribution_live.py": 21,
         "test_attribution_ui.py": 3,
+        "test_dsh_source_identity.py": 8,
     }
 
     def test_the_decaf_gated_test_inventory_is_the_pinned_one(self):
