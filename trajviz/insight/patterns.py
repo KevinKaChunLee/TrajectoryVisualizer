@@ -26,10 +26,16 @@ _PHASE_RANK: dict[str, int] = {name: i for i, name in enumerate(_PHASE_ORDER)}
 # Cap to avoid pathological inputs
 _MAX_STEPS = 2000
 
-_PLAN_TOOL_NAMES = {
-    "TodoWrite", "todowrite", "TodoUpdate", "TaskCreate", "TaskUpdate",
-    "TaskList", "EnterPlanMode",
-}
+# Lowercased, and compared only through _is_plan_tool. This vocabulary used to
+# be written twice — an exact-spelling set here for the phase classifier and a
+# separate lowercase tuple inside extract_plan_history — so the two disagreed in
+# both directions: "TodoUpdate" set the plan phase but produced no plan history,
+# "todo_write" produced plan history but never the plan phase. One set, one
+# comparison, so a new spelling only has to be added here.
+_PLAN_TOOL_NAMES = frozenset({
+    "todowrite", "todo_write", "todoupdate", "taskcreate", "taskupdate",
+    "tasklist", "enterplanmode",
+})
 _READ_TOOL_NAMES = {"Read", "read", "WebFetch"}
 _SEARCH_TOOL_NAMES = {
     *BASH_TOOL_NAMES,
@@ -41,6 +47,11 @@ _VALIDATION_COMMAND_PATTERNS = (
     "mvn test", "gradle test", "bazel test", "make test", "ctest", "ruff",
     "flake8", "pylint", "mypy", "eslint", "lint", "check", "verify",
 )
+
+
+def _is_plan_tool(tool_name: object) -> bool:
+    """Return True when a tool name is a plan/TODO tool, in any export's casing."""
+    return str(tool_name or "").lower() in _PLAN_TOOL_NAMES
 
 
 def _has_plan_snapshot(step: dict) -> bool:
@@ -84,7 +95,7 @@ def classify_structural_phase(step: dict) -> str:
 
     for tc in tool_calls:
         tool_name = tc.get("tool_name", "")
-        if tool_name in _PLAN_TOOL_NAMES:
+        if _is_plan_tool(tool_name):
             has_plan_tool = True
         if tool_name in _WRITE_TOOL_NAMES:
             has_write = True
@@ -341,8 +352,11 @@ def detect_phase_anomalies(
     -------
     list[dict]
         Each entry: ``{"from_phase": str, "to_phase": str, "step_idx": int,
-        "confidence": float, "category": str, "explanation": str}``.
+        "span_fraction": float, "category": str, "explanation": str}``.
         ``category`` is ``"intentional_iteration"`` or ``"unintentional_drift"``.
+        ``span_fraction`` is the share of the trajectory the regressed phase
+        covers — a size, deliberately NOT named ``confidence``: it shrinks as
+        the regression gets shorter, which is the opposite of certainty.
     """
     if not phases or not steps:
         return []
@@ -371,14 +385,14 @@ def detect_phase_anomalies(
         if curr_rank < prev_rank:
             transition_step = curr_phase.get("start_idx", 0)
             regressed_steps = curr_phase.get("end_idx", transition_step) - transition_step + 1
-            confidence = round(regressed_steps / total_steps, 4) if total_steps > 0 else 0.0
+            span_fraction = round(regressed_steps / total_steps, 4) if total_steps > 0 else 0.0
 
             # Categorize: check if a planning step precedes the regression
             category = "unintentional_drift"
             window_start = max(0, transition_step - 3)
             for s in steps[window_start:transition_step]:
                 for tc in s.get("tool_calls", []):
-                    if tc.get("tool_name") in _PLAN_TOOL_NAMES:
+                    if _is_plan_tool(tc.get("tool_name")):
                         category = "intentional_iteration"
                         break
                 if category == "intentional_iteration":
@@ -390,14 +404,14 @@ def detect_phase_anomalies(
                     f"at step {transition_step}. "
                     f"A planning step precedes the transition, suggesting "
                     f"intentional iteration (spans {regressed_steps} step(s), "
-                    f"{confidence * 100:.1f}% of trajectory)."
+                    f"{span_fraction * 100:.1f}% of trajectory)."
                 )
             else:
                 explanation = (
                     f"Backward transition from '{prev_name}' to '{curr_name}' "
                     f"at step {transition_step}. "
                     f"The regressed phase spans {regressed_steps} step(s) "
-                    f"({confidence * 100:.1f}% of trajectory), "
+                    f"({span_fraction * 100:.1f}% of trajectory), "
                     f"suggesting rework or unexpected context switch."
                 )
 
@@ -405,7 +419,7 @@ def detect_phase_anomalies(
                 "from_phase": prev_name,
                 "to_phase": curr_name,
                 "step_idx": transition_step,
-                "confidence": confidence,
+                "span_fraction": span_fraction,
                 "category": category,
                 "explanation": explanation,
             })
@@ -427,8 +441,11 @@ def extract_plan_history(steps: list[dict]) -> list[dict]:
     for s in steps[:_MAX_STEPS]:
         for tc in s.get("tool_calls", []):
             name = tc.get("tool_name") or tc.get("name", "")
-            # Match TodoWrite (Claude Code), todowrite (OpenCode), TaskCreate, etc.
-            if name.lower() not in ("todowrite", "todo_write", "taskcreate", "taskupdate"):
+            # Same vocabulary as the phase classifier: TodoWrite (Claude Code),
+            # todowrite (OpenCode), TaskCreate, EnterPlanMode, ... Plan-mode
+            # tools that carry no todo list are dropped by the guard below, so a
+            # wider vocabulary cannot invent snapshots.
+            if not _is_plan_tool(name):
                 continue
             inp = tc.get("input", tc.get("arguments", {}))
             if not isinstance(inp, dict):
@@ -681,6 +698,19 @@ def _is_fruitless_step(step: dict) -> bool:
     Supports two detection methods:
     1. tool_call output/result is empty or contains no matches
     2. tool_call status indicates no results
+
+    Known conflation, deliberately left in place: an absent output is read as an
+    empty one, so a search call that never resolved (cursor records
+    ``status: "unknown"`` with no output) or that outright failed
+    (``status: "error"``) counts as fruitless alongside a search that genuinely
+    found nothing. ``parse_steps`` always materialises ``output`` (parser.py
+    defaults it to ``""``), which is why the corpus exposure is small: 3 of 137
+    opencode fruitless steps, 0 on claude_code and codex. Tightening it — skip
+    any ``tc`` where ``tool_call_failed(tc)`` or the status is pending/unknown,
+    and return False once no resolved search call remains — would shorten
+    ``fruitless_streaks`` and the wasted-step total the Overview and the paper
+    report, so changing this is a published-number decision, not a cleanup.
+    Characterised in tests/test_patterns_predicates.py.
     """
     tool_calls = step.get("tool_calls", [])
     if not tool_calls:
@@ -750,22 +780,6 @@ def detect_fruitless_streaks(steps: list[dict]) -> list[dict]:
         streaks.append(current_streak)
 
     return streaks
-
-
-def compute_autonomy_ratio(steps: list[dict]) -> float:
-    """Compute autonomy ratio from trigger fields.
-
-    Returns ratio of autonomous steps to total assistant steps (0.0 to 1.0).
-    Falls back to 1 - (user_steps / total_steps) if trigger field is absent.
-    """
-    assistant_steps = [s for s in steps if s.get("role") == "assistant"]
-    if not assistant_steps:
-        return 0.0
-
-    # Autonomy = share of turns not directly driven by the user.
-    user_steps = sum(1 for s in steps if s.get("role") == "user")
-    total = len(steps)
-    return round(1.0 - (user_steps / total), 4) if total > 0 else 0.0
 
 
 def detect_tool_selection_antipatterns(steps: list[dict]) -> list[dict]:
