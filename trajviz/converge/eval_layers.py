@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .divergence import count_patterns
+
 
 # ---------------------------------------------------------------------------
 # Layer definitions
@@ -67,8 +69,7 @@ def _extract_layer_metric(
     source = metric_def.get("source")
 
     if source == "patterns":
-        ptype = metric_def["pattern_type"]
-        return sum(1 for p in patterns if p.get("type") == ptype or p.get("parent_type") == ptype)
+        return count_patterns(patterns, metric_def["pattern_type"])
 
     if source == "anchor" and anchor_analysis:
         key = metric_def["key"]

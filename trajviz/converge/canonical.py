@@ -11,6 +11,10 @@ from trajviz.tool_vocab import BASH_TOOL_NAMES as _BASH_TOOLS, WRITE_TOOL_NAMES 
 # stdlib/tool_vocab at module level, so there is no import cycle.
 from trajviz.insight.diagnostics import _extract_bash_paths
 from trajviz.insight.patterns import _is_validation_command
+# D3: failure detection is tool_failure.py's job. These two call sites hold a
+# bare status *string* rather than a whole tool-call dict, so they use
+# status_failed rather than tool_call_failed.
+from trajviz.insight.tool_failure import status_failed
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +380,7 @@ def assign_effect_labels(
                                 import_files.add(norm)
             error_text = tc.get("error", "")
             status = tc.get("status", "")
-            if not error_text and status in ("error", "failed", "failure"):
+            if not error_text and status_failed(status):
                 error_text = tc.get("output", "")
             if isinstance(error_text, str) and error_text:
                 for path in _extract_bash_paths(error_text):
@@ -402,7 +406,7 @@ def assign_effect_labels(
             continue
 
         # Failed: tool errored or bad exit code
-        if a.status in ("error", "failed", "failure", "cancelled", "timeout"):
+        if status_failed(a.status):
             a.effect_label = "failed"
             a.effect_detail["reason"] = "tool_status_error"
             continue

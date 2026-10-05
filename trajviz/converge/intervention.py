@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .batch import BatchResult
+from .divergence import count_patterns
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +96,12 @@ def _extract_metric(report: dict, metric_name: str) -> float | None:
 
 
 def _count_pattern(report: dict, pattern_type: str) -> int:
-    """Count occurrences of a pattern type in a report."""
-    return sum(1 for p in report.get("patterns", []) if p.get("type") == pattern_type)
+    """Count occurrences of a pattern type in a report.
+
+    Delegates to the shared predicate so this and eval_layers cannot disagree
+    about umbrella types such as 'write_retry' (C4).
+    """
+    return count_patterns(report.get("patterns", []), pattern_type)
 
 
 # ---------------------------------------------------------------------------
@@ -150,13 +155,21 @@ def compute_metric_deltas(
 def compute_pattern_deltas(
     paired: list[tuple[BatchResult, BatchResult]],
 ) -> dict[str, dict[str, Any]]:
-    """Compute pattern frequency deltas between before and after batches."""
+    """Compute pattern frequency deltas between before and after batches.
+
+    Candidate keys include each pattern's ``parent_type`` as well as its
+    ``type`` (C4): without it the umbrella 'write_retry' never became a key and
+    its PATTERN_DIRECTIONS entry was dead. This is additive — the per-``type``
+    entries keep their previous frequencies.
+    """
     all_types: set[str] = set()
     for br, ar in paired:
         for p in br.report.get("patterns", []):
             all_types.add(p.get("type", ""))
+            all_types.add(p.get("parent_type") or "")
         for p in ar.report.get("patterns", []):
             all_types.add(p.get("type", ""))
+            all_types.add(p.get("parent_type") or "")
 
     deltas: dict[str, dict] = {}
     total = len(paired)

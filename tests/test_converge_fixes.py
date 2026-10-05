@@ -14,6 +14,9 @@ Covers:
 - B28: batch _percentile uses true nearest-rank (ceil), not a truncated index.
 - R22: the HTML report includes the anchor-analysis section when present.
 - B15 (producer): run_comparison returns an explicit "ok" field.
+- C1: that "ok" field is False for a trajectory that parses to zero steps —
+      the same guard build_comparison_report has. The success case must use a
+      trajectory that actually HAS steps, otherwise the test pins the defect.
 """
 
 import os
@@ -297,27 +300,54 @@ class AnchorSectionRenderingTests(unittest.TestCase):
         self.assertNotIn("Anchor Analysis", html)
 
 
+# A trajectory the parser actually yields a step for. The success case has to
+# use this rather than `{"trajectory": []}` (C1): a zero-step input is exactly
+# what run_comparison must now refuse, so asserting ok True on it pinned the bug.
+_ONE_STEP = {
+    "trajectory": [
+        {"role": "assistant", "finish": "stop",
+         "parts": [{"type": "text", "text": "hi"}]},
+    ],
+}
+
+
 class RunComparisonOkContractTests(unittest.TestCase):
     """B15 producer side: run_comparison reports success explicitly."""
 
     def test_success_returns_ok_true(self):
-        result = run_comparison({"trajectory": []}, {"trajectory": []})
+        result = run_comparison(dict(_ONE_STEP), dict(_ONE_STEP))
         self.assertIs(result["ok"], True)
         self.assertTrue(result["report_html"])
 
+    def test_empty_steps_returns_ok_false(self):
+        """C1: a zero-step trajectory must not produce a zero-valued report."""
+        result = run_comparison({"trajectory": []}, dict(_ONE_STEP))
+        self.assertIs(result["ok"], False)
+        self.assertIn("no steps parsed", result["report_html"])
+
+    def test_non_trajectory_json_object_returns_ok_false(self):
+        """C1: the `_error`-free door — valid JSON that is not a trajectory.
+
+        Mirrors tests/test_converge_load_errors.py's assertion for the
+        file-path entry point, which raises ValueError on the same input.
+        """
+        result = run_comparison({"hello": "world"}, dict(_ONE_STEP))
+        self.assertIs(result["ok"], False)
+        self.assertIn("no steps parsed", result["report_html"])
+
     def test_reference_load_error_returns_ok_false(self):
-        result = run_comparison({"_error": "not json"}, {"trajectory": []})
+        result = run_comparison({"_error": "not json"}, dict(_ONE_STEP))
         self.assertIs(result["ok"], False)
         self.assertIn("Error loading reference trajectory", result["report_html"])
 
     def test_compared_load_error_returns_ok_false(self):
-        result = run_comparison({"trajectory": []}, {"_error": "truncated"})
+        result = run_comparison(dict(_ONE_STEP), {"_error": "truncated"})
         self.assertIs(result["ok"], False)
         self.assertIn("Error loading compared trajectory", result["report_html"])
 
     def test_pipeline_exception_returns_ok_false(self):
         # cmp_raw=None raises inside the try block ("_error" in None)
-        result = run_comparison({"trajectory": []}, None)
+        result = run_comparison(dict(_ONE_STEP), None)
         self.assertIs(result["ok"], False)
         self.assertIn("Comparison failed", result["report_html"])
 

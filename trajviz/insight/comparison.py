@@ -7,6 +7,7 @@ dicts, parses the optional anchor patch via the shared helper, and renders the
 HTML report.
 """
 
+import html
 import traceback
 
 from trajviz.insight.parser import parse_steps
@@ -15,6 +16,7 @@ from trajviz.converge.alignment import (
     DEFAULT_TOKEN_RATE,
     _parse_anchor_files,
     build_comparison_report_from_steps,
+    empty_steps_reason,
 )
 from trajviz.converge.rendering import build_comparison_report_html
 
@@ -26,6 +28,8 @@ def run_comparison(
     token_rate: float = DEFAULT_TOKEN_RATE,
     fuzzy: bool = False,
     dark: bool = False,
+    ref_labels: dict[int, dict[str, str]] | None = None,
+    cmp_labels: dict[int, dict[str, str]] | None = None,
 ) -> dict:
     """Run Converge's full comparison pipeline.
 
@@ -47,6 +51,12 @@ def run_comparison(
     dark : bool
         Unused (the HTML report is theme-agnostic); retained for API
         stability with the Insight caller.
+    ref_labels, cmp_labels : dict or None
+        Optional step-index → {'phase', 'action'} maps from the step labeler.
+        When supplied, CanonicalActions carry phase/action labels and
+        divergence confidence scoring becomes phase-aware (C7). Opt-in on
+        purpose: the batch/corpus path must stay label-free so its published
+        ``patterns[].confidence`` values are not retroactively rescored.
 
     Returns
     -------
@@ -55,8 +65,9 @@ def run_comparison(
             The rendered comparison report (or an error banner on failure).
         ok : bool
             True when the comparison ran to completion; False when a
-            trajectory failed to load or the pipeline raised (B15's
-            producer side — the caller branches its status line on this).
+            trajectory failed to load, parsed to no steps, or the pipeline
+            raised (B15's producer side — the caller branches its status
+            line on this).
     """
     empty = {"report_html": "", "ok": False}
 
@@ -77,6 +88,24 @@ def run_comparison(
         ref_steps = parse_steps(ref_raw)
         cmp_steps = parse_steps(cmp_raw)
 
+        # The `_error` checks above are not enough (C1): `load_trajectory`
+        # returns an unrecognised JSON *object* with no `_error` at all, and it
+        # then scores 0.0 on every metric. Same shared guard the file-path
+        # entry point raises on, so the two cannot drift again.
+        for label, raw, steps in (
+            ("reference", ref_raw, ref_steps),
+            ("compared", cmp_raw, cmp_steps),
+        ):
+            reason = empty_steps_reason(
+                label, raw, raw.get("_source_path", ""), steps)
+            if reason:
+                # Escaped: the reason quotes the uploaded file's path.
+                empty["report_html"] = (
+                    f"<div style='color:var(--ov-bad);padding:1em;'>"
+                    f"{html.escape(reason)}</div>"
+                )
+                return empty
+
         report = build_comparison_report_from_steps(
             ref_raw, cmp_raw, ref_steps, cmp_steps,
             token_rate=token_rate,
@@ -84,6 +113,8 @@ def run_comparison(
             anchor_files=_parse_anchor_files(anchor_path),
             ref_path=ref_raw.get("_source_path", ""),
             cmp_path=cmp_raw.get("_source_path", ""),
+            ref_labels=ref_labels,
+            cmp_labels=cmp_labels,
         )
 
         # Render HTML report. The Insight UI's Comparison tab suppresses the

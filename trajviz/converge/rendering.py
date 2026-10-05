@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 
+from .milestones import MILESTONE_LABELS
 from .styles import CONVERGE_CSS
 
 
@@ -181,13 +182,6 @@ def build_comparison_report_html(report: dict) -> str:
     ref_ms = report.get("ref_milestones", {}) or {}
     cmp_ms = report.get("cmp_milestones", {}) or {}
     if ref_ms or cmp_ms:
-        _MILESTONE_LABELS = {
-            "first_relevant_file": "First Relevant File",
-            "first_edit": "First Edit",
-            "first_surviving_edit": "First Surviving Edit",
-            "first_passing_validation": "First Passing Validation",
-            "final_patch": "Final Patch",
-        }
         # Preserve the milestone order from the reference side; append any
         # keys that only appear in the compared side.
         ordered_keys = list(ref_ms.keys())
@@ -205,7 +199,7 @@ def build_comparison_report_html(report: dict) -> str:
                      f"<th>{_esc(cmp_filename)}</th></tr></thead>")
         parts.append("<tbody>")
         for name in ordered_keys:
-            label = _MILESTONE_LABELS.get(name, name.replace("_", " ").title())
+            label = MILESTONE_LABELS.get(name, name.replace("_", " ").title())
             parts.append(f"<tr><td>{_esc(label)}</td>"
                          f"<td>{_esc(_fmt_step(ref_ms.get(name)))}</td>"
                          f"<td>{_esc(_fmt_step(cmp_ms.get(name)))}</td></tr>")

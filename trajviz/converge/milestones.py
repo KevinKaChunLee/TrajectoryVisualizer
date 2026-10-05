@@ -13,6 +13,31 @@ DEFAULT_VALIDATION_PATTERNS = {"test", "build", "lint", "check", "verify"}
 
 
 # ---------------------------------------------------------------------------
+# Milestone identity
+# ---------------------------------------------------------------------------
+
+# Defined here, next to extract_milestones, as the single source of truth (C5):
+# charts.py and rendering.py each used to carry their own copy. The list also
+# fixes the display ORDER of the milestone timeline, which is why it is a list
+# and not just the label map's keys.
+MILESTONE_NAMES = [
+    "first_relevant_file",
+    "first_edit",
+    "first_surviving_edit",
+    "first_passing_validation",
+    "final_patch",
+]
+
+MILESTONE_LABELS = {
+    "first_relevant_file": "First Relevant File",
+    "first_edit": "First Edit",
+    "first_surviving_edit": "First Surviving Edit",
+    "first_passing_validation": "First Passing Validation",
+    "final_patch": "Final Patch",
+}
+
+
+# ---------------------------------------------------------------------------
 # Milestone extraction
 # ---------------------------------------------------------------------------
 
