@@ -48,6 +48,13 @@ def _metrics(steps):
 # The real shape: total == input + output + cache_read, with input negative.
 CORRUPT = [_step(i, total=1909, inp=-10739, output=248, cache_read=12400) for i in range(3)]
 HEALTHY = [_step(i, total=10000, inp=2000, output=500, cache_read=7500) for i in range(3)]
+# One healthy agent beside one corrupt one, so the per-agent accumulation is
+# exercised rather than the single-group degenerate case.
+MIXED_AGENTS = (
+    [_step(i, total=10000, inp=2000, output=500, cache_read=7500, agent="main") for i in range(2)]
+    + [_step(i + 2, total=1909, inp=-10739, output=248, cache_read=12400, agent="worker")
+       for i in range(2)]
+)
 
 
 class DomainHelpers(unittest.TestCase):
@@ -99,6 +106,42 @@ class CorruptRecordsDoNotProduceNumbers(unittest.TestCase):
             if pct is not None:
                 self.assertLessEqual(pct, 100)
 
+    def test_agent_summary_never_sums_an_unusable_token_count(self):
+        # The Agents tab used to report Input -3,175,801 for a session whose
+        # Overview already said "partial": the share was domain-checked but the
+        # raw `+=` underneath it was not.
+        rows = compute_agent_summary(CORRUPT, {})
+        self.assertEqual(len(rows), 1)
+        for a in rows:
+            for key in ("total_tokens", "input_tokens", "output_tokens",
+                        "reasoning_tokens", "cache_read_tokens"):
+                with self.subTest(key=key):
+                    self.assertGreaterEqual(a[key], 0)
+            self.assertEqual(a["input_tokens_unusable_steps"], 3)
+            self.assertEqual(a["token_unusable_steps"]["input"], 3)
+            # Single agent, so the row has to reconcile with the session total.
+            self.assertEqual(a["input_tokens"], self.m["tokens"]["input"])
+            self.assertEqual(a["total_tokens"], self.m["tokens"]["total"])
+
+    def test_per_agent_rejection_is_scoped_to_the_agent_that_reported_it(self):
+        rows = {a["agent_id"]: a for a in compute_agent_summary(MIXED_AGENTS, {})}
+        self.assertEqual(rows["main"]["input_tokens"], 4000)
+        self.assertEqual(rows["main"]["input_tokens_unusable_steps"], 0)
+        self.assertEqual(rows["worker"]["input_tokens"], 0)
+        self.assertEqual(rows["worker"]["input_tokens_unusable_steps"], 2)
+        session = _metrics(MIXED_AGENTS)
+        self.assertEqual(
+            sum(a["input_tokens"] for a in rows.values()), session["tokens"]["input"]
+        )
+
+    def test_per_message_rows_agree_with_the_session_out_in_ratio(self):
+        # The third member of the family: analytics.py and the session dict both
+        # withhold the ratio without a positive input; the row divided by a
+        # max(1, ...) floor and published a confident 0.248/1 instead.
+        for row in build_message_metrics(CORRUPT):
+            if row["tokens_input"] <= 0:
+                self.assertIsNone(row["output_input_ratio"])
+
     def test_no_surface_renders_a_literal_none_or_a_negative(self):
         import re
 
@@ -116,6 +159,8 @@ class HealthyRecordsAreUnaffected(unittest.TestCase):
         self.assertEqual(m["input_tokens"], 6000)
         self.assertEqual(m["input_tokens_unusable_steps"], 0)
         self.assertEqual(m["output_input_ratio"], 0.25)
+        for row in build_message_metrics(HEALTHY):
+            self.assertEqual(row["output_input_ratio"], row["tokens_output"] / row["tokens_input"])
         v = [x for x in compute_health_verdict(m, compute_step_analytics(HEALTHY))
              if x["metric"] == "Cache Efficiency"][0]
         self.assertEqual(v["status"], "good")

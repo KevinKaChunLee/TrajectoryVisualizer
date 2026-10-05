@@ -2,6 +2,7 @@
 
 import math
 import statistics
+from collections.abc import Callable
 
 from trajviz.tool_vocab import SPAWN_TOOL_NAMES
 
@@ -267,14 +268,40 @@ def step_duration_excluding_spawn(step: dict) -> float | None:
     return max(0.0, float(raw) - spawn_wait_seconds(step))
 
 
+def tool_call_window_ms(tc: dict) -> tuple[float, float] | None:
+    """Absolute ``(start, end)`` ms window of one tool call, or ``None``.
+
+    Uses the SAME fallback order as :func:`tool_call_duration_ms` — part
+    wall-clock (``time_created``/``time_updated``) before the execution window
+    (``time_start``/``time_end``). That identity is the point: a caller that
+    admits a call using ``tool_call_duration_ms`` and then measures a narrower
+    pair is unioning a different quantity than the one it gated on.
+    """
+    for lo_key, hi_key in (("time_created", "time_updated"), ("time_start", "time_end")):
+        lo, hi = tc.get(lo_key), tc.get(hi_key)
+        if (
+            isinstance(lo, (int, float))
+            and isinstance(hi, (int, float))
+            and not isinstance(lo, bool)
+            and not isinstance(hi, bool)
+            and hi >= lo
+        ):
+            return float(lo), float(hi)
+    return None
+
+
 def non_spawn_tool_seconds(step: dict) -> float:
     """Wall-clock consumed by timed non-spawn tool calls on *step* (seconds).
 
     Agents issue tool calls in parallel within one step, so summing per-call
     durations double-counts the overlap and can exceed the step's own wall
-    clock. Where the format stamps ``time_start``/``time_end`` the union of
-    those windows is exact, so that is used; calls carrying only a duration
-    still contribute their full length.
+    clock. Where the format stamps a window — part-level
+    ``time_created``/``time_updated`` or state-level ``time_start``/``time_end``,
+    in :func:`tool_call_window_ms` precedence — the union of those windows is
+    exact, so that is used. Calls carrying only a duration (Claude Code's
+    ``metadata.totalDurationMs``) have no window to union and still contribute
+    their full length, which leaves the result an upper bound for those
+    exports; that residual is a data limitation, not something measurable here.
     """
     windows: list[tuple[float, float]] = []
     unstamped = 0.0
@@ -284,15 +311,9 @@ def non_spawn_tool_seconds(step: dict) -> float:
         ms = tool_call_stats_duration_ms(tc)
         if ms is None:
             continue
-        ts, te = tc.get("time_start"), tc.get("time_end")
-        if (
-            isinstance(ts, (int, float))
-            and isinstance(te, (int, float))
-            and not isinstance(ts, bool)
-            and not isinstance(te, bool)
-            and te >= ts
-        ):
-            windows.append((float(ts), float(te)))
+        window = tool_call_window_ms(tc)
+        if window is not None:
+            windows.append(window)
         else:
             unstamped += ms / 1000.0
 
@@ -382,7 +403,10 @@ def build_message_metrics(steps: list[dict]) -> list[dict]:
             "cache_ratio": cache_read_share(cache_read, tok_total),
             "tokens_per_sec": (tok_total / duration) if duration and duration > 0 else None,
             "non_cache_per_sec": (non_cache / duration) if duration and duration > 0 else None,
-            "output_input_ratio": (tok_output / max(1, tok_input)),
+            # Same domain rule as the session total and analytics.py: without a
+            # positive input there is no ratio. The `max(1, ...)` floor this
+            # replaces published the output count itself as a ratio.
+            "output_input_ratio": (tok_output / tok_input) if tok_input > 0 else None,
             "tool_calls": s.get("tool_call_count", 0),
             "errors": s.get("error_count", 0),
             "tool_time_sum": tool_time_sum,
@@ -419,7 +443,16 @@ def _compute_command_metrics(steps: list[dict]) -> dict:
 
 
 def _compute_timing_metrics(steps: list[dict]) -> dict:
-    """Compute TTFT, output throughput, TTLT, and timing coverage.
+    """Compute response latency, output throughput, and timing coverage.
+
+    ``time_to_first_token`` / ``time_to_last_token`` are **response latencies**,
+    not token-level measurements despite their names: each is the first user
+    message's creation stamp to the first (resp. last) assistant message's
+    *completion* stamp, so the whole turn is inside the figure. No supported
+    export records streaming or first-delta timing — the step model carries
+    only ``time_created_ms``/``time_completed_ms`` — so a true time-to-first-token
+    is not computable here. The names are kept because they are in published
+    corpus output and in the released artifact copy.
 
     Output throughput uses output tokens and generation time from the exact
     same set of assistant steps.  This prevents untimed output (which is
@@ -484,6 +517,8 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
 
     result: dict = {}
     if first_user_created is not None and first_asst_completed is not None:
+        # First-response latency: the first assistant turn is COMPLETE at this
+        # point, so this is not a time-to-first-token (see the docstring).
         result["time_to_first_token"] = round((first_asst_completed - first_user_created) / 1000, 3)
     else:
         result["time_to_first_token"] = None
@@ -506,6 +541,7 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
     result["output_throughput_tool_wait_seconds"] = round(timed_tool_wait, 3)
 
     if first_user_created is not None and last_asst_completed is not None:
+        # Full-response latency, same caveat: last assistant message completed.
         result["time_to_last_token"] = round((last_asst_completed - first_user_created) / 1000, 3)
     else:
         result["time_to_last_token"] = None
@@ -572,7 +608,15 @@ def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw)
         "tokens": total_tokens,
         "non_cache_tokens": non_cache_total,
         "non_cache_ratio": round(non_cache_total / total_tokens["total"] * 100, 1) if total_tokens["total"] else 0,
+        # Two "per step" averages on purpose. `avg_tokens_per_step` divides by
+        # ALL steps (user turns included, which report no tokens) and is kept
+        # emitted for continuity with published results. Only the assistant
+        # variant shares a denominator with median_step_tokens / p95_step_tokens
+        # below, so that is the one to compare against them.
         "avg_tokens_per_step": round(total_tokens["total"] / len(steps)) if steps else 0,
+        "avg_tokens_per_assistant_step": (
+            round(total_tokens["total"] / len(assistant_rows)) if assistant_rows else 0
+        ),
         "tokens_per_second": round(total_tokens["total"] / total_duration, 1) if total_duration else 0,
         # Meaningless without a real input total: `max(1, 0)` turned a session
         # whose every input was rejected into "Out/In 9184.0".
@@ -635,9 +679,13 @@ def _compute_tool_stats(steps, total_tokens_total, message_rows, wait_denom: flo
             tool_status_breakdown[status] = tool_status_breakdown.get(status, 0) + 1
             if tool_call_failed(tc):
                 tool_fail += 1
-            elif str(status).lower() in {"?", "unknown", ""}:
-                tool_success += 1
             else:
+                # A call carrying no failure signal — no failure status, no
+                # error/error_type, no non-zero metadata.exit — scores as a
+                # success, so an in-flight or never-stamped call is optimistic
+                # by design. `tool_failure.tool_call_failed` is the single
+                # source of truth for that judgement; do not reintroduce a
+                # status allow-list here, it can only drift away from it.
                 tool_success += 1
             v = tool_call_stats_duration_ms(tc)
             if v is not None:
@@ -765,38 +813,83 @@ def session_wall_clock_seconds(
     return span if span > 0 else None
 
 
+TOKEN_FIELDS = ("total", "input", "output", "reasoning", "cache_read", "cache_write")
+
+
+def sum_usable_tokens(
+    steps: list[dict],
+    *,
+    predicate: Callable[[dict], bool] | None = None,
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Sum per-step token fields, returning ``(totals, unusable_step_counts)``.
+
+    Every token total in TrajViz goes through here, and here goes through
+    ``parser.usable_token_count``: a negative input (OpenCode double-subtracts
+    the cache read against providers whose ``input_tokens`` is already
+    cache-exclusive) is not a token count and must not be summed — it dragged a
+    reported session Input to -3,175,801. Rejected steps are counted per field
+    so the surfaces can say "partial" instead of printing a confident wrong
+    total, or clamping it to a false zero.
+
+    *predicate* restricts the steps counted (per-agent rows pass the agent
+    test). Written as one helper rather than two accumulators because the
+    per-agent sum previously bypassed the domain check and published the
+    negative that the session total had already rejected.
+    """
+    from .parser import usable_token_count
+
+    totals: dict[str, int] = dict.fromkeys(TOKEN_FIELDS, 0)
+    unusable: dict[str, int] = dict.fromkeys(TOKEN_FIELDS, 0)
+    for s in steps:
+        if predicate is not None and not predicate(s):
+            continue
+        tokens = s.get("tokens") or {}
+        for k in TOKEN_FIELDS:
+            reported = tokens.get(k)
+            if reported in (None, 0):
+                continue
+            usable = usable_token_count(reported)
+            if usable is None:
+                unusable[k] += 1
+                continue
+            totals[k] += usable
+    return totals, unusable
+
+
 def compute_metrics(steps: list[dict], raw: dict, message_rows: list[dict] | None = None) -> dict:
-    """Aggregate metrics from parsed steps and raw trajectory."""
+    """Aggregate metrics from parsed steps and raw trajectory.
+
+    **Rate metrics come in two denominator families, and the dict does not
+    otherwise say which one a value used.**
+
+    - *Per model time*, divided by ``total_duration`` = the sum of per-step
+      durations: ``tokens_per_second``, ``median_tokens_per_second``.
+    - *Per session wall clock*, divided by ``wall_clock``: ``tool_wait_share``,
+      ``tool_calls_per_min``, ``tool_time_fraction``.
+
+    The two bases are not interchangeable: summed step durations double-count a
+    parent blocked on an overlapping sub-agent, so they differ from wall-clock
+    on roughly 90% of real sessions and by up to 15x. Wall-clock is the only
+    base on which a share cannot exceed 1, which is why the tool shares use it
+    and must not be moved. Conversely ``tokens_per_second`` divides the
+    cumulative cache-read context (re-counted every turn) by elapsed time and
+    is inflated ~(#turns)x, so health verdicts use ``output_tokens_per_sec``
+    (output tokens per second of model time) instead.
+    """
     if message_rows is None:
         message_rows = build_message_metrics(steps)
 
     # Duration stats
     durations = [s["duration"] for s in steps if s.get("duration") is not None]
     total_duration = sum(durations)
-    total_tokens = {"total": 0, "input": 0, "output": 0, "reasoning": 0,
-                    "cache_read": 0, "cache_write": 0}
-    from .parser import _optional_token_count, usable_token_count
+    # token_unusable is the per-field count of steps whose value was not a
+    # usable token count; see sum_usable_tokens for why they are dropped.
+    total_tokens, token_unusable = sum_usable_tokens(steps)
+    from .parser import _optional_token_count
 
-    reasoning_tokens_reported = False
-    # Per-field count of steps whose value was not a usable token count.
-    # A negative input (OpenCode double-subtracts the cache read against
-    # cache-exclusive providers) must not be summed: it dragged the reported
-    # session Input to -3,175,801. Rejected steps are counted so the surfaces
-    # can say "partial" instead of printing a confident wrong total.
-    token_unusable: dict[str, int] = dict.fromkeys(total_tokens, 0)
-    for s in steps:
-        tokens = s["tokens"]
-        if _optional_token_count(tokens, "reasoning") is not None:
-            reasoning_tokens_reported = True
-        for k in total_tokens:
-            reported = tokens.get(k)
-            if reported in (None, 0):
-                continue
-            usable = usable_token_count(reported)
-            if usable is None:
-                token_unusable[k] += 1
-                continue
-            total_tokens[k] += usable
+    reasoning_tokens_reported = any(
+        _optional_token_count(s["tokens"], "reasoning") is not None for s in steps
+    )
 
     timing = raw.get("timing", {}) if isinstance(raw.get("timing"), dict) else {}
     wall_clock = session_wall_clock_seconds(steps, timing)
@@ -1005,8 +1098,7 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
 
     # Accumulate per-agent stats
     stats: dict[str, dict] = defaultdict(lambda: {
-        "step_count": 0, "total_tokens": 0, "input_tokens": 0,
-        "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0,
+        "step_count": 0,
         "total_duration_s": 0.0, "tool_call_count": 0, "error_count": 0,
     })
     for s in steps:
@@ -1015,12 +1107,6 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
         agent = effective_agent(s)
         d = stats[agent]
         d["step_count"] += 1
-        tok = s.get("tokens", {})
-        d["total_tokens"] += tok.get("total", 0)
-        d["input_tokens"] += tok.get("input", 0)
-        d["output_tokens"] += tok.get("output", 0)
-        d["reasoning_tokens"] += tok.get("reasoning", 0)
-        d["cache_read_tokens"] += tok.get("cache_read", 0)
         dur = s.get("duration")
         if isinstance(dur, (int, float)):
             d["total_duration_s"] += dur
@@ -1043,13 +1129,29 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
             if tid:
                 tool_call_step_map[tid] = s.get("index", 0)
 
+    # Tokens go through the shared helper rather than a local `+=`: the Agents
+    # tab reported Input -3,175,801 for sessions whose Overview had already
+    # switched to "partial", because only the session total applied the domain
+    # check. Dropped steps are counted per agent for the same reason they are
+    # counted per session — a surface must be able to say the row is partial.
+    agent_tokens = {
+        agent_id: sum_usable_tokens(
+            steps,
+            predicate=lambda s, a=agent_id: (
+                s.get("role") == "assistant" and effective_agent(s) == a
+            ),
+        )
+        for agent_id in agent_order
+    }
+
     labels = disambiguate_agent_labels(agent_order, steps)
     result = []
     for agent_id in agent_order:
         d = stats[agent_id]
+        tok_totals, tok_unusable = agent_tokens[agent_id]
         label = labels.get(agent_id, agent_id if agent_id else "main")
-        total_tok = d["total_tokens"]
-        cache_read = d["cache_read_tokens"]
+        total_tok = tok_totals["total"]
+        cache_read = tok_totals["cache_read"]
         # Same domain rule as the session-level ratio: a share that exceeds 1
         # is not a share. Without this the Agents tab still rendered 9,987.5%
         # on the very sessions where the Overview had switched to n/a.
@@ -1067,10 +1169,12 @@ def compute_agent_summary(steps: list[dict], raw: dict) -> list[dict]:
             "label": label,
             "step_count": d["step_count"],
             "total_tokens": total_tok,
-            "input_tokens": d["input_tokens"],
-            "output_tokens": d["output_tokens"],
-            "reasoning_tokens": d["reasoning_tokens"],
+            "input_tokens": tok_totals["input"],
+            "output_tokens": tok_totals["output"],
+            "reasoning_tokens": tok_totals["reasoning"],
             "cache_read_tokens": cache_read,
+            "token_unusable_steps": tok_unusable,
+            "input_tokens_unusable_steps": tok_unusable["input"],
             "total_duration_s": round(dur, 2),
             "tool_call_count": d["tool_call_count"],
             "error_count": d["error_count"],
