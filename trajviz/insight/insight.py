@@ -5,6 +5,7 @@ from __future__ import annotations
 import gradio as gr
 
 from .llm_config import load_env_files
+from .styles import APP_CSS
 from .ui import (
     attribution_tab,
     comparison_tab,
@@ -18,6 +19,15 @@ from .ui import (
 from .ui.load import bind_load, merge_load_slots
 from .ui.shared import SharedState
 
+# Gradio 6 moved `css`/`head` from the Blocks constructor to `launch()` (passing
+# them to gr.Blocks is warned about and silently dropped), so `build_ui()` is
+# deliberately unstyled and every embedder must spread this at launch — without
+# it the page is served bare, including the light-mode pinning below.
+LAUNCH_PRESENTATION = {
+    "css": APP_CSS,
+    "head": '<meta name="color-scheme" content="light">',
+}
+
 
 def build_ui() -> gr.Blocks:
     """Build the full Gradio Blocks UI."""
@@ -26,6 +36,11 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="TrajViz", elem_classes=["trajectory-viz"]) as app:
         shared = SharedState(
             state_steps=gr.State([]),
+            # Light-only by design: the app.load handler below is the single
+            # writer of this State and pins it False, and APP_CSS declares
+            # `color-scheme: light`. `dark=` stays threaded through so the
+            # `--report --dark` CLI keeps working, and this State is where a
+            # future toggle would write (every chart would have to re-render).
             state_dark=gr.State(False),
             state_raw=gr.State({}),
             state_analysis_brief=gr.State(""),
@@ -58,14 +73,16 @@ def build_ui() -> gr.Blocks:
                 raw_tab: raw,
             },
         )
-        _load_ev, _upload_ev = bind_load(
+        # One Python load path; picking a file re-clicks Load in the browser.
+        # Everything chained off these events (export writer, sidebar hook,
+        # DECAF autodiagnosis) therefore runs once per gesture.
+        load_events = bind_load(
             file_upload=upload_refs.file_upload,
             load_btn=upload_refs.load_btn,
             format_selector=upload_refs.format_selector,
             state_dark=shared.state_dark,
             slots=slots,
         )
-        load_events = (_load_ev, _upload_ev)
         upload.bind_export(upload_refs, shared, load_events)
 
         sidebar.bind(sidebar_refs, shared, load_events)
@@ -259,7 +276,12 @@ def build_ui() -> gr.Blocks:
                             window.tvPushTabReturnPoint(window.tvActiveMainTab());
                         }, true);
                     };
-                    /* Executed by tests/test_workflow_detail_ui.py against a fake plot. */
+                    /* Test contract, not just a note: tests/test_workflow_detail_ui.py
+                       slices inspect.getsource(build_ui) between the __TV_BIND_JUMPS_*
+                       markers and runs the slice under Node (and tests/test_ui_resets.py
+                       checks the slice without Node). Keep both markers, keep exactly
+                       one top-level function between them, and let nothing follow its
+                       closing `};` — the slice is taken up to its LAST `};`. */
                     /* __TV_BIND_JUMPS_BEGIN__ */
                     window.tvBindChartWorkflowJumps = function () {
                         /* Rebind on every schedule: Gradio Plotly.react / newPlot

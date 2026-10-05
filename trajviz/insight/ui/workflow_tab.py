@@ -14,7 +14,7 @@ from ..presenters.workflow import (
 )
 from ..rendering import render_filter_chips
 from ..session import LoadedSession
-from .shared import SharedState
+from .shared import SharedState, safe_callback
 
 WORKFLOW_JS = """
                             /* Filter chip click handler (delegated, survives re-renders) */
@@ -450,10 +450,12 @@ def bind(refs: WorkflowRefs, shared: SharedState) -> None:
     workflow_html = refs.workflow_html
     wf_count_html = refs.wf_count_html
 
+    @safe_callback("Workflow filter")
     def do_filter_workflow(steps, filter_csv, keyword, current_toc):
         """Re-render Workflow cards, count, and TOC with filters applied."""
         return build_filtered_workflow_outputs(steps, filter_csv, keyword, current_toc)
 
+    @safe_callback("Workflow contents")
     def on_toc_toggle(current_toc):
         """Toggle TOC sidebar visibility via CSS class."""
         if not current_toc:

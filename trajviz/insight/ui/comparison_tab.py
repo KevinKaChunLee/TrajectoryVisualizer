@@ -17,8 +17,57 @@ from ..run_group import (
     build_run_group_scorecard_html,
     normalize_run_paths,
 )
-from .shared import SharedState
+from .shared import SharedState, safe_callback
 from .upload import UploadRefs
+
+_CMP_STATUS_PLACEHOLDER = (
+    "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
+    "Load a trajectory in the Overview tab first &mdash; it becomes the "
+    "<b>baseline</b> for <b>Run group</b> and the <b>compared</b> trajectory "
+    "for pairwise comparison."
+    "<br><span style='font-size:12px;'>"
+    "In Run group, upload one or more additional runs to scorecard against Overview."
+    "</span></div>"
+)
+_RG_SCORECARD_PLACEHOLDER = (
+    "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
+    "Load a trajectory in <b>Overview</b>, upload one or more "
+    "comparison runs, then click <b>Build scorecard</b>.</div>"
+)
+
+
+def _empty_cmp_fig(height: int) -> go.Figure:
+    """Blank placeholder figure — a Plot output keeps its last figure otherwise."""
+    fig = go.Figure()
+    fig.update_layout(
+        template="plotly_white",
+        height=height,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
+def _reset_comparison():
+    """Clear every panel derived from the Overview trajectory, on load.
+
+    Comparison is outside the load packer (`load.LOAD_UNITS`), so nothing else
+    clears it: without this, a scorecard captioned with the previous run's
+    filename and a "Comparison complete." status sit beside the new run's
+    Overview metrics. Same precedent as `attribution_tab._clear_attribution`.
+
+    The uploaded comparison/reference runs are deliberately kept — they are the
+    other side of the comparison and stay valid when only the baseline changes.
+    """
+    return (
+        _CMP_STATUS_PLACEHOLDER,
+        _RG_SCORECARD_PLACEHOLDER,
+        gr.update(value=_empty_cmp_fig(200), visible=False),
+        "",
+        "",
+        _empty_cmp_fig(380),
+        _empty_cmp_fig(380),
+    )
 
 
 @dataclass
@@ -42,16 +91,7 @@ class ComparisonRefs:
 
 def layout() -> ComparisonRefs:
     with gr.TabItem("Comparison"):
-        _cmp_placeholder = (
-            "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
-            "Load a trajectory in the Overview tab first &mdash; it becomes the "
-            "<b>baseline</b> for <b>Run group</b> and the <b>compared</b> trajectory "
-            "for pairwise comparison."
-            "<br><span style='font-size:12px;'>"
-            "In Run group, upload one or more additional runs to scorecard against Overview."
-            "</span></div>"
-        )
-        cmp_status_html = gr.HTML(_cmp_placeholder)
+        cmp_status_html = gr.HTML(_CMP_STATUS_PLACEHOLDER)
         with gr.Accordion("Run group (N trajectories)", open=True, elem_classes=["per-message-acc"]):
             gr.Markdown(
                 "_The trajectory loaded in **Overview** is included as the "
@@ -85,11 +125,7 @@ def layout() -> ComparisonRefs:
                     scale=0,
                     min_width=140,
                 )
-            rg_scorecard_html = gr.HTML(
-                "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
-                "Load a trajectory in <b>Overview</b>, upload one or more "
-                "comparison runs, then click <b>Build scorecard</b>.</div>"
-            )
+            rg_scorecard_html = gr.HTML(_RG_SCORECARD_PLACEHOLDER)
             rg_agent_timeline_chart = gr.Plot(
                 show_label=False,
                 label="Agent timeline (by run)",
@@ -163,15 +199,10 @@ def layout() -> ComparisonRefs:
 
 
 def bind(refs: ComparisonRefs, shared: SharedState, upload: UploadRefs) -> None:
+    @safe_callback("Run group scorecard")
     def on_run_group_scorecard(files, format_hint, dark, overview_raw):
         """Build an N-run scorecard; Overview trajectory is the baseline."""
-        empty_fig = go.Figure()
-        empty_fig.update_layout(
-            template="plotly_white",
-            height=200,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-        )
+        empty_fig = _empty_cmp_fig(200)
         paths = normalize_run_paths(files)
         hint = format_hint or None
         if hint == "":
@@ -205,10 +236,7 @@ def bind(refs: ComparisonRefs, shared: SharedState, upload: UploadRefs) -> None:
     )
 
     def on_run_comparison(ref_file, anchor_file, ref_format, ref_labels_file, cmp_labels_file, overview_raw, dark):
-        empty_fig = go.Figure()
-        empty_fig.update_layout(
-            template="plotly_white", height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
+        empty_fig = _empty_cmp_fig(380)
 
         if not overview_raw:
             return (
@@ -317,4 +345,19 @@ def bind(refs: ComparisonRefs, shared: SharedState, upload: UploadRefs) -> None:
             shared.state_dark,
         ],
         outputs=[refs.cmp_report_html, refs.cmp_phase_count_chart, refs.cmp_phase_duration_chart, refs.cmp_status_html],
+    )
+
+    # One trigger only: choosing a file re-clicks Load in the browser rather
+    # than running a second load (see `load.bind_load`).
+    upload.load_btn.click(
+        fn=_reset_comparison,
+        outputs=[
+            refs.cmp_status_html,
+            refs.rg_scorecard_html,
+            refs.rg_agent_timeline_chart,
+            refs.rg_behavior_html,
+            refs.cmp_report_html,
+            refs.cmp_phase_count_chart,
+            refs.cmp_phase_duration_chart,
+        ],
     )

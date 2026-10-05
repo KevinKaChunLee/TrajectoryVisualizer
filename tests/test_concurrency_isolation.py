@@ -29,6 +29,7 @@ import os
 import shutil
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -452,11 +453,11 @@ class ProcessGlobalFootprintTests(_CorpusMixin, unittest.TestCase):
 
 class ExportIsolationTests(_CorpusMixin, unittest.TestCase):
     def setUp(self):
-        self._saved_export_dir = upload._last_temp_export_dir
+        self._saved_export_dirs = dict(upload._last_temp_export_dirs)
         self._made: list[str] = []
 
     def tearDown(self):
-        upload._last_temp_export_dir = self._saved_export_dir
+        upload._last_temp_export_dirs = self._saved_export_dirs
         for directory in self._made:
             shutil.rmtree(directory, ignore_errors=True)
 
@@ -464,6 +465,11 @@ class ExportIsolationTests(_CorpusMixin, unittest.TestCase):
     def _armed_path(update) -> str | None:
         value = update["value"] if isinstance(update, dict) else getattr(update, "value", None)
         return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _request(session_hash: str | None):
+        """Stand-in for the `gr.Request` Gradio injects, which only `session_hash` is read from."""
+        return types.SimpleNamespace(session_hash=session_hash)
 
     def test_each_export_lands_in_its_own_directory_with_its_own_report(self):
         """Two viewers exporting at once must never be handed the same path.
@@ -509,12 +515,12 @@ class ExportIsolationTests(_CorpusMixin, unittest.TestCase):
         it. Recording anything but a scratch directory this module itself made
         would turn a later export into data loss in a real directory.
         """
-        upload._last_temp_export_dir = None
+        upload._last_temp_export_dirs = {}
         raw = load_trajectory(self.synthesized[0])
         armed = self._armed_path(upload.prepare_html_export(raw, None, False))
         self.assertIsNotNone(armed)
         self._made.append(os.path.dirname(armed))
-        recorded = upload._last_temp_export_dir
+        recorded = upload._last_temp_export_dirs.get(None)
         self.assertIsNotNone(recorded)
         self.assertTrue(
             os.path.basename(recorded).startswith(upload._TEMP_EXPORT_PREFIX),
@@ -531,12 +537,43 @@ class ExportIsolationTests(_CorpusMixin, unittest.TestCase):
         self._made.append(bystander)
         keepsake = Path(bystander) / "important.html"
         keepsake.write_text("do not delete me", encoding="utf-8")
-        upload._last_temp_export_dir = bystander
+        upload._last_temp_export_dirs = {None: bystander}
         raw = load_trajectory(self.synthesized[0])
         armed = self._armed_path(upload.prepare_html_export(raw, None, False))
         self.assertIsNotNone(armed)
         self._made.append(os.path.dirname(armed))
         self.assertTrue(keepsake.is_file(), "an export deleted a directory it did not create")
+
+    def test_one_viewers_export_does_not_delete_anothers(self):
+        """The export bookkeeping is per Gradio session, not per process.
+
+        One module-level string plus an unconditional ``rmtree`` meant the next
+        viewer's export deleted the directory the previous viewer's Export HTML
+        button was still pointing at — a 404 on a download the user had already
+        been handed.
+        """
+        upload._last_temp_export_dirs = {}
+        raw_a = load_trajectory(self.synthesized[0])
+        raw_b = load_trajectory(self.synthesized[1])
+
+        armed_a = self._armed_path(upload.prepare_html_export(raw_a, None, False, request=self._request("A")))
+        self.assertIsNotNone(armed_a)
+        self._made.append(os.path.dirname(armed_a))
+        armed_b = self._armed_path(upload.prepare_html_export(raw_b, None, False, request=self._request("B")))
+        self.assertIsNotNone(armed_b)
+        self._made.append(os.path.dirname(armed_b))
+
+        self.assertTrue(os.path.isfile(armed_a), "viewer B's export deleted viewer A's armed report")
+        self.assertTrue(os.path.isfile(armed_b))
+        self.assertNotEqual(os.path.dirname(armed_a), os.path.dirname(armed_b))
+
+        # Within one session the replacement still happens: an idle viewer must
+        # not accumulate a temp directory per click.
+        again_a = self._armed_path(upload.prepare_html_export(raw_a, None, False, request=self._request("A")))
+        self.assertIsNotNone(again_a)
+        self._made.append(os.path.dirname(again_a))
+        self.assertFalse(os.path.isdir(os.path.dirname(armed_a)), "a session's previous export dir was kept")
+        self.assertTrue(os.path.isfile(armed_b), "another session's export was deleted")
 
     def test_concurrent_report_writes_land_in_separate_files(self):
         """``write_report_file`` picks its own destination on every call.

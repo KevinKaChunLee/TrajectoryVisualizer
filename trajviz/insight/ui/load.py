@@ -230,7 +230,17 @@ def do_load(upload_obj, dark=False, selected_format="", *, slots: dict[str, Any]
 
 
 def bind_load(*, file_upload, load_btn, format_selector, state_dark, slots: dict[str, Any]):
-    """Wire Load Trajectory click and auto-load on file change. Returns both events."""
+    """Wire the Load Trajectory click. Returns the load event(s) to chain onto.
+
+    Auto-load on file change is a browser-side re-click of the same button, not a
+    second Python binding: every load event fans out to ``bind_export``,
+    ``sidebar.on_trajectory_loaded`` and the DECAF autodiagnosis, so binding
+    ``_do_load`` to ``change`` as well made one gesture (pick a file, then click
+    Load) run the whole analytics fan-out twice — two report writes, two
+    diagnoses serialized behind the ``attribution`` concurrency id. Clearing the
+    file still fires ``change``, so it still re-renders the "not found" banner
+    through Load.
+    """
     expected = load_slot_keys()
     got = frozenset(slots)
     if got != expected:
@@ -247,9 +257,12 @@ def bind_load(*, file_upload, load_btn, format_selector, state_dark, slots: dict
         inputs=[file_upload, state_dark, format_selector],
         outputs=outputs,
     )
-    _upload_ev = file_upload.change(
-        fn=_do_load,
-        inputs=[file_upload, state_dark, format_selector],
-        outputs=outputs,
+    file_upload.change(
+        fn=None,
+        js=(
+            "() => { const b = document.querySelector("
+            f"'#{upload.LOAD_BTN_ELEM_ID} button, #{upload.LOAD_BTN_ELEM_ID}'"
+            "); if (b) b.click(); }"
+        ),
     )
-    return _load_ev, _upload_ev
+    return (_load_ev,)

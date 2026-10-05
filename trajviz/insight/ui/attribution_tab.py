@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from ..loaders import detect_format
-from .shared import SharedState
+from .shared import SharedState, safe_callback
 from .upload import UploadRefs
 
 
@@ -65,6 +65,7 @@ def layout() -> AttributionRefs:
 
 
 def bind(refs: AttributionRefs, shared: SharedState, upload: UploadRefs, load_events) -> None:
+    @safe_callback("Attribution diagnosis")
     def on_diagnose(overview_raw, agent_override, inst_override, root_override):
         from dataclasses import asdict
 
@@ -130,10 +131,9 @@ def bind(refs: AttributionRefs, shared: SharedState, upload: UploadRefs, load_ev
             "",
         )
 
+    # One trigger only: choosing a file re-clicks Load in the browser rather
+    # than running a second load (see `load.bind_load`).
     upload.load_btn.click(
-        fn=_clear_attribution, outputs=[refs.attr_result_html, refs.attr_status_html], concurrency_id="attribution"
-    )
-    upload.file_upload.change(
         fn=_clear_attribution, outputs=[refs.attr_result_html, refs.attr_status_html], concurrency_id="attribution"
     )
 
