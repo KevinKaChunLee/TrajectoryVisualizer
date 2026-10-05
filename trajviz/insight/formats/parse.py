@@ -2,9 +2,20 @@
 
 import json
 import os
+import re
 from typing import Any
 
 from .sniff import _OBJECT_FORMATS, _detect_object_format
+
+# JSONL lines end at LF, CRLF or a lone CR, and nowhere else. ``str.splitlines``
+# also breaks on U+2028/U+2029/U+0085 (and \x0b\x0c\x1c-\x1e), which JSON
+# permits UNESCAPED inside a string — it only forbids U+0000-U+001F — so
+# serde_json (the Codex CLI writer) emits them raw and splitlines turned one
+# agent message containing a Unicode line separator into "Unterminated string".
+# A lone CR stays a terminator: a raw CR cannot appear inside a valid JSON
+# string, so splitting on it is safe. Line ends are KEPT so the truncated-tail
+# tolerance below can still tell a terminated final line from an in-progress one.
+_JSONL_LINE_RE = re.compile(r"[^\r\n]*(?:\r\n|[\r\n])|[^\r\n]+")
 
 
 def _path_ext(file_path: str) -> str:
@@ -18,7 +29,7 @@ def _parse_jsonl_events(text: str) -> tuple[list | None, str | None]:
     """
     events: list = []
     pending: tuple[int, str] | None = None
-    for line_number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
+    for line_number, raw_line in enumerate(_JSONL_LINE_RE.findall(text), start=1):
         if not raw_line.strip():
             continue
         # Delay one non-empty line so only the true final line can

@@ -1,6 +1,6 @@
 """CodeArts SQLite export adapter on the OpenCode message schema."""
 
-from .opencode import _convert_opencode_metadata
+from .opencode import _convert_opencode_metadata, _opencode_token_value
 
 def _convert_codearts_metadata(raw: dict) -> dict:
     """Normalize a CodeArts SQLite export without changing message data.
@@ -95,14 +95,16 @@ def _convert_codearts_metadata(raw: dict) -> dict:
         tokens = msg_info.get("tokens", {}) if isinstance(msg_info, dict) else {}
         if not isinstance(tokens, dict):
             continue
-        token_totals["total"] += tokens.get("total", 0) or 0
-        token_totals["input"] += tokens.get("input", 0) or 0
-        token_totals["output"] += tokens.get("output", 0) or 0
-        token_totals["reasoning"] += tokens.get("reasoning", 0) or 0
+        # A non-numeric count is rejected, not coerced: a string token value
+        # used to raise TypeError out of load_trajectory and abort the batch.
+        token_totals["total"] += _opencode_token_value(tokens.get("total"))
+        token_totals["input"] += _opencode_token_value(tokens.get("input"))
+        token_totals["output"] += _opencode_token_value(tokens.get("output"))
+        token_totals["reasoning"] += _opencode_token_value(tokens.get("reasoning"))
         cache = tokens.get("cache", {})
         if isinstance(cache, dict):
-            token_totals["cache_read"] += cache.get("read", 0) or 0
-            token_totals["cache_write"] += cache.get("write", 0) or 0
+            token_totals["cache_read"] += _opencode_token_value(cache.get("read"))
+            token_totals["cache_write"] += _opencode_token_value(cache.get("write"))
 
     raw["token_usage"] = {
         "total_tokens": token_totals["total"],

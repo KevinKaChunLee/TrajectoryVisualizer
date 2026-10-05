@@ -14,10 +14,11 @@ finite, counts must not be negative, and a field whose name says *percent* must
 be a percentage. These are asserted as properties over generated well-typed
 payloads rather than pinned against today's output.
 
-Tests marked ``@unittest.expectedFailure`` state a contract the code currently
-breaks; each names the defect. **Remove the decorator when the defect is
-fixed** — an unexpected success fails the run, which is the intended signal.
-Nothing here pins the broken behaviour as correct.
+When a test here is marked ``@unittest.expectedFailure`` it states a contract
+the code currently breaks, and names the defect. **Removing the decorator is
+part of the fix** — an unexpected success fails the run, which is the intended
+signal. Nothing here pins broken behaviour as correct; none of these markers is
+outstanding today.
 """
 
 import json
@@ -257,33 +258,66 @@ class LoadTrajectoryNeverRaises(unittest.TestCase):
         result = self._assert_contract(_write_bytes(self.tmp, "x.log", b"{}"))
         self.assertIn("_error", result)
 
-    @unittest.expectedFailure
     def test_out_of_range_session_timestamp_is_a_clean_error(self):
         """A microsecond/nanosecond timestamp must not abort the batch.
 
-        DEFECT (``trajviz/insight/formats/opencode.py:23-25``): ``info.time.created``
-        / ``info.time.updated`` go straight into ``datetime.fromtimestamp``. A
-        recorder that wrote microseconds instead of milliseconds raises
-        ``ValueError: year 56664 is out of range`` out of ``load_trajectory``,
-        which ``run_group`` does not catch. Clamp or reject the value instead.
+        ``info.time.created`` / ``info.time.updated`` reach
+        ``datetime.fromtimestamp``, which raised ``ValueError: year 56664 is out
+        of range`` for a recorder that wrote microseconds instead of
+        milliseconds — out of ``load_trajectory``, which ``run_group`` does not
+        catch. An unrepresentable instant is now reported as missing rather than
+        clamped to a plausible-looking date, and the representable endpoint of
+        the same session still converts.
         """
         doc = _opencode_doc([], info_time={"created": 0, "updated": 1_726_000_000_000_000})
-        self._assert_contract(_write_json(self.tmp, "microseconds.json", doc))
+        raw = self._assert_contract(_write_json(self.tmp, "microseconds.json", doc))
+        self.assertNotIn("_error", raw)
+        self.assertEqual(raw["timing"]["started_at"], "1970-01-01T00:00:00+00:00")
+        self.assertEqual(raw["timing"]["finished_at"], "")
+        # A duration needs BOTH endpoints: pairing epoch 0 with the raw
+        # microsecond value would report a 1.7-billion-second session.
+        self.assertEqual(raw["timing"]["total_duration"], 0.0)
 
-    @unittest.expectedFailure
     def test_string_valued_token_counts_are_a_clean_error(self):
         """Token counts serialized as JSON strings must not abort the batch.
 
-        DEFECT (``trajviz/insight/formats/opencode.py:146-147``, and the same
-        pattern in ``codearts.py:101`` / ``claude_code.py:23``): the per-message
-        token totals are accumulated with ``+=`` and no type check, so
-        ``"tokens": {"input": "50"}`` raises ``TypeError: unsupported operand
-        type(s) for +=: 'int' and 'str'`` out of ``load_trajectory``.
+        The session-level token accumulators used ``+=`` with no type check, so
+        ``"tokens": {"input": "50"}`` raised ``TypeError: unsupported operand
+        type(s) for +=: 'int' and 'str'`` out of ``load_trajectory``
+        (``opencode``/``codearts``), as did the ``str + int`` in Claude Code's
+        usage extraction. One doc only exercises one converter, so all three
+        are covered here. A non-numeric count is now *rejected* (contributes
+        nothing), not coerced — the same reading ``usable_token_count`` gives an
+        unusable value.
         """
-        doc = _opencode_doc([_opencode_message(
-            tokens={"total": "100", "input": "50", "output": "50", "cache": {"read": "0", "write": "0"}},
-        )])
-        self._assert_contract(_write_json(self.tmp, "string_tokens.json", doc))
+        string_tokens = {"total": "100", "input": "50", "output": "50",
+                         "cache": {"read": "0", "write": "0"}}
+        opencode = _opencode_doc([_opencode_message(tokens=string_tokens)])
+        codearts = _opencode_doc([_opencode_message(tokens=string_tokens)])
+        codearts["export_metadata"] = {
+            "schema_version": 2, "source_format": "codearts_opencode_sqlite",
+            "generator_name": "codearts_consolidator",
+        }
+        ccsession = {
+            "format": "ccsession-trajectory",
+            "trajectory": [{
+                "role": "assistant",
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {"input_tokens": "50", "output_tokens": 5,
+                          "cache_read_input_tokens": "0",
+                          "cache_creation_input_tokens": "0"},
+            }],
+        }
+        for name, doc in (("opencode", opencode), ("codearts", codearts),
+                          ("ccsession", ccsession)):
+            with self.subTest(format=name):
+                raw = self._assert_contract(_write_json(self.tmp, f"tokens_{name}.json", doc))
+                self.assertNotIn("_error", raw)
+                self.assertEqual(raw["token_usage"]["total_tokens"], 0)
+        # Claude Code sums its per-message usage, so the one usable field in
+        # that payload must survive while the strings drop out.
+        cc_raw = load_trajectory(os.path.join(self.tmp, "tokens_ccsession.json"))
+        self.assertEqual([s["tokens"]["total"] for s in parse_steps(cc_raw)], [5])
 
     def test_non_finite_token_values_do_not_crash_the_pipeline(self):
         """``NaN``/``Infinity`` literals must not crash metrics computation.
@@ -357,28 +391,38 @@ class JsonlLineSplitting(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(len(parsed), len(events))
 
-    @unittest.expectedFailure
+        # A lone ``\r`` is also a line end here, and must stay one: a raw CR
+        # cannot appear inside a valid JSON string, so splitting on it is safe
+        # and some classic-Mac/terminal-captured exports use it alone. Pinned
+        # against a future "split on \\n only" simplification.
+        old_mac = "\r".join(json.dumps(e) for e in events) + "\r"
+        parsed, err = _parse_jsonl_events(old_mac)
+        self.assertIsNone(err)
+        self.assertEqual(len(parsed), len(events))
+
     def test_unicode_line_separators_inside_strings_do_not_split_events(self):
         """A valid JSONL event whose text contains U+2028 must still load.
 
-        DEFECT (``trajviz/insight/formats/parse.py:21``): ``_parse_jsonl_events``
-        splits with ``str.splitlines()``, which breaks on U+2028, U+2029 and
-        U+0085 as well as ``\\n``. Those three are legal *unescaped* inside a
-        JSON string, and serde_json (the Codex CLI writer) does not escape
-        them, so one agent message containing a Unicode line separator turns a
-        valid rollout into ``Invalid JSONL at line N: Unterminated string``.
-        Split on ``\\n`` / ``\\r\\n`` only.
+        ``_parse_jsonl_events`` used ``str.splitlines()``, which breaks on
+        U+2028, U+2029 and U+0085 as well as ``\\n``. Those three are legal
+        *unescaped* inside a JSON string (JSON only forbids U+0000-U+001F), and
+        serde_json — the Codex CLI writer — does not escape them, so one agent
+        message containing a Unicode line separator turned a valid rollout into
+        ``Invalid JSONL at line N: Unterminated string``. JSONL lines end at
+        ``\\n`` / ``\\r\\n`` / ``\\r`` and nowhere else.
         """
-        events = _codex_stream()
-        events[2]["payload"]["content"][0]["text"] = "before\u2028after"
-        text = _jsonl_text(events)
-        # The file really is valid JSONL when split the way JSONL defines it.
-        for line in text.split("\n"):
-            if line.strip():
-                json.loads(line)
-        parsed, err = _parse_jsonl_events(text)
-        self.assertIsNone(err, err)
-        self.assertEqual(len(parsed), len(events))
+        for separator in ("\u2028", "\u2029", "\u0085"):
+            with self.subTest(separator=hex(ord(separator))):
+                events = _codex_stream()
+                events[2]["payload"]["content"][0]["text"] = f"before{separator}after"
+                text = _jsonl_text(events)
+                # The file really is valid JSONL when split the way JSONL defines it.
+                for line in text.split("\n"):
+                    if line.strip():
+                        json.loads(line)
+                parsed, err = _parse_jsonl_events(text)
+                self.assertIsNone(err, err)
+                self.assertEqual(len(parsed), len(events))
 
 
 class ZipIngestContract(unittest.TestCase):
@@ -453,15 +497,13 @@ class ZipIngestContract(unittest.TestCase):
         result = self._load(self._zip("many.zip", members))
         self.assertIsInstance(result, dict)
 
-    @unittest.expectedFailure
     def test_encrypted_member_is_a_clean_error(self):
         """A password-protected member must not abort the batch.
 
-        DEFECT (``trajviz/insight/formats/dsh.py:962``, backlog item 8):
-        ``archive.read(member)`` is guarded only against ``KeyError``, so
-        ``zipfile`` raises ``RuntimeError: File 'session.jsonl' is encrypted,
+        ``archive.read(member)`` was guarded only against ``KeyError``, so
+        ``zipfile`` raised ``RuntimeError: File 'session.jsonl' is encrypted,
         password required for extraction`` straight out of ``load_trajectory``.
-        Catch ``RuntimeError`` (and ``zipfile.BadZipFile``) around the read.
+        The read now also catches ``RuntimeError`` / ``zipfile.BadZipFile``.
         """
         plain = self._zip("plain.zip", {"session.jsonl": self._session_jsonl()})
         with open(plain, "rb") as handle:
@@ -578,19 +620,21 @@ class MetricInvariants(unittest.TestCase):
                 metrics = _metrics_for(_write_json(self.tmp, f"{label}.json", doc))
                 self._assert_invariants(metrics, doc)
 
-    @unittest.expectedFailure
-    def test_cache_read_above_the_reported_total_cannot_exceed_100_percent(self):
-        """``Avg cache %`` is a percentage and must never exceed 100.
+    def test_cache_read_above_the_reported_total_is_rejected_not_rendered(self):
+        """A record that cannot yield a cache share is excluded and counted, not clamped.
 
-        DEFECT (``trajviz/insight/metrics.py:382`` feeding ``:575``):
-        ``cache_ratio = cache_read / tokens_total`` is unbounded, and OpenCode
-        reports a ``total`` that excludes cache reads. 16 of the 2,500 real
-        corpus trajectories therefore render ``Avg cache % = 25386.2%`` with a
-        green "strong cache reuse" verdict
-        (``opencode_opus/django__django-11555.json``). Clamp the ratio, or
-        divide by a denominator that includes the cache read.
+        OpenCode reports a ``total`` that excludes the cache read, so 16 of the
+        2,500 real corpus trajectories once rendered ``Avg cache % = 25386.2%``
+        under a green "strong cache reuse" verdict
+        (``opencode_opus/django__django-11555.json``). The shipped fix is
+        rejection, not clamping: ``parser.cache_read_share`` is the single source
+        of truth and returns ``None`` when ``cache_read > total``, and
+        ``metrics`` then reports the headline as absent plus the number of steps
+        responsible — a clamped 100% would be just as wrong, only quieter.
+        Asserted against that function's behaviour rather than by re-deriving
+        the arithmetic here, so the test tracks the single source of truth.
         """
-        doc = _opencode_doc([
+        inconsistent = _opencode_doc([
             _opencode_message(
                 index=i, created=i * 1000,
                 tokens={"total": 1909, "input": -10739, "output": 248, "reasoning": 0,
@@ -598,8 +642,25 @@ class MetricInvariants(unittest.TestCase):
             )
             for i in range(3)
         ])
-        metrics = _metrics_for(_write_json(self.tmp, "cache_over.json", doc))
-        self.assertLessEqual(metrics["avg_cache_ratio"], 100)
+        with self.subTest(case="cache_read_above_total"):
+            metrics = _metrics_for(_write_json(self.tmp, "cache_over.json", inconsistent))
+            self.assertIsNone(metrics["avg_cache_ratio"])
+            self.assertEqual(metrics["cache_ratio_unusable_steps"], 3)
+
+        # The domain still has to hold wherever the field IS populated.
+        consistent = _opencode_doc([
+            _opencode_message(
+                index=i, created=i * 1000,
+                tokens={"total": 20_000, "input": 5_000, "output": 5_000, "reasoning": 0,
+                        "cache": {"read": 10_000, "write": 0}},
+            )
+            for i in range(3)
+        ])
+        with self.subTest(case="self_consistent"):
+            metrics = _metrics_for(_write_json(self.tmp, "cache_ok.json", consistent))
+            self.assertEqual(metrics["avg_cache_ratio"], 50.0)
+            self.assertLessEqual(metrics["avg_cache_ratio"], 100)
+            self.assertEqual(metrics["cache_ratio_unusable_steps"], 0)
 
     def test_token_totals_are_never_negative(self):
         """A token count is a count; a negative one must never reach a headline number.
@@ -621,6 +682,100 @@ class MetricInvariants(unittest.TestCase):
         ])
         metrics = _metrics_for(_write_json(self.tmp, "neg_tokens.json", doc))
         self.assertGreaterEqual(metrics["input_tokens"], 0)
+
+
+class StepSchemaContract(unittest.TestCase):
+    """The generic ``parse_steps`` path and the Claude Code fast path share one schema.
+
+    ``parse_steps`` returns ``raw["_cc_parsed_steps"]`` verbatim for Claude Code
+    (``parser.py``), so ``_cc_build_step`` is the second writer of a schema every
+    downstream reader shares. Key drift between the two is invisible until a
+    reader stops using ``.get()``.
+    """
+
+    # Written out rather than derived, so adding a key to either writer has to
+    # be a deliberate edit here too.
+    _CANONICAL_STEP_KEYS = frozenset({
+        "index", "raw_index", "role", "tokens", "duration", "parts", "tool_calls",
+        "tool_call_count", "error_count", "has_reasoning", "text_preview", "finish",
+        "model_id", "provider_id", "time_created_ms", "time_completed_ms", "agent",
+        "mode", "message_id", "id", "parent_id", "session_id", "cwd", "root",
+        "is_sub_agent", "parent_session_id", "session_depth", "session_title",
+        "summary", "message_type", "is_compaction_checkpoint", "compaction_reason",
+        "_metrics_unavailable_fields",
+    })
+
+    # Keys the Claude Code path legitimately does not carry.
+    _CC_EXEMPT_KEYS = frozenset({
+        # Load-bearing ABSENCE: metrics.effective_agent() reads a missing
+        # is_sub_agent as the Claude Code convention (a non-empty ``agent``
+        # names a sub-agent). Adding the key, even as False, re-buckets every
+        # sub-agent step into the main agent. See _cc_build_step.
+        "is_sub_agent",
+        # The OpenCode session hierarchy fields; Claude Code models sub-agents
+        # through ``agent`` plus _cc_sub_agents, not nested session ids.
+        "parent_session_id", "session_depth", "session_title",
+        # Only ever non-empty on a compaction checkpoint, which Claude Code
+        # exports do not record as a trajectory entry.
+        "compaction_reason",
+    })
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.tmp = self._dir.name
+        self.addCleanup(self._dir.cleanup)
+
+    def _generic_step(self):
+        raw = load_trajectory(_write_json(self.tmp, "generic.json",
+                                          _opencode_doc([_opencode_message()])))
+        self.assertNotIn("_error", raw)
+        steps = parse_steps(raw)
+        self.assertEqual(len(steps), 1)
+        return steps[0]
+
+    def _cc_step(self):
+        doc = {
+            "format": "ccsession-trajectory",
+            "trajectory": [{
+                "role": "assistant", "timestamp": "2026-01-05T12:00:02.000Z",
+                "content": [{"type": "text", "text": "done"}],
+                "usage": {"input_tokens": 40, "output_tokens": 60,
+                          "cache_read_input_tokens": 0,
+                          "cache_creation_input_tokens": 0},
+            }],
+        }
+        raw = load_trajectory(_write_json(self.tmp, "cc.json", doc))
+        self.assertNotIn("_error", raw)
+        steps = parse_steps(raw)
+        self.assertEqual(len(steps), 1)
+        return steps[0]
+
+    def test_parse_steps_emits_the_canonical_step_key_set(self):
+        """No write-only keys: every step key must have a reader somewhere."""
+        self.assertEqual(set(self._generic_step()), set(self._CANONICAL_STEP_KEYS))
+
+    def test_claude_code_steps_carry_the_same_keys_as_the_generic_path(self):
+        """The fast path must not be a silent subset of the schema it shares."""
+        missing = set(self._generic_step()) - set(self._cc_step()) - self._CC_EXEMPT_KEYS
+        self.assertEqual(missing, set())
+
+    def test_claude_code_steps_never_carry_is_sub_agent(self):
+        """Its absence is the signal; see ``_CC_EXEMPT_KEYS``."""
+        self.assertNotIn("is_sub_agent", self._cc_step())
+
+    def test_claude_code_normalized_keys_stay_neutral(self):
+        """The normalized keys must report "nothing known", not a fabricated value.
+
+        A populated ``_metrics_unavailable_fields`` would change which per-step
+        rows render as "Metrics unavailable"; a true
+        ``is_compaction_checkpoint`` would invent a compaction event.
+        """
+        step = self._cc_step()
+        self.assertIs(step["is_compaction_checkpoint"], False)
+        self.assertIs(step["summary"], False)
+        self.assertEqual(step["message_type"], "")
+        self.assertEqual(step["_metrics_unavailable_fields"], [])
+        self.assertEqual(step["raw_index"], step["index"])
 
 
 if __name__ == "__main__":

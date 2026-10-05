@@ -1,6 +1,48 @@
 """OpenCode info+messages export → internal trajectory."""
 
+import math
 from datetime import datetime, UTC
+
+
+def _opencode_ms_to_iso(ms: object) -> str:
+    """Epoch milliseconds → ISO 8601 UTC, or ``""`` when that is not an instant.
+
+    Same shape as ``dsh._dsh_ms_to_iso`` but WITHOUT its ``ms <= 0`` rule:
+    OpenCode exports legitimately record ``created: 0``, which must keep mapping
+    to the epoch rather than being erased.  A recorder that wrote microseconds
+    instead of milliseconds puts ``fromtimestamp`` out of its platform range,
+    and that used to raise ``ValueError: year 56664 is out of range`` straight
+    out of ``load_trajectory`` — which ``run_group`` does not catch, so one such
+    file aborted a whole batch.  An unrepresentable instant is reported as
+    missing, not clamped to a plausible-looking date.
+    """
+    if ms is None or isinstance(ms, bool) or not isinstance(ms, (int, float)):
+        return ""
+    if not math.isfinite(ms):
+        return ""
+    try:
+        return datetime.fromtimestamp(ms / 1000.0, tz=UTC).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
+def _opencode_token_value(value: object) -> int | float:
+    """A reported token count, or 0 when the value is not a usable number.
+
+    Same reading as ``parser._finite_token``, applied to the session-level
+    accumulators: a string/bool/None/non-finite count carries no information and
+    must be *rejected* rather than coerced, and a NEGATIVE count is PRESERVED —
+    OpenCode really does report one (it subtracts the cache read from the prompt
+    size) and the metrics layer counts those steps instead of hiding them.
+    Duplicated rather than imported because the dependency runs
+    parser → loaders → formats, so a converter cannot import ``parser``.
+    """
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not math.isfinite(value):
+        return 0
+    return value
+
 
 def _convert_opencode_metadata(raw: dict) -> dict:
     """Populate metadata, timing, and output keys from OpenCode info structure.
@@ -17,13 +59,12 @@ def _convert_opencode_metadata(raw: dict) -> dict:
     updated_ms = time_info.get("updated")
 
     duration_seconds = 0.0
-    started_at = ""
-    finished_at = ""
-    if isinstance(created_ms, (int, float)):
-        started_at = datetime.fromtimestamp(created_ms / 1000.0, tz=UTC).isoformat()
-    if isinstance(updated_ms, (int, float)):
-        finished_at = datetime.fromtimestamp(updated_ms / 1000.0, tz=UTC).isoformat()
-    if isinstance(created_ms, (int, float)) and isinstance(updated_ms, (int, float)):
+    started_at = _opencode_ms_to_iso(created_ms)
+    finished_at = _opencode_ms_to_iso(updated_ms)
+    # A duration needs BOTH endpoints to be real instants.  Subtracting a raw
+    # microsecond ``updated`` from a converted ``created`` reported a
+    # 1.7-billion-second session instead of admitting the end is unknown.
+    if started_at and finished_at:
         duration_seconds = round((updated_ms - created_ms) / 1000.0, 3)
 
     summary = info.get("summary", {}) if isinstance(info.get("summary"), dict) else {}
@@ -143,8 +184,8 @@ def _convert_opencode_metadata(raw: dict) -> dict:
             asst_count += 1
         # Count tokens
         tok = msg_info.get("tokens", {}) if isinstance(msg_info.get("tokens"), dict) else {}
-        total_input += tok.get("input", 0) or 0
-        total_output += tok.get("output", 0) or 0
+        total_input += _opencode_token_value(tok.get("input"))
+        total_output += _opencode_token_value(tok.get("output"))
         # Count tool calls from parts
         for part in (msg.get("parts", []) if isinstance(msg.get("parts"), list) else []):
             if isinstance(part, dict) and part.get("type") == "tool":
