@@ -33,6 +33,11 @@ _TESTS_DIR = Path(__file__).resolve().parent
 # condition the environment can satisfy.
 _UNCONDITIONAL_SKIP_ATTRS = {"skip", "xfail"}
 
+# Every ``@unittest.expectedFailure`` in the suite, as ``file.py::name``. Each
+# entry is a defect the code is known to break and the test documents; see
+# ``test_the_expected_failure_inventory_is_the_pinned_one``.
+_PINNED_EXPECTED_FAILURES: list[str] = []
+
 
 def _test_modules() -> list[Path]:
     return sorted(p for p in _TESTS_DIR.glob("test_*.py") if p.is_file())
@@ -127,6 +132,41 @@ class SuiteInvariantTests(unittest.TestCase):
             disabled, [],
             "tests disabled unconditionally (use skipIf/skipUnless, or delete them): "
             + "; ".join(disabled),
+        )
+
+    def test_the_expected_failure_inventory_is_the_pinned_one(self):
+        """``@unittest.expectedFailure`` is legitimate here, but must stay counted.
+
+        The repo uses it as a *defect specification*: a test that states a
+        contract the code currently breaks, with the defect's file:line in its
+        docstring, and the decorator comes off in the same commit as the fix. An
+        unexpected pass then fails the run, which is the point.
+
+        The sibling check above cannot see it — ``expectedFailure`` is neither
+        ``skip`` nor ``xfail`` — so without this the inventory could grow one
+        decorator at a time and the suite would stay green while testing less.
+        It is pinned rather than forbidden: adding one is allowed, and updating
+        this list is the deliberate, reviewed act that records the decision.
+
+        Empty as of the gap-remediation batch: the six that existed (four
+        never-raise ingest violations, a stale cache-ratio assertion, and a live
+        report-injection path) were fixed rather than re-pinned.
+        """
+        expected: list[str] = []
+        for path in self.modules:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                for dec in node.decorator_list:
+                    if _decorator_attr_path(dec).rsplit(".", 1)[-1] == "expectedFailure":
+                        expected.append(f"{path.name}::{node.name}")
+
+        self.assertEqual(
+            sorted(expected), _PINNED_EXPECTED_FAILURES,
+            "the @unittest.expectedFailure inventory changed. Fixing one? Remove it "
+            "from _PINNED_EXPECTED_FAILURES. Adding one? Append it there, and put the "
+            "defect's file:line plus the intended remedy in the test's docstring.",
         )
 
 
