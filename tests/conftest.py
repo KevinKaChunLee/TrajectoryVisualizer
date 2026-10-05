@@ -2,7 +2,7 @@
 
 Points DECAF failure-attribution at the vendored fixture (tests/fixtures/corpus +
 tests/fixtures/decaf_cache) so the integration tests run **hermetically** — no
-dependency on a developer's local TraceProbe corpus or gitignored DECAF caches,
+dependency on a developer's local reference data or gitignored DECAF caches,
 so they also run in CI. Locates DECAF via AWE_DECAF_PATH (default: a sibling
 ../DECAF checkout).
 

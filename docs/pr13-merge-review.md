@@ -19,7 +19,7 @@ targeted.
 ## Verification performed
 
 Full-corpus differential over **all 2,500 real trajectories** in
-`TraceProbe/data/trajectory` (claude_code, codex, opencode ×3), main
+a real trajectory set (claude_code, codex, opencode ×3), main
 (`9e663c3`) vs PR head (`8cd3c48`):
 
 | Check | Result |

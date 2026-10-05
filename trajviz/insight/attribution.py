@@ -73,12 +73,40 @@ _DECAF_ROOT = _decaf_root()
 if _DECAF_ROOT is not None and str(_DECAF_ROOT) not in sys.path:
     sys.path.insert(0, str(_DECAF_ROOT))
 
-# The corpus root default is captured ONCE at import (immutable thereafter):
-# env override, else a sibling . Every diagnose() call explicitly
-# configures this default or the caller's root — never "whatever the previous
-# caller left behind".
-_DEFAULT_ROOT = Path(os.environ.get(
-    "AWE_ARGUS_ROOT", str(Path(__file__).resolve().parents[3] / "")))
+def _reference_root() -> Path:
+    """Where the gold reference data lives, resolved by LAYOUT, not by name.
+
+    ``AWE_ARGUS_ROOT`` (DECAF's own variable) wins. Otherwise look for a sibling
+    of this checkout that actually has the layout attribution needs —
+    ``data/requirements/`` and ``data/trajectory/`` — and take it only if exactly
+    one sibling qualifies. Discovering it by content rather than by a hard-coded
+    directory name keeps TrajViz independent of whatever the reference set is
+    called locally, and keeps an ambiguous tree from being silently picked.
+
+    With no match, the neighbouring directory is returned unchanged; attribution
+    then degrades with a message naming ``AWE_ARGUS_ROOT`` rather than guessing.
+    """
+    env = os.environ.get("AWE_ARGUS_ROOT")
+    if env:
+        return Path(env)
+
+    neighbourhood = Path(__file__).resolve().parents[3]
+    try:
+        matches = [
+            d for d in neighbourhood.iterdir()
+            if d.is_dir()
+            and (d / "data" / "requirements").is_dir()
+            and (d / "data" / "trajectory").is_dir()
+        ]
+    except OSError:
+        return neighbourhood
+    return matches[0] if len(matches) == 1 else neighbourhood
+
+
+# Captured ONCE at import and immutable thereafter. Every diagnose() call
+# explicitly configures either this default or the caller's root — never
+# "whatever the previous caller left behind".
+_DEFAULT_ROOT = _reference_root()
 os.environ.setdefault("AWE_ARGUS_ROOT", str(_DEFAULT_ROOT))
 # DECAF's judge/arbiter caches are partitioned by model slug; the checked-in
 # caches were produced with z-ai/glm-5.2 — the awe default (claude-sonnet-4.5)

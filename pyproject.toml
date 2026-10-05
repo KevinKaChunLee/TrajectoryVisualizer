@@ -84,12 +84,12 @@ ignore = [
 
 # The presence of this table is load-bearing, independent of its contents: it
 # makes THIS file pytest's inifile, which pins rootdir to this repository. TrajViz
-# is a gitignored subdirectory of the private ARGUS monorepo, whose own
+# may be checked out inside a larger private tree, whose own
 # pyproject.toml carries [tool.pytest.ini_options]; without this table pytest
-# walks up, resolves rootdir to the monorepo and inherits its settings — which is
+# walks up, resolves rootdir to that parent and inherits its settings — which is
 # how `asyncio_mode` (a plugin option TrajViz does not install) reached this suite
 # as a PytestConfigWarning, and, worse, how a bare `pytest` here collected the
-# monorepo's `testpaths` (TraceProbe/tests, ParaPilotRuntime/tests) instead of
+# parent's `testpaths` (other projects' test trees) instead of
 # ours. CI dodged that only by always passing `tests` explicitly.
 #
 # `pythonpath` declares the one thing the suite has always needed and never

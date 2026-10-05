@@ -33,7 +33,7 @@ def layout() -> AttributionRefs:
         _attr_placeholder = (
             "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
             "Load a trajectory in the Overview tab &mdash; diagnosis runs automatically on load (<b>Diagnose failure</b> re-runs it with the overrides below). "
-            "For a corpus trajectory (…/trajectory/&lt;agent&gt;/&lt;instance&gt;.json) the agent "
+            "For a file under a reference set (…/trajectory/&lt;agent&gt;/&lt;instance&gt;.json) the agent "
             "and instance are auto-detected from the path; for an uploaded file, set them below."
             "</div>"
         )
@@ -42,7 +42,7 @@ def layout() -> AttributionRefs:
             attr_run_btn = gr.Button("Diagnose failure", variant="primary", size="sm", scale=1, min_width=140)
         with (
             gr.Accordion(
-                "Override agent / instance / corpus (for uploaded files)",
+                "Override agent / instance / reference data (for uploaded files)",
                 open=False,
                 elem_classes=["per-message-acc"],
             ),
@@ -51,7 +51,7 @@ def layout() -> AttributionRefs:
             attr_agent_override = gr.Textbox(label="Agent", placeholder="auto-detected from path", scale=1)
             attr_inst_override = gr.Textbox(label="Instance id", placeholder="auto-detected from path", scale=2)
             attr_root_override = gr.Textbox(
-                label="ARGUS corpus root", placeholder="default: sibling TraceProbe checkout", scale=2
+                label="Reference data root", placeholder="default: auto-detected sibling checkout", scale=2
             )
         attr_result_html = gr.HTML("")
     return AttributionRefs(
