@@ -35,6 +35,27 @@ def tool_call_failed(tc: dict) -> bool:
     return bool(tc.get("error") or tc.get("error_type"))
 
 
+def status_failed(status: object) -> bool:
+    """True when a bare status *string* names a failure.
+
+    For callers that hold a status in isolation rather than a whole tool-call
+    dict (converge canonicalization). Prefer :func:`tool_call_failed` whenever
+    the dict is available — it also honours exit codes and error fields, which
+    a status alone cannot express.
+    """
+    return str(status or "").lower() in FAILURE_STATUSES
+
+
+def step_has_success(step: dict) -> bool:
+    """True when the step has at least one tool call that did not fail.
+
+    A step with no tool calls is **not** a success: the recovery walk in
+    ``patterns.detect_failure_patterns`` relies on that so a bare text step
+    does not count as recovering from an error cluster.
+    """
+    return any(not tool_call_failed(tc) for tc in step.get("tool_calls") or [])
+
+
 def tool_call_error_kind(tc: dict) -> StepErrorKind:
     """Classify one failed tool call as scaffold (system) or agentic (tool)."""
     name = tc.get("tool_name")

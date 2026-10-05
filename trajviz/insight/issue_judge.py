@@ -6,7 +6,9 @@ import json
 import re
 from dataclasses import dataclass
 
-from .assistant import ChatFn, complete_chat, _first_user_task
+import requests
+
+from .assistant import ChatFn, complete_chat, _first_user_task, _public_http_error
 from .llm_config import AnalysisLLMConfig, resolve_analysis_config
 from .presenters.issues import IssueJudgment, OverviewIssue
 from .session import LoadedSession
@@ -93,7 +95,7 @@ def pack_issue_judge_context(session: LoadedSession, issue: OverviewIssue) -> st
     """Build a compact text brief for one issue (not the full trajectory)."""
     step_map = {
         int(s.get("index", i)): s
-        for i, s in enumerate(getattr(session, "steps", None) or [])
+        for i, s in enumerate(session.steps or [])
     }
     window_idxs = _step_window_indices(issue.steps)
     ordered: list[int] = []
@@ -117,7 +119,7 @@ def pack_issue_judge_context(session: LoadedSession, issue: OverviewIssue) -> st
         workflow.append(row)
 
     skills: list[dict] = []
-    for item in getattr(session, "file_interactions", None) or []:
+    for item in session.file_interactions or []:
         if item.get("type") != "skill":
             continue
         skills.append({
@@ -129,9 +131,9 @@ def pack_issue_judge_context(session: LoadedSession, issue: OverviewIssue) -> st
             break
 
     session_meta: dict = {
-        "format": getattr(session, "format", "") or "",
+        "format": session.format or "",
     }
-    user_task = _first_user_task(getattr(session, "steps", None) or [])
+    user_task = _first_user_task(session.steps or [])
     if user_task:
         session_meta["user_task"] = user_task
 
@@ -228,6 +230,26 @@ class JudgeProgress:
     finished: bool
 
 
+def _judge_error_text(exc: BaseException) -> str:
+    """Judge-failure text safe to render in the Issues panel.
+
+    The chat path already scrubs this (``assistant._public_http_error``); the
+    judge must share it rather than render ``str(exc)``. requests puts the full
+    request URL in an HTTPError's message, and the analysis base URL is taken
+    verbatim from ANALYZE_BASE_URL, so a query-string credential (Azure
+    ``api-key=``, Gemini ``key=``) would otherwise reach the page.
+
+    ValueErrors raised by this module (parse_issue_judgment's JSON complaints,
+    judge_issue_fix's "not configured") carry no endpoint or key and are the
+    only debuggable signal left once HTTP text is gone, so they pass through —
+    but RequestException is checked first, because requests.JSONDecodeError is
+    both a RequestException and a ValueError.
+    """
+    if isinstance(exc, ValueError) and not isinstance(exc, requests.RequestException):
+        return str(exc)[:200]
+    return _public_http_error(exc)
+
+
 def iter_judge_overview_issues(
     session: LoadedSession,
     issues: list[OverviewIssue],
@@ -261,7 +283,7 @@ def iter_judge_overview_issues(
             )
             working[i] = working[i].with_judgment(judgment)
         except Exception as exc:  # noqa: BLE001 — keep other issues judging
-            errors.append(f"{working[i].title}: {exc}")
+            errors.append(f"{working[i].title}: {_judge_error_text(exc)}")
 
     yield JudgeProgress(
         issues=list(working),

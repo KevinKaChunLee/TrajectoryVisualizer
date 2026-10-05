@@ -43,6 +43,7 @@ def _session(**kwargs):
         plan_history=[],
         edit_thrash=[],
         repeated_searches=[],
+        premature_compactions=[],
         phase_regressions=[],
         performance_bottlenecks=[],
         file_interactions=[],

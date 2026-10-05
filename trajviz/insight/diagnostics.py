@@ -14,7 +14,7 @@ import re
 import statistics
 
 from .shell_cmd import tool_chart_name
-from .tool_failure import tool_call_error_kind, tool_call_failed
+from .tool_failure import FAILURE_STATUSES, tool_call_error_kind, tool_call_failed
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +167,10 @@ def identify_target_files(steps: list[dict]) -> set[str]:
 
         for tc in step.get("tool_calls", []):
             tool_name = tc.get("tool_name", "")
-            status = tc.get("status", "")
-            if tool_name in _WRITE_TOOL_SET and status not in ("error", "failed", "failure"):
+            # Canonical predicate, not a status set: OpenCode reports a failed
+            # write as status "completed" with a non-zero metadata.exit, and
+            # Claude Code as "completed" with an error field.
+            if tool_name in _WRITE_TOOL_SET and not tool_call_failed(tc):
                 inp = tc.get("input", {})
                 if isinstance(inp, dict):
                     # OpenCode uses ``filePath``; Claude Code uses ``file_path``.
@@ -278,18 +280,6 @@ def _step_has_error(step: dict) -> bool:
     return any(tool_call_failed(tc) for tc in step.get("tool_calls", []))
 
 
-def _error_tool_target(tc: dict) -> tuple[str, str]:
-    """Extract (tool_name, primary_target) from a tool call for comparison."""
-    tool_name = tc.get("tool_name", "")
-    inp = tc.get("input", {})
-    if not isinstance(inp, dict):
-        return (tool_name, "")
-    for k in ("file_path", "command", "pattern", "path", "query"):
-        if inp.get(k):
-            return (tool_name, str(inp[k])[:80])
-    return (tool_name, "")
-
-
 def detect_failure_chains(steps: list[dict]) -> list[dict]:
     """Find maximal sequences of consecutive assistant steps with errors.
 
@@ -320,44 +310,6 @@ def detect_failure_chains(steps: list[dict]) -> list[dict]:
         })
 
     return chains
-
-
-def classify_chain_steps(chain: dict, steps: list[dict]) -> list[dict]:
-    """Classify each step in a failure chain as first_error, recovery_attempt, or cascade.
-
-    Returns list of {step_idx, classification} dicts.
-    """
-    step_map = {s["index"]: s for s in steps}
-    chain_steps = chain["steps"]
-
-    if not chain_steps:
-        return []
-
-    # Get first error's tool+target signature
-    first_step = step_map.get(chain_steps[0], {})
-    first_error_sigs = set()
-    for tc in first_step.get("tool_calls", []):
-        # Same predicate as _step_has_error: a chain opened by a cancelled or
-        # timed-out call must still yield first-error signatures, or identical
-        # retries would all be classified "cascade".
-        if tool_call_failed(tc):
-            first_error_sigs.add(_error_tool_target(tc))
-
-    result = [{"step_idx": chain_steps[0], "classification": "first_error"}]
-
-    for idx in chain_steps[1:]:
-        step = step_map.get(idx, {})
-        step_sigs = set()
-        for tc in step.get("tool_calls", []):
-            step_sigs.add(_error_tool_target(tc))
-
-        # Recovery if same tool+target as first error
-        if step_sigs & first_error_sigs:
-            result.append({"step_idx": idx, "classification": "recovery_attempt"})
-        else:
-            result.append({"step_idx": idx, "classification": "cascade"})
-
-    return result
 
 
 def link_chains_to_agents(
@@ -429,13 +381,21 @@ def _error_pattern(tc: dict) -> str:
     if isinstance(meta, dict) and meta.get("exit") not in (None, 0):
         return f"exit code {meta['exit']}"
 
-    # Check status
-    status = tc.get("status", "")
-    if status in ("error", "failed", "failure"):
+    # Check status. Lowercased against the canonical set, or a cancelled /
+    # timed-out / capitalised failure that cluster_errors already admitted via
+    # tool_call_failed would fall through to "unknown error".
+    status = str(tc.get("status") or "").lower()
+    if status in FAILURE_STATUSES:
         output = tc.get("output", "")
         if output:
             return str(output).strip().split("\n")[0][:120]
         return f"status: {status}"
+
+    # Last canonical signal: a failure carried only by error_type. Checked last
+    # so no cluster the branches above already label can be relabelled.
+    error_type = tc.get("error_type")
+    if error_type:
+        return str(error_type).strip()[:120]
 
     return "unknown error"
 
