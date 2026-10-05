@@ -41,11 +41,22 @@ _SEARCH_TOOL_NAMES = {
     *BASH_TOOL_NAMES,
     "Grep", "Glob", "grep", "glob", "find", "ToolSearch", "WebSearch",
 }
+# Every entry must be COMMAND-SHAPED. These are matched as substrings of the
+# whole whitespace-normalised command, so a bare English word matches prose:
+# "lint", "check" and "verify" used to live here and fired on `git checkout`,
+# `cat checklist.md`, `subprocess.check_call`, `astropy.io.fits.verify`, and —
+# dominantly — on standalone words inside quoted script bodies such as
+# `python -c "... # first verify the bug exists ..."`. A word-boundary match
+# would not have helped: the false positive IS a standalone word. Keep the
+# verb attached to its tool.
 _VALIDATION_COMMAND_PATTERNS = (
     "pytest", "python -m pytest", "unittest", "tox", "nox", "go test",
     "cargo test", "npm test", "pnpm test", "yarn test", "jest", "vitest",
     "mvn test", "gradle test", "bazel test", "make test", "ctest", "ruff",
-    "flake8", "pylint", "mypy", "eslint", "lint", "check", "verify",
+    "flake8", "pylint", "mypy", "eslint",
+    "ruff check", "cargo check", "npm run lint", "pnpm lint", "yarn lint",
+    "make lint", "make check", "golangci-lint", "pre-commit run",
+    "tsc --noemit", "git diff --check",
 )
 
 

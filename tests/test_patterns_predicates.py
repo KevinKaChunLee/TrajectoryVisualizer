@@ -1,7 +1,12 @@
 """The pattern module's predicates must agree with each other and say what they mean.
 
-Four defects, all of them in `trajviz/insight/patterns.py`, all verified against
-the 2,500-trajectory corpus as moving no published number:
+The first four defects below are all in `trajviz/insight/patterns.py` and were
+verified against the 2,500-trajectory corpus as moving no published number. Two
+further classes at the end of this file cover fixes that DO move one — the
+recovery walk's failure definition and the validation-command vocabulary — and
+each states its measured corpus delta in its own docstring.
+
+The four behaviour-preserving ones:
 
 * The plan vocabulary was written twice. `_PLAN_TOOL_NAMES` matched exact
   spellings for the phase classifier, while `extract_plan_history` matched its
@@ -29,6 +34,8 @@ import unittest
 from trajviz.insight import patterns
 from trajviz.insight.metrics import build_message_metrics, compute_metrics
 from trajviz.insight.patterns import (
+    _VALIDATION_COMMAND_PATTERNS,
+    _is_validation_command,
     _step_has_success,
     classify_structural_phase,
     detect_fruitless_streaks,
@@ -205,6 +212,61 @@ class RecoveryWalkSharesOneFailureDefinition(unittest.TestCase):
     def test_one_good_call_beside_a_failed_one_still_recovers(self):
         step = {"tool_calls": [{"status": "error"}, {"status": "success"}]}
         self.assertTrue(_step_has_success(step))
+
+
+class ValidationPatternsAreCommandShaped(unittest.TestCase):
+    """A validation pattern must name a tool, not an English word.
+
+    `_is_validation_command` substring-matches the whole normalised command, so
+    the bare entries "lint", "check" and "verify" fired on prose. The dominant
+    corpus false positive was a standalone word inside a quoted script body —
+    `python -c "... # first verify the bug exists ..."` — which a word-boundary
+    match would still have hit, so the verb has to stay attached to its tool.
+
+    This MOVES a published value: the validate phase shrinks 18.3% over the
+    2,500-trajectory corpus (9,786 -> 7,998 steps across 607 files) and
+    phase_regressions falls 9,488 -> 8,984.
+    """
+
+    NOT_VALIDATION = (
+        "git checkout -b feat/x",
+        "cat docs/howto/deployment/checklist.txt",
+        'python -c "import x  # check if attribute exists"',
+        'python -c "# first verify the bug exists"',
+        "grep -rn subprocess.check_call .",
+        "python -c 'from astropy.io.fits import verify'",
+        "ls source checkouts",
+    )
+
+    REAL_VALIDATION = (
+        "python -m pytest tests/ -q",
+        "ruff check trajviz",
+        "cargo check",
+        "npm run lint",
+        "make lint",
+        "golangci-lint run ./...",
+        "pre-commit run --all-files",
+        "git diff --check",
+        "mypy trajviz",
+        "go test ./...",
+    )
+
+    def test_prose_and_unrelated_commands_are_not_validation(self):
+        for command in self.NOT_VALIDATION:
+            with self.subTest(command=command):
+                self.assertFalse(_is_validation_command(command))
+
+    def test_real_validation_commands_still_match(self):
+        for command in self.REAL_VALIDATION:
+            with self.subTest(command=command):
+                self.assertTrue(_is_validation_command(command))
+
+    def test_no_pattern_is_a_bare_english_word(self):
+        # The guard that keeps this class honest: a future bare verb would pass
+        # the two tests above while reintroducing the whole defect class.
+        bare = {"lint", "check", "verify", "test", "build", "run"}
+        offenders = [p for p in _VALIDATION_COMMAND_PATTERNS if p in bare]
+        self.assertEqual(offenders, [], f"bare English words match prose: {offenders}")
 
 
 if __name__ == "__main__":
