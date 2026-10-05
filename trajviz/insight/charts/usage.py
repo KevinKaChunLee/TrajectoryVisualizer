@@ -454,7 +454,7 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
     # One trace per timed call, deliberately: each segment needs its own base,
     # color and step index in customdata, which is what makes a bar clickable
     # back to its Workflow step. Trace count therefore equals timed-call count.
-    # Measured on the 2,500-file corpus: median 12 traces, worst case 177
+    # Measured over 2,500 real exports: median 12 traces, worst case 177
     # (opencode_glm/sympy__sympy-15599) at 0.10s to build and 70 KB of chart
     # HTML, so the cost only bites far outside any real trajectory (10,000
     # synthetic calls: 1.4s, 3.1 MB). Batching into one array-valued Bar per

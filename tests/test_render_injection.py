@@ -509,7 +509,7 @@ class ReportInjectionTests(unittest.TestCase):
 class StepIndexJsInjectionTests(unittest.TestCase):
     """A step index is interpolated into JS string literals and element ids.
 
-    Every producer derives it from ``enumerate``, so no corpus trajectory can
+    Every producer derives it from ``enumerate``, so no real trajectory can
     reach these sinks with a non-numeric index — but the sinks are the kind
     where a broken invariant upstream becomes code execution downstream, so
     they coerce rather than trust.

@@ -716,7 +716,7 @@ def _is_fruitless_step(step: dict) -> bool:
     opencode fruitless steps, 0 on claude_code and codex. Tightening it — skip
     any ``tc`` where ``tool_call_failed(tc)`` or the status is pending/unknown,
     and return False once no resolved search call remains — would shorten
-    ``fruitless_streaks`` and the wasted-step total the Overview and the paper
+    ``fruitless_streaks`` and the wasted-step total the Overview
     report, so changing this is a published-number decision, not a cleanup.
     Characterised in tests/test_patterns_predicates.py.
     """

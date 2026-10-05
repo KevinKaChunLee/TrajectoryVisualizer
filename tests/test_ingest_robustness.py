@@ -624,7 +624,7 @@ class MetricInvariants(unittest.TestCase):
         """A record that cannot yield a cache share is excluded and counted, not clamped.
 
         OpenCode reports a ``total`` that excludes the cache read, so 16 of the
-        2,500 real corpus trajectories once rendered ``Avg cache % = 25386.2%``
+        2,500 real trajectory exports once rendered ``Avg cache % = 25386.2%``
         under a green "strong cache reuse" verdict
         (``opencode_opus/django__django-11555.json``). The shipped fix is
         rejection, not clamping: ``parser.cache_read_share`` is the single source
@@ -667,7 +667,7 @@ class MetricInvariants(unittest.TestCase):
 
         OpenCode subtracts the cache read from the prompt size, which
         double-subtracts against providers whose ``input_tokens`` is already
-        cache-exclusive, so 82 real corpus files carry a negative raw
+        cache-exclusive, so 82 real exports carry a negative raw
         ``input``. Those records used to be summed, showing an ``Input`` chip
         of ``-3,175,801``. They are now excluded from the sum and counted in
         ``input_tokens_unusable_steps`` so the surface can say so.

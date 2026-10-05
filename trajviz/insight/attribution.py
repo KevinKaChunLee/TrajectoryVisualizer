@@ -74,11 +74,11 @@ if _DECAF_ROOT is not None and str(_DECAF_ROOT) not in sys.path:
     sys.path.insert(0, str(_DECAF_ROOT))
 
 # The corpus root default is captured ONCE at import (immutable thereafter):
-# env override, else a sibling TraceProbe. Every diagnose() call explicitly
+# env override, else a sibling . Every diagnose() call explicitly
 # configures this default or the caller's root — never "whatever the previous
 # caller left behind".
 _DEFAULT_ROOT = Path(os.environ.get(
-    "AWE_ARGUS_ROOT", str(Path(__file__).resolve().parents[3] / "TraceProbe")))
+    "AWE_ARGUS_ROOT", str(Path(__file__).resolve().parents[3] / "")))
 os.environ.setdefault("AWE_ARGUS_ROOT", str(_DEFAULT_ROOT))
 # DECAF's judge/arbiter caches are partitioned by model slug; the checked-in
 # caches were produced with z-ai/glm-5.2 — the awe default (claude-sonnet-4.5)
@@ -255,7 +255,7 @@ def diagnose(*, agent: str | None, instance_id: str | None,
 
     ``expected_sha`` — the sha256 captured when the UI LOADED the trajectory
     (the immutable identity of the displayed content). Diagnosis requires the
-    canonical file's CURRENT bytes to equal it, so a corpus file mutated between
+    canonical file's CURRENT bytes to equal it, so a real export mutated between
     load and diagnosis is refused rather than diagnosed while the UI still
     shows the old state.
 
@@ -312,7 +312,7 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     if canon is None:
         return AttributionResult(
             False, mode="corpus", agent=agent, instance_id=instance_id,
-            reason=f"no corpus trajectory for {agent}/{instance_id} under "
+            reason=f"no real trajectory for {agent}/{instance_id} under "
                    f"{config.ARGUS_ROOT} — cannot verify the displayed trajectory "
                    f"belongs to this run")
     if merged_sources:
@@ -350,7 +350,7 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
             False, mode="gold_free", agent=agent, instance_id=instance_id,
             reason=f"the displayed trajectory does not match the canonical "
                    f"{agent}/{instance_id} run's current content — either it "
-                   f"belongs to a different execution, or the corpus file "
+                   f"belongs to a different execution, or the real export "
                    f"changed after it was loaded (reload to re-sync). A "
                    f"gold-grounded verdict would otherwise describe different "
                    f"bytes than the ones shown")
@@ -383,7 +383,7 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     if _sha256(canon) != canon_sha:
         return AttributionResult(
             False, mode="corpus", agent=agent, instance_id=instance_id,
-            reason=f"the corpus trajectory for {agent}/{instance_id} changed "
+            reason=f"the real trajectory for {agent}/{instance_id} changed "
                    f"while the diagnosis was running — reload and retry")
     return _shape(rec, d.get("opportunities", {}), notes)
 

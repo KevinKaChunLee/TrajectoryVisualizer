@@ -2,7 +2,7 @@
 
 OpenCode derives `input` by subtracting the cache read from the prompt size.
 Against a provider whose `input_tokens` is already cache-exclusive (the
-Anthropic-style endpoints) that subtracts twice, so 82 real corpus files carry
+Anthropic-style endpoints) that subtracts twice, so 82 real real exports carry
 a NEGATIVE raw input. TrajViz summed it (Input: -3,175,801) and divided by it
 (cache_read / total = 25,386.2%, rendered with a GREEN "strong cache reuse"
 verdict). Both symptoms are the same record; these tests pin the domain rules

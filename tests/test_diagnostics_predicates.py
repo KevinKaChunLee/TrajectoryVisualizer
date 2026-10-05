@@ -87,7 +87,7 @@ class ErrorPatternTests(unittest.TestCase):
 
     def test_existing_branches_keep_their_labels(self):
         # Branch order (error -> exit -> status -> error_type) must not change,
-        # or clusters the corpus already labels would be relabelled.
+        # or clusters already-labelled data would be relabelled.
         self.assertEqual(_error_pattern({"status": "error", "output": "boom"}), "boom")
         self.assertEqual(_error_pattern({"metadata": {"exit": 2}}), "exit code 2")
         self.assertEqual(_error_pattern({"error": "nope\ntrace"}), "nope")

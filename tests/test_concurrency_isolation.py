@@ -311,7 +311,7 @@ class ConcurrentLoadIsolationTests(_CorpusMixin, unittest.TestCase):
                 self.assertEqual(digest, baseline[path], f"concurrent load of {os.path.basename(path)} differs")
 
     def test_threads_get_the_metrics_of_the_trajectory_they_asked_for(self):
-        """The published numbers, not just an opaque digest, must follow the input.
+        """The reported metrics, not just an opaque digest, must follow the input.
 
         The two synthesized runs are built with different step counts and token
         totals precisely so that a swapped result is detectable.

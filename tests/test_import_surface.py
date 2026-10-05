@@ -24,11 +24,10 @@ Two further invariants guard the *inputs* to that surface — where imports reso
 from, and what the package claims to need:
 
 3. The suite's ``sys.path`` and ``rootdir`` come from a declaration in this
-   repository's ``pyproject.toml``, not from the surrounding ARGUS monorepo and
-   not from an install-mode accident.  TrajViz is a gitignored subdirectory of a
-   monorepo that has its own ``[tool.pytest.ini_options]``, and ``scripts`` is an
-   implicit namespace package that three sibling trees (DECAF, ParaPilotRuntime,
-   TraceProbe) also provide.
+   repository's ``pyproject.toml``, not from a parent directory and not from an
+   install-mode accident.  TrajViz may be checked out inside a larger tree that
+   has its own ``[tool.pytest.ini_options]``, and ``scripts`` is an implicit
+   namespace package that neighbouring checkouts may also provide.
 4. Every declared runtime dependency is either imported by shipped code or
    carries a comment saying why it is declared anyway.  An unimported,
    unexplained requirement is indistinguishable from a leftover.
@@ -335,17 +334,17 @@ def test_pytest_rootdir_and_path_come_from_this_repository(pytestconfig):
     """Function-style because it needs pytest's resolved config (``pytestconfig``).
 
     Asserts the three consequences of this repo owning its own
-    ``[tool.pytest.ini_options]``: rootdir is here, nothing is inherited from the
-    monorepo's pytest config, and the ``scripts`` import path is declared rather
+    ``[tool.pytest.ini_options]``: rootdir is here, nothing is inherited from a
+    parent directory's pytest config, and the ``scripts`` import path is declared rather
     than supplied by an editable-install ``.pth``, by ``python -m``'s CWD
     insertion, or by a ``PYTHONPATH`` env var in CI.
     """
     assert Path(pytestconfig.rootpath) == _REPO_ROOT, (
-        f"rootdir is {pytestconfig.rootpath}, not {_REPO_ROOT} — pytest walked up into the monorepo"
+        f"rootdir is {pytestconfig.rootpath}, not {_REPO_ROOT} — pytest walked up out of this repository"
     )
     assert Path(pytestconfig.inipath or "") == _REPO_ROOT / "pyproject.toml"
     # Read the table out of whichever file pytest actually resolved. `asyncio_mode`
-    # is the monorepo's (pytest-asyncio is not installed here), so finding it means
+    # comes from a parent directory (pytest-asyncio is not installed here), so finding it means
     # this suite is running on someone else's pytest configuration — which pytest
     # only reports as a PytestConfigWarning about an unknown option.
     ini_table = tomllib.loads(Path(pytestconfig.inipath).read_text(encoding="utf-8"))
@@ -358,10 +357,10 @@ def test_pytest_rootdir_and_path_come_from_this_repository(pytestconfig):
 def test_the_scripts_modules_resolve_inside_this_repository():
     """``scripts`` is a namespace package that sibling trees also define.
 
-    DECAF/, ParaPilotRuntime/ and TraceProbe/ each have a ``scripts/`` directory,
-    and this is not hypothetical: ``trajviz.insight.attribution`` puts the DECAF
-    checkout's parent on ``sys.path`` to import ``awe``, after which
-    ``scripts.__path__`` really does contain ``…/DECAF/scripts`` ahead of ours.
+    This is not hypothetical: ``trajviz.insight.attribution`` puts the DECAF
+    checkout's parent on ``sys.path`` to import ``awe``, and if that checkout also
+    has a ``scripts/`` directory then ``scripts.__path__`` really does contain it
+    ahead of ours.
     No module name collides today, so resolution is still correct — which is
     exactly why this needs a test rather than a comment: the first colliding
     filename would redirect ``from scripts import X`` into another project with no

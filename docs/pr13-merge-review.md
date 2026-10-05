@@ -219,19 +219,24 @@ xfails 8 → 6. Suite 823 → 844 passing, ruff clean, full deep sweep 2,500/2,5
 ## Walkthrough gap remediation (2026-10-05)
 
 An architecture walkthrough of the whole package surfaced 66 candidate gaps.
-Each was triaged against the live tree with its corpus blast radius measured
-*before* any edit: **53 fix-safe, 8 document-only, 4 number-moving, 1 not a
-defect**. All 66 are now dispositioned. Suite **844 → 997 passing**, 2 skipped,
-**xfails 6 → 0**, ruff clean, DECAF present so the 39 attribution tests ran.
+Each was triaged against the live tree with its blast radius measured *before*
+any edit: **53 fix-safe, 8 document-only, 4 number-moving, 1 not a defect**. All
+66 are now dispositioned. Suite **844 → 998 passing**, 2 skipped, **xfails
+6 → 0**, ruff clean, DECAF present so the 39 attribution tests ran.
+
+Measurements below come from a differential over 2,500 real trajectory exports
+(500 each from Claude Code, Codex and three OpenCode model variants), run under
+both revisions and diffed key by key. The harness is described at the end of
+this document.
 
 Two triage findings corrected earlier claims and are worth keeping:
 
 - The dead branch in the tool-success classifier is **unreachable**, not a live
-  over-count: 0 of 81,139 corpus tool calls carry an unset status. Collapsing it
-  is a provable no-op, so it is not a restatement of `tool_success_rate`.
+  over-count: 0 of 81,139 tool calls across that set carry an unset status.
+  Collapsing it is a provable no-op, so it does not restate `tool_success_rate`.
 - `avg_tokens_per_step` was fixed **additively**. Redefining its denominator
   would have moved it on 2,500/2,500 files (median +6.3%, max +25%); that is a
-  republish decision, so the published key is untouched and
+  re-reporting decision, so the existing key is untouched and
   `avg_tokens_per_assistant_step` sits beside it.
 
 ### The correctness fix this closes
@@ -245,18 +250,18 @@ the hole the evidence-gaps section below predicted — the identity gate had nev
 been executed against a DSH directory. The hash is now a domain-separated
 composite over the parent plus each child's `(session id, sha)`, computed **only
 when a merge happened**, so every single-file load keeps the plain sha256 it has
-always had (verified: `_source_sha256` moves on 0 of 2,500 corpus files).
+always had (verified: `_source_sha256` moves on 0 of 2,500 files).
 
-### Corpus differential — what moved
+### Differential — what moved
 
-Full 2,500-trajectory digest of `load_trajectory` → `parse_steps` →
-`compute_metrics` / `compute_health_verdict` / `compute_agent_summary`, before
-vs after the 53 fix-safe changes:
+Digest of `load_trajectory` → `parse_steps` → `compute_metrics` /
+`compute_health_verdict` / `compute_agent_summary`, before vs after the 53
+fix-safe changes:
 
 | Change | Files | Note |
 |---|---|---|
 | **0 parsed-step changes** | 0 / 2500 | the ingest fixes are error paths only |
-| **0 pre-existing `metrics.*` values** | 0 / 2500 | no published metric restated |
+| **0 pre-existing `metrics.*` values** | 0 / 2500 | no reported metric restated |
 | `agents[].input_tokens` | 82 | negative OpenCode inputs no longer summed; 18 were strictly negative |
 | 8 new keys added | 2500 | per-agent unusable-step counts, `avg_tokens_per_assistant_step` |
 
@@ -269,8 +274,8 @@ losing the rest.
    `status=completed` + non-zero `metadata.exit` everywhere *except* here, where
    the private predicate also compared statuses case-sensitively. Now delegates
    to `tool_failure.step_has_success`. Moves `recovery_path` on **449 / 2500**
-   files (591 clusters); "no recovery found" rises 236 → 325. claude_code and
-   codex are **bit-identical** (neither emits `metadata.exit`). Phase
+   files (591 clusters); "no recovery found" rises 236 → 325. Claude Code and
+   Codex are **bit-identical** (neither emits `metadata.exit`). Phase
    composition untouched.
 2. **The validation-command vocabulary.** The bare words `lint`, `check` and
    `verify` were substring-matched against whole commands, so they fired on
@@ -279,24 +284,24 @@ losing the rest.
    script bodies (`python -c "... # check if attribute exists ..."`). A
    word-boundary match would not have helped. Validate-phase steps **9,786 →
    7,998 (-18.3%, 607 files)**, segments 27,910 → 26,783, `phase_regressions`
-   9,488 → 8,984. All five formats; worst on opencode_glm (-31.4%). This also
-   reaches converge, which imports `_is_validation_command`:
+   9,488 → 8,984. All five export variants; worst on OpenCode GLM (-31.4%).
+   This also reaches converge, which imports `_is_validation_command`:
    `effect_label`, `first_passing_validation` and its deltas all move.
 
-**Any previously published OpenCode recovery-path or phase-composition figure is
+**Any previously reported OpenCode recovery-path or phase-composition figure is
 stale.** The direction is toward honesty in both cases.
 
 ### Still not possible without a secret
 
 The 39 DECAF-gated tests remain outside CI. This repository is public and the
-monorepo carrying `DECAF/awe` is private, so the checkout needs a credential and
-every credential is a secret — there is no token-free variant. Vendoring `awe`
-would publish an unpublished method from a paper under submission; stubbing it
+repository carrying `DECAF/awe` is private, so the checkout needs a credential
+and every credential is a secret — there is no token-free variant. Vendoring
+`awe` would publish an unpublished method into a public repository; stubbing it
 would make every golden assertion tautological. `integration.yml` now fails at a
 **preflight with an actionable message** instead of an opaque checkout error, and
 its header records the one alternative needing no new secret: run the equivalent
-job from inside the private monorepo. A coverage job was added but has **not**
-been verified in CI.
+job from inside the private repository that holds DECAF. A coverage job was added
+but has **not** been verified in CI.
 
 ## Open backlog (confirmed, not yet fixed)
 

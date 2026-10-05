@@ -308,7 +308,7 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
         source_sha = _dsh_tree_sha256(source_sha, merged_sources)
     # The displayed content's immutable identity — the sha256 of the EXACT
     # bytes parsed above (one read, one buffer): attribution requires the
-    # canonical corpus file to still have these bytes at diagnosis time
+    # canonical real export to still have these bytes at diagnosis time
     # (TOCTOU guard — never diagnose bytes the UI isn't showing).
     result["_source_sha256"] = source_sha
     return result

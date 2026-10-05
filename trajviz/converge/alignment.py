@@ -59,7 +59,7 @@ def align_trajectories(
 
     Cost is O(n*m) in time and memory (match matrix + DP table), measured at
     0.032s for 200x200 and 2.0s for 1600x1600 non-REASON actions. That is
-    ample headroom for this corpus: across all 2,500 trajectories the maximum
+    ample headroom in practice: across 2,500 real trajectories the maximum
     is 187 non-REASON actions (claude_code/django__django-11734), and the
     worst real pair builds a full report in 0.016s. ``compare_segments``
     re-enters this function once per paired segment, but ``segment_by_milestones``

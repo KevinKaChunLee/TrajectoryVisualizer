@@ -451,8 +451,7 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
     *completion* stamp, so the whole turn is inside the figure. No supported
     export records streaming or first-delta timing — the step model carries
     only ``time_created_ms``/``time_completed_ms`` — so a true time-to-first-token
-    is not computable here. The names are kept because they are in published
-    corpus output and in the released artifact copy.
+    is not computable here. The names are kept because callers already read them.
 
     Output throughput uses output tokens and generation time from the exact
     same set of assistant steps.  This prevents untimed output (which is
@@ -610,7 +609,7 @@ def _compute_token_stats(total_tokens, total_duration, steps, message_rows, raw)
         "non_cache_ratio": round(non_cache_total / total_tokens["total"] * 100, 1) if total_tokens["total"] else 0,
         # Two "per step" averages on purpose. `avg_tokens_per_step` divides by
         # ALL steps (user turns included, which report no tokens) and is kept
-        # emitted for continuity with published results. Only the assistant
+        # emitted for continuity with figures already reported. Only the assistant
         # variant shares a denominator with median_step_tokens / p95_step_tokens
         # below, so that is the one to compare against them.
         "avg_tokens_per_step": round(total_tokens["total"] / len(steps)) if steps else 0,

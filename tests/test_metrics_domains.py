@@ -191,7 +191,7 @@ class StepTokenDenominators(unittest.TestCase):
         self.assertEqual(self.m["p95_step_tokens"], 1000)
 
     def test_the_all_steps_average_is_still_published(self):
-        # Continuity: this key is in published corpus output and must not move.
+        # Continuity: callers already read this key, so it must not move.
         self.assertEqual(self.m["avg_tokens_per_step"], 500)
         self.assertEqual(self.m["assistant_steps"], 3)
         self.assertEqual(self.m["total_steps"], 6)

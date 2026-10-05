@@ -1,29 +1,29 @@
 """The pattern module's predicates must agree with each other and say what they mean.
 
 The first four defects below are all in `trajviz/insight/patterns.py` and were
-verified against the 2,500-trajectory corpus as moving no published number. Two
-further classes at the end of this file cover fixes that DO move one — the
+verified against a large set of real trajectory exports as moving no reported
+metric. Two further classes at the end of this file cover fixes that DO move one — the
 recovery walk's failure definition and the validation-command vocabulary — and
-each states its measured corpus delta in its own docstring.
+each states its measured delta in its own docstring.
 
 The four behaviour-preserving ones:
 
 * The plan vocabulary was written twice. `_PLAN_TOOL_NAMES` matched exact
   spellings for the phase classifier, while `extract_plan_history` matched its
   own lowercase tuple, so `TodoUpdate` set the plan phase but produced no plan
-  history and `todo_write` did the exact opposite. No corpus export emits either
+  history and `todo_write` did the exact opposite. No real export observed emits either
   spelling (only `TodoWrite` and `todowrite` occur), so unifying them is
-  behaviour-preserving on every published figure and only fixes the latent case.
+  behaviour-preserving on every reported figure and only fixes the latent case.
 * `detect_phase_anomalies` called a span fraction `confidence`: it is the share
   of the trajectory the regressed phase covers, so it *falls* as the evidence
   grows. Nothing reads the key, so the honest name is free.
 * `patterns.compute_autonomy_ratio` was dead, and disagreed with the live
   definition in `metrics.py` (which divides by user+assistant turns, not by all
-  steps — the corpus has a third `developer` role, so the two differ on codex).
+  steps — real exports carry a third `developer` role, so the two differ on Codex).
 
 The fourth, `_is_fruitless_step` treating a missing output as an empty one, is
 characterised here rather than fixed: the fix would move `fruitless_streaks`
-and the wasted-step total that the paper reports. See the comment at its
+and the wasted-step total the Overview reports. See the comment at its
 definition.
 """
 
@@ -129,7 +129,7 @@ class AutonomyRatioHasOneDefinition(unittest.TestCase):
         )
 
     def test_live_definition_stays_a_fraction_with_a_third_role(self):
-        """`developer` steps exist in the corpus; the live formula ignores them."""
+        """`developer` steps occur in real exports; the live formula ignores them."""
         steps = [
             _step(0, role="user"),
             _step(1, role="assistant"),
@@ -142,7 +142,7 @@ class AutonomyRatioHasOneDefinition(unittest.TestCase):
 
 
 class FruitlessSearchTreatsMissingOutputAsEmpty(unittest.TestCase):
-    """Characterisation, NOT a fix: `fruitless_streaks` is a published number.
+    """Characterisation, NOT a fix: `fruitless_streaks` is a reported number.
 
     `_is_fruitless_step` cannot distinguish "the search returned nothing" from
     "the call never resolved, so nothing was recorded" — both read as empty.
@@ -178,8 +178,8 @@ class RecoveryWalkSharesOneFailureDefinition(unittest.TestCase):
     tool_success_rate, the cluster labels and the Workflow badges — called it a
     failure. PR #13 corrected that reading everywhere except this walk.
 
-    This MOVES a published value: `recovery_path` changes on 449 of the 1,500
-    OpenCode corpus trajectories (591 clusters), and the honest
+    This MOVES a reported value: over a large set of real exports `recovery_path`
+    changes on 449 of 1,500 OpenCode trajectories (591 clusters), and the honest
     "no recovery found" count rises from 236 to 325. claude_code and codex are
     bit-identical, because neither emits `metadata.exit`.
     """
@@ -223,8 +223,8 @@ class ValidationPatternsAreCommandShaped(unittest.TestCase):
     `python -c "... # first verify the bug exists ..."` — which a word-boundary
     match would still have hit, so the verb has to stay attached to its tool.
 
-    This MOVES a published value: the validate phase shrinks 18.3% over the
-    2,500-trajectory corpus (9,786 -> 7,998 steps across 607 files) and
+    This MOVES a reported value: measured over 2,500 real trajectory exports the
+    validate phase shrinks 18.3% (9,786 -> 7,998 steps across 607 files) and
     phase_regressions falls 9,488 -> 8,984.
     """
 

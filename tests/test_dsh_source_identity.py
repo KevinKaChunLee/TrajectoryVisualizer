@@ -177,7 +177,7 @@ class DirectorySourceIdentityTests(unittest.TestCase):
         self.assertNotEqual(raw["_source_sha256"], raw["_source_file_sha256"])
 
     def test_a_tree_with_no_subagents_keeps_the_plain_file_sha(self):
-        """Backward compatibility, and the reason the corpus numbers cannot move:
+        """Backward compatibility, and the reason existing identities cannot move:
         with nothing merged the identity is still sha256 of the file's bytes."""
         export = _build_tree(self.tmp, "lonely", None)
         raw = load_trajectory(str(export))
