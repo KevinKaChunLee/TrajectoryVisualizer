@@ -247,7 +247,7 @@ def _llm_layer_policy(agent: str, instance_id: str, canon_sha: str):
 # --------------------------------------------------------------------------- #
 def diagnose(*, agent: str | None, instance_id: str | None,
              source_path: str | os.PathLike | None = None, fmt: str | None = None,
-             expected_sha: str | None = None,
+             expected_sha: str | None = None, merged_sources: int = 0,
              argus_root: str | os.PathLike | None = None) -> AttributionResult:
     """Diagnose the failure of the *displayed* trajectory. Never raises; never
     fabricates; degrades with an explicit reason. See the module docstring for
@@ -258,17 +258,24 @@ def diagnose(*, agent: str | None, instance_id: str | None,
     canonical file's CURRENT bytes to equal it, so a corpus file mutated between
     load and diagnosis is refused rather than diagnosed while the UI still
     shows the old state.
+
+    ``merged_sources`` — how many ADDITIONAL files the loader merged into the
+    displayed trajectory (``_source_merged_count``; non-zero only for a DSH
+    export tree). Anything above zero is unverifiable here by construction, so
+    it is refused with that reason rather than compared.
     """
     if not DECAF_AVAILABLE:
         return AttributionResult(False, reason=f"DECAF unavailable ({_IMPORT_ERROR})")
     with _LOCK:
         return _diagnose_locked(agent=agent, instance_id=instance_id,
                                 source_path=source_path, fmt=fmt,
-                                expected_sha=expected_sha, argus_root=argus_root)
+                                expected_sha=expected_sha,
+                                merged_sources=merged_sources,
+                                argus_root=argus_root)
 
 
 def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
-                     argus_root):
+                     argus_root, merged_sources=0):
     # per-call, explicit configuration — never inherited from a previous caller
     _configure_unlocked(argus_root if argus_root else _DEFAULT_ROOT)
 
@@ -308,6 +315,21 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
             reason=f"no corpus trajectory for {agent}/{instance_id} under "
                    f"{config.ARGUS_ROOT} — cannot verify the displayed trajectory "
                    f"belongs to this run")
+    if merged_sources:
+        # A merged export (DSH parent log + N sub-agent logs) has no single-file
+        # identity to compare: `canonical_trajectory_path` resolves exactly ONE
+        # file per (agent, instance) and the LLM-layer provenance is keyed on
+        # that file's sha, so the composite the loader stamped cannot match by
+        # construction. Say that, rather than let the sha comparison below blame
+        # a mismatch or (worse) certify a tree whose children were never hashed.
+        return AttributionResult(
+            False, mode="gold_free", agent=agent, instance_id=instance_id,
+            reason=f"the displayed trajectory is a merged multi-file export "
+                   f"(parent log + {merged_sources} sub-agent log"
+                   f"{'s' if merged_sources != 1 else ''}), while the canonical "
+                   f"source for {agent}/{instance_id} is a single file — its "
+                   f"content cannot be certified as this run, so no "
+                   f"gold-grounded verdict is issued")
     canon_sha = _sha256(canon)
     # Identity is CONTENT identity, never path identity: the displayed bytes'
     # hash (captured at load) — or, failing that, the current source file's
