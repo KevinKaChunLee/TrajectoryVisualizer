@@ -132,6 +132,15 @@ def load_taxonomy(taxonomy_path: str) -> tuple[dict[str, list[str]], str]:
             if phase and not any(c in phase for c in (" ", "(")):
                 current_phase = phase
                 mapping.setdefault(current_phase, [])
+        # A level-1/2 heading (`# Title`, `## Notes`) CLOSES the current phase.
+        # Without this, every later bullet keeps the last `### <phase>` — and
+        # `## Notes` is the last heading in TAXONOMY_REFERENCE.md, so a Notes
+        # bullet written in the file's own `- `name`: ...` style would silently
+        # become a valid action of the `report` phase. `#### ` is deliberately
+        # excluded: the carve-out above already decided sub-subsections refine
+        # the phase they sit under, so their bullets are that phase's actions.
+        elif re.match(r"#{1,2} ", line):
+            current_phase = None
         # Action: - `action_name`: description
         elif line.startswith("- `") and current_phase:
             match = re.match(r"- `(\w+)`", line)

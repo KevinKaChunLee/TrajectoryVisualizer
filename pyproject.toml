@@ -24,6 +24,12 @@ classifiers = [
 ]
 dependencies = [
     "gradio>=6.14.0",
+    # Inert, and kept only for now: nothing under trajviz/ or scripts/ imports
+    # gradio_client, and gradio itself requires `gradio-client==2.5.0` — an exact
+    # pin, strictly stronger than this floor — so this line cannot affect
+    # resolution or protect anything. Dropping it must land together with a
+    # regenerated uv.lock (both workflows install with `uv sync --locked`, which
+    # fails on a lock that still lists gradio-client as a direct dependency).
     "gradio_client>=2.5.0",
     "plotly>=5.0",
     "pygments>=2.0",
@@ -49,6 +55,11 @@ dev = [
 
 [project.scripts]
 trajviz = "trajviz.insight.__main__:main"
+# cli.py already advertises prog="trajectory-converge" in its --help/usage text;
+# without this entry that name existed nowhere and the CLI was reachable only as
+# `python -m trajviz.converge.cli` (C8). `python -m trajviz.converge` launches
+# the Gradio app and must keep doing so.
+trajectory-converge = "trajviz.converge.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/rshu/TrajectoryVisualizer"
@@ -77,3 +88,26 @@ ignore = [
 # Scripts keep their import-after-sys.path-dance layout.
 "scripts/*" = ["E402"]
 "tests/*" = ["E402"]
+
+# The presence of this table is load-bearing, independent of its contents: it
+# makes THIS file pytest's inifile, which pins rootdir to this repository. TrajViz
+# is a gitignored subdirectory of the private ARGUS monorepo, whose own
+# pyproject.toml carries [tool.pytest.ini_options]; without this table pytest
+# walks up, resolves rootdir to the monorepo and inherits its settings — which is
+# how `asyncio_mode` (a plugin option TrajViz does not install) reached this suite
+# as a PytestConfigWarning, and, worse, how a bare `pytest` here collected the
+# monorepo's `testpaths` (TraceProbe/tests, ParaPilotRuntime/tests) instead of
+# ours. CI dodged that only by always passing `tests` explicitly.
+#
+# `pythonpath` declares the one thing the suite has always needed and never
+# stated: the repo root on sys.path, because four test modules import `scripts`
+# (`from scripts import step_labeler`, ...) and `scripts` is NOT part of the wheel
+# (see [tool.hatch.build.targets.wheel]). Until now that path arrived by accident
+# from three undeclared sources — hatchling's editable .pth, `python -m pytest`
+# inserting the CWD, and a PYTHONPATH env var in both workflows (since removed).
+# Entries resolve against rootdir, so this works from any CWD and any install mode.
+# No `addopts`: it would change CI log shape for no gain.
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["."]

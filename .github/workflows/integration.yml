@@ -11,6 +11,28 @@ name: DECAF integration (trusted)
 # Requires the ARGUS_PAT secret: a READ-ONLY fine-grained PAT for rshu/ARGUS.
 # TRAJVIZ_REQUIRE_ATTRIBUTION=1 turns a missing environment into a hard failure,
 # so this workflow can never be green by silently skipping the integration tests.
+#
+# WHY THIS JOB CANNOT RUN WITHOUT THAT SECRET, and what the alternatives were.
+# This repository is PUBLIC; rshu/ARGUS (which carries DECAF/awe) and the DECAF
+# upstream are both PRIVATE. A public repository's GITHUB_TOKEN cannot read a
+# private one, so the DECAF checkout below needs a credential — any credential is
+# a secret, so there is no token-free variant of THIS workflow. The three
+# alternatives were considered and rejected:
+#   * check DECAF out from a public remote — no public DECAF exists;
+#   * vendor `awe` into tests/fixtures/ — that publishes DECAF's unpublished
+#     method implementation from a paper under submission into a public repo;
+#   * let tests/fixtures/decaf_cache stand in — it already does the job it can do.
+#     That fixture is the attribution *data* (hermetic corpus + cached trajsignals,
+#     tracked via the .gitignore negations). What these tests exercise is the awe
+#     *code*: attribution.diagnose() drives awe.adapters/trajsignals/arbiter and
+#     asserts pinned goldens precisely so DECAF drift fails loudly. Stubbing awe
+#     would make every golden assertion tautological — a green job proving nothing.
+# Until the secret exists, the DECAF-gated tests do not execute in any workflow of
+# this repository; they skip in `CI / standalone` and this job fails at the
+# preflight below rather than at an opaque `actions/checkout` token error. The
+# executable alternative that needs no new secret is a workflow in the PRIVATE
+# monorepo (checkout self for DECAF/awe + checkout this PUBLIC repo, no token on
+# either side); see docs for `trajviz-decaf-integration.yml`.
 
 on:
   push:
@@ -26,6 +48,19 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
+      # Fail here, not at actions/checkout. Without this, a missing secret
+      # surfaces as "Input required and not supplied: token" on a step whose name
+      # mentions DECAF, which reads like a broken pin rather than an unconfigured
+      # repository. A step-level `if:` cannot see the `secrets` context, so the
+      # secret is mapped into env and tested in the shell instead.
+      - name: Preflight — the ARGUS_PAT secret must be configured
+        env:
+          TOK: ${{ secrets.ARGUS_PAT }}
+        run: |
+          if [ -z "$TOK" ]; then
+            echo "::error title=ARGUS_PAT is not configured::The DECAF-gated attribution tests cannot run here. This public repository has no credential for the private rshu/ARGUS monorepo that carries DECAF/awe. Create a read-only fine-grained PAT for rshu/ARGUS as the ARGUS_PAT secret, or run the equivalent job from inside the monorepo (see this workflow's header). Deliberately a hard failure: a green run here must mean the integration tests executed."
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -44,9 +79,11 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - name: Install (locked)
         run: uv sync --locked --extra dev
+      # No PYTHONPATH: the repo root now reaches sys.path through
+      # `pythonpath = ["."]` in [tool.pytest.ini_options], which is declared,
+      # rootdir-relative and identical locally and in CI.
       - name: Test (integration — DECAF present, no silent skips)
         env:
-          PYTHONPATH: ${{ github.workspace }}
           AWE_DECAF_PATH: ${{ github.workspace }}/_argus/DECAF
           TRAJVIZ_REQUIRE_ATTRIBUTION: "1"
         run: uv run python -m pytest tests -q
