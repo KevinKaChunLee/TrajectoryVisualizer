@@ -5,6 +5,11 @@ from __future__ import annotations
 import gradio as gr
 
 from .llm_config import load_env_files
+from .charts.activity import (
+    FILE_INTERACTION_CHROME_PX,
+    FILE_INTERACTION_MIN_HEIGHT,
+    FILE_INTERACTION_ROW_PX,
+)
 from .styles import APP_CSS
 from .ui import (
     attribution_tab,
@@ -105,7 +110,7 @@ def build_ui() -> gr.Blocks:
                 }
                 if (!window.__tvChartUiBound) {
                     window.__tvChartUiBound = true;
-                    const ROW = 28, CHROME = 120, MIN = 340;
+                    const ROW = __TV_ROW__, CHROME = __TV_CHROME__, MIN = __TV_MIN__;
                     window.tvExpandFileTimeline = function () {
                         document.querySelectorAll('.resizable-chart').forEach((root) => {
                             const gd = root.querySelector('.js-plotly-plot')
@@ -329,7 +334,13 @@ def build_ui() -> gr.Blocks:
                     [0, 80, 250, 600].forEach((ms) => setTimeout(schedule, ms));
                 }
                 return [false];
-            }""",
+            }"""
+            # Single-sourced from charts.activity so the JS expander and the
+            # figure it resizes can never disagree. `.replace` rather than an
+            # f-string or .format(): this literal is full of JS braces.
+            .replace("__TV_ROW__", str(FILE_INTERACTION_ROW_PX))
+            .replace("__TV_CHROME__", str(FILE_INTERACTION_CHROME_PX))
+            .replace("__TV_MIN__", str(FILE_INTERACTION_MIN_HEIGHT)),
         )
 
     return app

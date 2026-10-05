@@ -64,7 +64,9 @@ class ReportBuildTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         import trajviz.insight.ui.upload as upload_mod
 
-        upload_mod._last_temp_export_dir = None
+        # Per-session now, not a single global: setting the old name would be a
+        # silent no-op and this reset would stop isolating the test.
+        upload_mod._last_temp_export_dirs.clear()
         self.oc = {
             "info": {
                 "id": "ses_test",

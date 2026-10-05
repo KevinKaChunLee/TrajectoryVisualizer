@@ -255,7 +255,11 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
                      if has_breakdown else "N/A"),
     ]
     eff_chips = [
-        _metric_chip("Avg tok/step", f"{metrics['avg_tokens_per_step']:,}"),
+        # Assistant-step denominator on purpose: this chip is read against
+        # "Med tok/step" / "P95 tok/step" in the Behavioral grid, and those use
+        # assistant rows only. `avg_tokens_per_step` (all steps, user turns
+        # included) is still emitted for continuity but is not comparable here.
+        _metric_chip("Avg tok/asst step", f"{metrics['avg_tokens_per_assistant_step']:,}"),
         _metric_chip("Total processed tok/sec", f"{metrics['tokens_per_second']:,}"),
         _metric_chip("Median processed tok/sec", f"{metrics['median_tokens_per_second']:,}"),
         _metric_chip("Out/In ratio",

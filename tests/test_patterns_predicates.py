@@ -269,5 +269,26 @@ class ValidationPatternsAreCommandShaped(unittest.TestCase):
         self.assertEqual(offenders, [], f"bare English words match prose: {offenders}")
 
 
+class StepCapsAgree(unittest.TestCase):
+    """`patterns` keeps its own cap and cannot import `session` (import cycle).
+
+    `session.build_loaded_session` truncates to `session.MAX_STEPS` before any
+    detector runs, then `patterns` applies `_MAX_STEPS` again to the already-cut
+    list. Harmless while they agree; if `patterns._MAX_STEPS` were ever the
+    smaller of the two it would silently truncate a second time and every phase
+    segment past that point would vanish with no warning anywhere. Asserted
+    here because the dependency direction forbids a runtime check.
+    """
+
+    def test_patterns_cap_is_not_stricter_than_the_session_cap(self):
+        from trajviz.insight.session import MAX_STEPS
+
+        self.assertGreaterEqual(
+            patterns._MAX_STEPS, MAX_STEPS,
+            f"patterns._MAX_STEPS ({patterns._MAX_STEPS}) < session.MAX_STEPS "
+            f"({MAX_STEPS}): detectors would re-truncate an already-truncated list",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

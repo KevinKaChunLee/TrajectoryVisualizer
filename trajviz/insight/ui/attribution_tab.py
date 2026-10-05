@@ -96,12 +96,20 @@ def bind(refs: AttributionRefs, shared: SharedState, upload: UploadRefs, load_ev
             detected = detect_format(overview_raw)
             fmt = None if detected == "unknown" else detected
 
+        # A DSH export tree merges sibling sub-agent logs that `expected_sha`
+        # cannot cover, so the loader counts them and `diagnose` refuses rather
+        # than comparing a parent-only hash against the canonical file. Without
+        # passing it, that refusal is unreachable from the UI — the only path a
+        # user actually takes.
+        merged = overview_raw.get("_source_merged_count") or 0 if isinstance(overview_raw, dict) else 0
+
         result = _attr.diagnose(
             agent=agent or None,
             instance_id=inst or None,
             source_path=src or None,
             fmt=fmt or None,
             expected_sha=src_sha,
+            merged_sources=merged,
             argus_root=root or None,
         )
         html_out = build_attribution_html(asdict(result))

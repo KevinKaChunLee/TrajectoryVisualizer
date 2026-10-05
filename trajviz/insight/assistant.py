@@ -189,7 +189,11 @@ def _metrics_lines(metrics: dict, steps: list[dict]) -> list[str]:
         f"tokens_cache_write: {tok.get('cache_write', 0)}",
         f"fresh_input_tokens: {metrics.get('non_cache_tokens', 0)} "
         f"({metrics.get('non_cache_ratio', 0)}%)",
-        f"avg_tokens_per_step: {metrics.get('avg_tokens_per_step', 0)}",
+        # Both denominators, named: the model sees median/p95 (assistant rows)
+        # elsewhere in this brief and would otherwise compare them to an
+        # all-steps mean.
+        f"avg_tokens_per_assistant_step: {metrics.get('avg_tokens_per_assistant_step', 0)}",
+        f"avg_tokens_per_step_all_steps: {metrics.get('avg_tokens_per_step', 0)}",
         f"tokens_per_second: {metrics.get('tokens_per_second', 0)}",
         f"tokens_per_tool: {metrics.get('tokens_per_tool', 0)}",
         f"output_tokens_per_sec: {metrics.get('output_tokens_per_sec')}",
@@ -205,7 +209,14 @@ def _metrics_lines(metrics: dict, steps: list[dict]) -> list[str]:
         f"tool_breakdown: {metrics.get('tool_breakdown') or {}}",
     ]
     if metrics.get("time_to_first_token") is not None:
-        lines.append(f"time_to_first_token: {metrics.get('time_to_first_token')}s")
+        # Named for what it measures, not for the key: no supported export
+        # records first-delta timing, so this is first user message -> first
+        # COMPLETED assistant message. Handing the model "time_to_first_token"
+        # is the one place that falsehood gets asserted to a reader.
+        lines.append(
+            f"first_response_latency_s: {metrics.get('time_to_first_token')} "
+            f"(first user message -> first completed assistant message)"
+        )
     totals = [
         (step.get("tokens") or {}).get("total", 0)
         for step in steps

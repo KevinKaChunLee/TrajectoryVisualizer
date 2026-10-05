@@ -24,13 +24,6 @@ classifiers = [
 ]
 dependencies = [
     "gradio>=6.14.0",
-    # Inert, and kept only for now: nothing under trajviz/ or scripts/ imports
-    # gradio_client, and gradio itself requires `gradio-client==2.5.0` — an exact
-    # pin, strictly stronger than this floor — so this line cannot affect
-    # resolution or protect anything. Dropping it must land together with a
-    # regenerated uv.lock (both workflows install with `uv sync --locked`, which
-    # fails on a lock that still lists gradio-client as a direct dependency).
-    "gradio_client>=2.5.0",
     "plotly>=5.0",
     "pygments>=2.0",
     "pandas>=2.0",

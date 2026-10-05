@@ -72,16 +72,18 @@ def run_comparison(
     empty = {"report_html": "", "ok": False}
 
     try:
+        # Escaped: a loader error quotes the uploaded file's path, and the file
+        # name is attacker-chosen as far as this renderer is concerned.
         if "_error" in ref_raw:
             empty["report_html"] = (
                 f"<div style='color:var(--ov-bad);padding:1em;'>"
-                f"Error loading reference trajectory: {ref_raw['_error']}</div>"
+                f"Error loading reference trajectory: {html.escape(str(ref_raw['_error']))}</div>"
             )
             return empty
         if "_error" in cmp_raw:
             empty["report_html"] = (
                 f"<div style='color:var(--ov-bad);padding:1em;'>"
-                f"Error loading compared trajectory: {cmp_raw['_error']}</div>"
+                f"Error loading compared trajectory: {html.escape(str(cmp_raw['_error']))}</div>"
             )
             return empty
 
@@ -127,10 +129,16 @@ def run_comparison(
         return {"report_html": report_html, "ok": True}
 
     except Exception as e:
+        # The traceback goes to the operator's terminal, not into the page: it
+        # carries absolute filesystem paths, and the exception text itself is
+        # derived from trajectory content. Same split `do_load` uses — the
+        # viewer gets the exception TYPE, the person running the server gets
+        # everything needed to debug it.
+        traceback.print_exc()
         empty["report_html"] = (
             f"<div style='color:var(--ov-bad);padding:1em;'>"
-            f"<strong>Comparison failed:</strong> {type(e).__name__}: {e}"
-            f"<pre style='font-size:11px;margin-top:8px;color:var(--ov-muted);'>"
-            f"{traceback.format_exc()}</pre></div>"
+            f"<strong>Comparison failed:</strong> {html.escape(type(e).__name__)}"
+            f"<div style='font-size:12px;margin-top:6px;color:var(--ov-muted);'>"
+            f"Details are in the server log.</div></div>"
         )
         return empty

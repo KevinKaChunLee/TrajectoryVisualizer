@@ -722,9 +722,20 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
             )
         )
 
+    # Say so when a bar is a partial sum. `compute_agent_summary` drops any step
+    # whose token counts are unusable (OpenCode can report a negative input), so
+    # without this the chart presents an incomplete total as a definitive one —
+    # and `infer_non_cache_input` clamps at 0, which reads as a confident "no
+    # fresh input" rather than "not all of it could be counted". The Overview
+    # token chip already carries the same caveat.
+    dropped = sum(a.get("input_tokens_unusable_steps", 0) or 0 for a in agent_summaries)
+    title = "Token Breakdown by Agent" if has_breakdown else "Total Tokens by Agent"
+    if dropped:
+        title += f" — partial, excludes {dropped} step{'s' if dropped != 1 else ''}"
+
     _apply_chart_layout(
         fig,
-        "Token Breakdown by Agent" if has_breakdown else "Total Tokens by Agent",
+        title,
         xaxis="Agent",
         yaxis="Tokens (count)",
         height=320,

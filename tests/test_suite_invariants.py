@@ -170,5 +170,54 @@ class SuiteInvariantTests(unittest.TestCase):
         )
 
 
+class EnvironmentGatedCoverageTests(unittest.TestCase):
+    """Guards for the two ways coverage can shrink without a failing test."""
+
+    # Attribution tests only run where the optional DECAF integration is
+    # importable, so they are invisible in a default run. Pinned by count so
+    # they cannot be deleted, renamed out of the convention, or un-gated
+    # silently — the usual way a skipped block quietly becomes an empty one.
+    _GATED_MODULES = {
+        "test_attribution.py": 14,
+        "test_attribution_live.py": 21,
+        "test_attribution_ui.py": 3,
+    }
+
+    def test_the_decaf_gated_test_inventory_is_the_pinned_one(self):
+        actual: dict[str, int] = {}
+        for name in self._GATED_MODULES:
+            path = _TESTS_DIR / name
+            self.assertTrue(path.exists(), f"{name} is gone; update _GATED_MODULES")
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            actual[name] = sum(
+                1 for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name.startswith("test")
+            )
+        self.assertEqual(
+            actual, self._GATED_MODULES,
+            "the environment-gated test inventory changed. These skip wherever the "
+            "optional integration is absent, so a loss here is invisible in a normal "
+            "run — update the pin deliberately.",
+        )
+
+    def test_no_package_directory_is_bytecode_only(self):
+        """A directory with ``__pycache__`` but no source is a deleted module.
+
+        Python cannot import from a bare ``__pycache__``, so such a directory is
+        inert — but it reads as live code to anyone browsing the tree, and it is
+        exactly what a half-finished deletion leaves behind.
+        """
+        pkg_root = _TESTS_DIR.parent / "trajviz"
+        stale = [
+            str(d.relative_to(pkg_root.parent))
+            for d in pkg_root.rglob("*")
+            if d.is_dir() and d.name != "__pycache__"
+            and (d / "__pycache__").is_dir()
+            and not any(d.glob("*.py"))
+        ]
+        self.assertEqual(stale, [], f"bytecode-only package directories: {stale}")
+
+
 if __name__ == "__main__":
     unittest.main()
