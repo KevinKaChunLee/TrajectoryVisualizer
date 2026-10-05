@@ -31,12 +31,12 @@ GOLD_AGENT = "claude_code"
 GOLD_INST = "astropy__astropy-13033"            # deductive-only case
 ARB_AGENT, ARB_INST = "claude_code", "django__django-11477"  # arbiter-refuted case
 
-# ---- pinned v0.33 golden expectations (do not read from DECAF artifacts) ----
+# ---- pinned v0.34 golden expectations (do not read from DECAF artifacts) ----
 GOLD_EXPECT = {
     "blame_status": "primary",
     "primary": {"capability": "code_editing", "error_type": "incorrect_patch"},
     "fault_set": {("code_editing", "incorrect_patch"),
-                  ("code_verification", "gating_test_modified"),
+                  ("code_verification", "test_expectation_rewritten"),
                   ("self_repair_loop", "repeated_ineffective_attempt")},
 }
 ARB_EXPECT = {"blame_status": "refuted_unattributed", "primary": None}

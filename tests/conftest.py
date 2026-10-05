@@ -55,6 +55,16 @@ try:
     import awe.arbiter as _arb
     import awe.adapters as _ad
     import awe.trajsignals as _ts
+    # DECAF resolves its own repo-local INPUTS under config.PROJECT_DATA at call
+    # time: the per-test grader records (pertest/) and the resolved-outcome
+    # overrides (overrides/). Left pointing at DECAF's own data/, a fixture-corpus
+    # run silently reads real records for whatever (agent, instance) it is handed,
+    # so the golden cases stop being hermetic — measured: the deductive golden case
+    # gains a ('code_editing', 'regression_introduced') fault that is derived from
+    # a record living outside this fixture tree. Point PROJECT_DATA inside the
+    # fixture tree, where cache/ already lives and pertest/ + overrides/ are
+    # absent; both inputs degrade to "no record", which is what hermetic means here.
+    _cfg.PROJECT_DATA = _FIX / "decaf_cache"
     if (_CACHE / "judge").is_dir():
         _cfg.JUDGE_CACHE_DIR = _CACHE / "judge"
         _arb.ARBITER_CACHE_DIR = _CACHE / "arbiter"
