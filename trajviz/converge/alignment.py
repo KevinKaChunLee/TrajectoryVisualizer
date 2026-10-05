@@ -56,6 +56,17 @@ def align_trajectories(
     - matched_pairs: list of (ref_idx, cmp_idx) tuples (monotonically ordered)
     - unrecovered: list of ref indices with no match
     - extra: list of cmp indices not matched
+
+    Cost is O(n*m) in time and memory (match matrix + DP table), measured at
+    0.032s for 200x200 and 2.0s for 1600x1600 non-REASON actions. That is
+    ample headroom in practice: across 2,500 real trajectories the maximum
+    is 187 non-REASON actions (claude_code/django__django-11734), and the
+    worst real pair builds a full report in 0.016s. ``compare_segments``
+    re-enters this function once per paired segment, but ``segment_by_milestones``
+    partitions actions into disjoint step-index ranges, so sum(n_i*m_i) over
+    segments stays strictly below n*m — the re-entry is additive, not
+    multiplicative. Only a corpus an order of magnitude longer per trajectory
+    would justify a banded/anchored DP (C9).
     """
     # Filter out REASON actions for alignment
     ref_non_reason = [(i, a) for i, a in enumerate(reference) if a.action_type != "REASON"]
@@ -184,6 +195,10 @@ def compute_harmful_divergence(
     """Compute harmful_cost and harmful_ratio from extra actions.
 
     Includes failed, reverted, and dead_end_branch actions per the spec.
+
+    When the compared side carries no cost data at all, the *ratio* switches to
+    a count basis (C3) so that 0.0 keeps meaning "no harmful extras".
+    ``harmful_cost`` still reports the genuine token/latency totals.
     """
     cmp_non_reason = [a for a in compared if a.action_type != "REASON"]
     compared_weight = sum(compute_action_cost(a, token_rate) for a in cmp_non_reason)
@@ -191,6 +206,7 @@ def compute_harmful_divergence(
 
     harmful_cost_tokens = 0
     harmful_cost_latency = 0
+    harmful_count = 0
     for idx in extra_indices:
         if idx < len(compared):
             a = compared[idx]
@@ -198,8 +214,17 @@ def compute_harmful_divergence(
                     or a.step_index in dead_end_steps):
                 harmful_cost_tokens += a.cost.token_share
                 harmful_cost_latency += a.cost.latency_ms
+                harmful_count += 1
 
     harmful_scalar = harmful_cost_tokens + (harmful_cost_latency / 1000.0 * token_rate)
+    if compared_weight == 0 and cmp_non_reason:
+        # No cost data on the compared side: fall back to counts, in the same
+        # spirit as compute_alignment_metrics' B24 rule but one-sided — this
+        # denominator is compared-only, so there is no second side to switch.
+        # Without it, "harmful extras with no token data" and "no harmful
+        # extras at all" both report 0.0 and are indistinguishable.
+        harmful_scalar = float(harmful_count)
+        compared_weight = float(len(cmp_non_reason))
     harmful_ratio = harmful_scalar / compared_weight if compared_weight > 0 else 0.0
 
     return {
@@ -236,6 +261,32 @@ def _parse_anchor_files(patch_path: str | None) -> set[str] | None:
     return anchor_files or None
 
 
+def empty_steps_reason(
+    label: str,
+    raw: dict,
+    path: str,
+    steps: list[dict],
+) -> str | None:
+    """Refusal message for a trajectory that parsed to no steps (else ``None``).
+
+    An unrecognised JSON *object* comes back from ``load_trajectory`` with no
+    ``_error`` at all, so it is the empty-steps check — not the ``_error``
+    check — that keeps a non-trajectory from scoring 0.0 on every metric. Both
+    entry points must apply it: ``build_comparison_report`` raises this as a
+    ValueError and ``run_comparison`` renders it as an error banner with
+    ``ok: False``. Shared here for the same reason ``_parse_anchor_files`` is
+    (C1): a guard that lives in only one of the two cannot stay closed.
+    """
+    if steps:
+        return None
+    # _describe_format, not a raw key lookup (C2): nothing in the package ever
+    # writes `_format`, and `_detected` is only set alongside `_error`, so the
+    # old expression always degraded to 'unrecognised'.
+    return (f"Could not load {label} trajectory {path!r}: no steps parsed "
+            f"(detected format: {_describe_format(raw)}) "
+            f"— refusing to report a zero-valued comparison.")
+
+
 def build_comparison_report(
     ref_file: str,
     cmp_file: str,
@@ -265,9 +316,9 @@ def build_comparison_report(
             cross-task aggregate statistics. Note that an unrecognised JSON
             *object* is returned by ``load_trajectory`` with no ``_error`` at
             all, so checking ``_error`` alone is not enough — it is the
-            empty-steps check that closes that door. The Insight UI's
-            ``run_comparison`` already refuses these (``ok: False``); this is
-            the same guard for the file-path entry point.
+            empty-steps check that closes that door. Both entry points share
+            :func:`empty_steps_reason` so neither can lose the guard; the
+            Insight UI's ``run_comparison`` reports it as ``ok: False``.
     """
     from trajviz.insight.loaders import load_trajectory
     from trajviz.insight.parser import parse_steps
@@ -282,12 +333,9 @@ def build_comparison_report(
     ):
         if isinstance(raw, dict) and raw.get("_error"):
             raise ValueError(f"Could not load {label} trajectory {path!r}: {raw['_error']}")
-        if not steps:
-            fmt = (raw.get("_format") or raw.get("_detected") or "unrecognised") if isinstance(raw, dict) else "unrecognised"
-            raise ValueError(
-                f"Could not load {label} trajectory {path!r}: no steps parsed "
-                f"(detected format: {fmt}) — refusing to report a zero-valued comparison."
-            )
+        reason = empty_steps_reason(label, raw, path, steps)
+        if reason:
+            raise ValueError(reason)
 
     return build_comparison_report_from_steps(
         ref_raw, cmp_raw, ref_steps, cmp_steps,

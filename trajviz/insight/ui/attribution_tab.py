@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from ..loaders import detect_format
-from .shared import SharedState
+from .shared import SharedState, safe_callback
 from .upload import UploadRefs
 
 
@@ -33,7 +33,7 @@ def layout() -> AttributionRefs:
         _attr_placeholder = (
             "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
             "Load a trajectory in the Overview tab &mdash; diagnosis runs automatically on load (<b>Diagnose failure</b> re-runs it with the overrides below). "
-            "For a corpus trajectory (…/trajectory/&lt;agent&gt;/&lt;instance&gt;.json) the agent "
+            "For a file under a reference set (…/trajectory/&lt;agent&gt;/&lt;instance&gt;.json) the agent "
             "and instance are auto-detected from the path; for an uploaded file, set them below."
             "</div>"
         )
@@ -42,7 +42,7 @@ def layout() -> AttributionRefs:
             attr_run_btn = gr.Button("Diagnose failure", variant="primary", size="sm", scale=1, min_width=140)
         with (
             gr.Accordion(
-                "Override agent / instance / corpus (for uploaded files)",
+                "Override agent / instance / reference data (for uploaded files)",
                 open=False,
                 elem_classes=["per-message-acc"],
             ),
@@ -51,7 +51,7 @@ def layout() -> AttributionRefs:
             attr_agent_override = gr.Textbox(label="Agent", placeholder="auto-detected from path", scale=1)
             attr_inst_override = gr.Textbox(label="Instance id", placeholder="auto-detected from path", scale=2)
             attr_root_override = gr.Textbox(
-                label="ARGUS corpus root", placeholder="default: sibling TraceProbe checkout", scale=2
+                label="Reference data root", placeholder="default: auto-detected sibling checkout", scale=2
             )
         attr_result_html = gr.HTML("")
     return AttributionRefs(
@@ -65,6 +65,7 @@ def layout() -> AttributionRefs:
 
 
 def bind(refs: AttributionRefs, shared: SharedState, upload: UploadRefs, load_events) -> None:
+    @safe_callback("Attribution diagnosis")
     def on_diagnose(overview_raw, agent_override, inst_override, root_override):
         from dataclasses import asdict
 
@@ -95,12 +96,20 @@ def bind(refs: AttributionRefs, shared: SharedState, upload: UploadRefs, load_ev
             detected = detect_format(overview_raw)
             fmt = None if detected == "unknown" else detected
 
+        # A DSH export tree merges sibling sub-agent logs that `expected_sha`
+        # cannot cover, so the loader counts them and `diagnose` refuses rather
+        # than comparing a parent-only hash against the canonical file. Without
+        # passing it, that refusal is unreachable from the UI — the only path a
+        # user actually takes.
+        merged = overview_raw.get("_source_merged_count") or 0 if isinstance(overview_raw, dict) else 0
+
         result = _attr.diagnose(
             agent=agent or None,
             instance_id=inst or None,
             source_path=src or None,
             fmt=fmt or None,
             expected_sha=src_sha,
+            merged_sources=merged,
             argus_root=root or None,
         )
         html_out = build_attribution_html(asdict(result))
@@ -130,10 +139,9 @@ def bind(refs: AttributionRefs, shared: SharedState, upload: UploadRefs, load_ev
             "",
         )
 
+    # One trigger only: choosing a file re-clicks Load in the browser rather
+    # than running a second load (see `load.bind_load`).
     upload.load_btn.click(
-        fn=_clear_attribution, outputs=[refs.attr_result_html, refs.attr_status_html], concurrency_id="attribution"
-    )
-    upload.file_upload.change(
         fn=_clear_attribution, outputs=[refs.attr_result_html, refs.attr_status_html], concurrency_id="attribution"
     )
 

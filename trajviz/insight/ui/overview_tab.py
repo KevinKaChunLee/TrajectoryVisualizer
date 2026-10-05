@@ -35,7 +35,7 @@ from ..presenters.overview import (
 from ..issue_judge import JUDGE_ISSUE_CAP, iter_judge_overview_issues
 from ..llm_config import resolve_analysis_config
 from ..session import LoadedSession, build_loaded_session
-from .shared import SharedState
+from .shared import SharedState, safe_callback
 from .upload import UploadRefs
 
 
@@ -45,7 +45,7 @@ class OverviewRefs:
     overview_kpi_html: gr.HTML
     overview_section: gr.Radio
     performance_section: gr.Column
-    efficiency_section: gr.Column
+    context_section: gr.Column
     tools_section: gr.Column
     agents_section: gr.Column
     diagnostics_section: gr.Column
@@ -86,15 +86,37 @@ class OverviewRefs:
     label_timeline_chart: gr.Plot
 
 
-OVERVIEW_SECTION_NAMES = [
-    "Summary",
-    "Tools",
-    "Agents",
-    "Context Utilization",
-    "Diagnostics",
-    "Deep Dive",
-    "Labels",
-]
+# Nav label -> the `OverviewRefs` field holding that section's Column, in nav
+# order. One structure, because `show_overview_section` zips the names against
+# the Columns purely by position: as two parallel lists, reordering a Column or
+# inserting a section silently showed the wrong panel.
+OVERVIEW_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("Summary", "performance_section"),
+    ("Tools", "tools_section"),
+    ("Agents", "agents_section"),
+    ("Context Utilization", "context_section"),
+    ("Diagnostics", "diagnostics_section"),
+    ("Deep Dive", "deep_dive_section"),
+    ("Labels", "labels_section"),
+)
+
+OVERVIEW_SECTION_NAMES = [name for name, _ in OVERVIEW_SECTIONS]
+
+
+def _resolve_overview_sections(refs: OverviewRefs) -> tuple[gr.Column, ...]:
+    """The Columns named by `OVERVIEW_SECTIONS`, in nav order.
+
+    A missing field or two names resolving to the same Column would show the
+    wrong panel (or fail as an opaque Gradio output-count error), so fail here
+    with the mapping that is wrong.
+    """
+    missing = [attr for _, attr in OVERVIEW_SECTIONS if not hasattr(refs, attr)]
+    if missing:
+        raise ValueError(f"OVERVIEW_SECTIONS names fields OverviewRefs does not have: {missing}")
+    sections = tuple(getattr(refs, attr) for _, attr in OVERVIEW_SECTIONS)
+    if len({id(section) for section in sections}) != len(OVERVIEW_SECTIONS):
+        raise ValueError("OVERVIEW_SECTIONS maps two nav names onto the same Column")
+    return sections
 
 
 def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
@@ -134,7 +156,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                             elem_id="duration-chart",
                         )
 
-                with gr.Column(visible=False) as efficiency_section:
+                with gr.Column(visible=False) as context_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_context_utilization'])}</div>")
                     with gr.Row():
                         diag_pressure_agent = gr.Dropdown(
@@ -239,7 +261,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
         overview_kpi_html=overview_kpi_html,
         overview_section=overview_section,
         performance_section=performance_section,
-        efficiency_section=efficiency_section,
+        context_section=context_section,
         tools_section=tools_section,
         agents_section=agents_section,
         diagnostics_section=diagnostics_section,
@@ -412,15 +434,7 @@ def bind(
     load_events: tuple = (),  # kept for the uniform tab-bind signature
 ) -> None:
     overview_section_names = OVERVIEW_SECTION_NAMES
-    overview_sections = (
-        refs.performance_section,
-        refs.tools_section,
-        refs.agents_section,
-        refs.efficiency_section,
-        refs.diagnostics_section,
-        refs.deep_dive_section,
-        refs.labels_section,
-    )
+    overview_sections = _resolve_overview_sections(refs)
 
     def show_overview_section(selected):
         return tuple(gr.update(visible=name == selected) for name in overview_section_names)
@@ -508,6 +522,7 @@ def bind(
     # to decline; the heuristic (offline) Issues panel is what load renders.
     refs.suggest_fixes_btn.click(**judge_event)
 
+    @safe_callback("Context utilization")
     def _rebuild_utilization(agent_key, window_limit, snapshot_key, steps, raw, dark):
         if not steps:
             return empty_plotly_fig(), ""
@@ -537,6 +552,7 @@ def bind(
         )
         return fig, html_strip
 
+    @safe_callback("Context utilization")
     def on_agent_change(agent_key, window_limit, steps, raw, dark):
         fig, html_strip = _rebuild_utilization(
             agent_key, window_limit, SNAPSHOT_CURRENT, steps, raw, dark,
@@ -671,6 +687,7 @@ def bind(
             gr.update(value=None),
         )
 
+    # One trigger only: choosing a trajectory re-clicks Load in the browser
+    # rather than running a second load (see `load.bind_load`).
     _reset_outputs = label_outputs + [upload.label_file_upload]
     upload.load_btn.click(fn=_reset_labels, inputs=None, outputs=_reset_outputs)
-    upload.file_upload.change(fn=_reset_labels, inputs=None, outputs=_reset_outputs)

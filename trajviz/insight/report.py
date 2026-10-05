@@ -39,6 +39,18 @@ _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _CODE = re.compile(r"`([^`]+)`")
 _STYLE_TAG = re.compile(r"</?style[^>]*>", re.IGNORECASE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+# The only pre-built markup the dashboard presenters put in their markdown is a
+# chip grid: one `<div ...>` line per `_metric_grid` call. Anything else that
+# starts a line with `<` came out of the trajectory.
+_PASSTHROUGH_BLOCK = re.compile(r"^</?div\b", re.IGNORECASE)
+_LIVE_MARKUP = re.compile(
+    r"(?:^|[\s\"'/])on\w+\s*=|<\s*/?\s*(?:script|iframe|object|embed|svg|math|style|link|base)\b"
+    r"|javascript\s*:",
+    re.IGNORECASE,
+)
+# A markdown cell delimiter is an unescaped `|`; `formatting._md_cell_text`
+# writes `\|` for a pipe that came out of the trajectory.
+_MD_CELL_SEP = re.compile(r"(?<!\\)\|")
 
 
 class ReportError(ValueError):
@@ -237,7 +249,12 @@ def _slug(title: str) -> str:
 def _figure_is_empty(fig: Any) -> bool:
     if fig is None or not isinstance(fig, go.Figure):
         return True
-    return len(fig.data) == 0
+    # `_empty_figure(height, message)` carries its explanation as an annotation
+    # on a figure with no traces. Testing traces alone dropped every "no
+    # tool-call timing recorded in this trajectory" panel from the export — the
+    # reader then could not tell a missing capability from a missing section.
+    # Only a figure with neither traces nor annotations is a true placeholder.
+    return len(fig.data) == 0 and not (fig.layout.annotations or ())
 
 
 def _charts_html(items: list[tuple[str, go.Figure]], include_js: str | bool) -> tuple[str, str | bool]:
@@ -285,7 +302,14 @@ def _mixed_md_to_html(text: str) -> str:
             out.append(_md_table_to_html(block))
             continue
         if stripped.startswith("<"):
-            out.append(raw_line)
+            # Pass through only TrajViz's own chip-grid markup. A trajectory
+            # string that reaches here (a newline in an agent id used to end the
+            # table block and hand the next line straight to the browser) is
+            # escaped like any other paragraph.
+            if _PASSTHROUGH_BLOCK.match(stripped) and not _LIVE_MARKUP.search(stripped):
+                out.append(raw_line)
+            else:
+                out.append(f"<p>{_inline(stripped)}</p>")
             i += 1
             continue
         if not stripped:
@@ -298,7 +322,13 @@ def _mixed_md_to_html(text: str) -> str:
 
 def _md_table_to_html(block: list[str]) -> str:
     def cells(line: str) -> list[str]:
-        return [c.strip() for c in line.strip().strip("|").split("|")]
+        parts = _MD_CELL_SEP.split(line.strip())
+        # Drop the empty parts produced by the row's leading/trailing delimiter.
+        if parts and not parts[0].strip():
+            parts = parts[1:]
+        if parts and not parts[-1].strip():
+            parts = parts[:-1]
+        return [c.strip().replace("\\|", "|") for c in parts]
 
     header = cells(block[0])
     body_rows = [cells(row) for row in block[2:]]

@@ -21,7 +21,7 @@
 | TrajViz is Gradio 6 + Plotly, Python **3.11+**, builder-based dashboard; a new tab = 1 builder + 3 positional wiring touch-points | `trajviz/insight/insight.py:804,1472,1620,1428` | UI addition is well-bounded. |
 | **rendering.py already ships unused renderers** for capability scorecards (`build_dimension_cards_html:971`) and a judge/dossier panel (`build_judge_result_html:1021`), with matching CSS in `styles.py` | `trajviz/insight/rendering.py` | The UI surface for scorecards + dossier largely exists; we wire and adapt it. |
 | TrajViz already does proto-attribution (error clustering, failure chains, anti-patterns) but produces **no capability verdict/scorecard/dossier** | `trajviz/insight/diagnostics.py`, `patterns.py` | DECAF fills exactly the gap; we cross-link rather than duplicate. |
-| Both projects key off `TraceProbe/data` (`requirements/`, `patch/<agent>/`, `trajectory/<agent>/`, `eval_<agent>.json`), but TrajViz has **no `instance_id` concept** — it loads a bare file path | `awe/config.py:15-24`, `trajviz/insight/loaders.py:1452` | TrajViz must start carrying `(agent, instance_id)`; trivially derivable from the corpus path `trajectory/<agent>/<id>.json`. |
+| Both sides key off the reference-data root (`AWE_ARGUS_ROOT`) (`requirements/`, `patch/<agent>/`, `trajectory/<agent>/`, `eval_<agent>.json`), but TrajViz has **no `instance_id` concept** — it loads a bare file path | `awe/config.py:15-24`, `trajviz/insight/loaders.py:1452` | TrajViz must start carrying `(agent, instance_id)`; trivially derivable from the reference path `trajectory/<agent>/<id>.json`. |
 | Python: system `python3` is 3.9 (TrajViz needs 3.11+); the repo `.venv` is **3.13**; DECAF needs ≥3.9; `pytest` is not a declared TrajViz dep | prior session + review | Standardize on the repo `.venv` (3.13); add `pytest` to TrajViz dev deps. |
 | The current OpenRouter key has `anthropic/*` and `openai/*` **403-blocked** (only deepseek/glm work) | this session | The judge default model (`claude-sonnet-4.5`) is unusable on this key — lazy LLM compute must use `z-ai/glm-5.2`. Default stays offline. |
 
@@ -95,7 +95,7 @@ Returns are plain dicts/dataclasses → the UI layer and tests both consume them
 - **Primary-cause banner** + the `code_evidence` side-by-side diff reuse `_render_diff_lines`/`_split_diff_by_file` (`rendering.py:567/587`).
 
 ### 5.3 Gold modes (the central UX decision)
-- **Corpus mode (primary):** trajectory came from `TraceProbe/data/trajectory/<agent>/<id>.json`. TrajViz derives `(agent, instance_id)` from the path (or an optional pair of fields in the upload row) and points `AWE_ARGUS_ROOT` at TraceProbe → full gold-grounded attribution.
+- **Reference mode (primary):** trajectory came from `<reference root>/data/trajectory/<agent>/<id>.json`. TrajViz derives `(agent, instance_id)` from the path (or an optional pair of fields in the upload row) and points `AWE_ARGUS_ROOT` at that root → full gold-grounded attribution.
 - **Gold-provided mode:** user supplies a `requirements/<id>.json` (or a gold patch) alongside the trajectory → construct a `GoldReference` and prime `build_gold_reference`'s `lru_cache`.
 - **Gold-free mode (arbitrary upload):** no gold → Attribution tab shows a clear notice ("Capability attribution needs the reference patch + test outcome; showing trajectory-only signals") and links to TrajViz's existing diagnostics/patterns. **No fabricated verdict.**
 
@@ -163,7 +163,7 @@ Review rounds 2–3 on PR #10 hardened the design; the shipped architecture is:
    itself parses — resolved by `awe.adapters.canonical_trajectory_path` (codex
    prefers `.jsonl`) so verification and diagnosis can never read different
    sources. Non-matching files are refused with the provenance reason.
-2. **Cache provenance (DECAF v0.34, monorepo PR #12).** normtraj/trajsig caches
+2. **Cache provenance (DECAF v0.34, upstream PR #12).** normtraj/trajsig caches
    are content-keyed by source sha256; judge/arbiter verdicts stamp
    `trajectory_sha256` and the seam disables an LLM layer whose cached verdict
    does not verifiably belong to the current trajectory content (noted in the
@@ -177,7 +177,7 @@ Review rounds 2–3 on PR #10 hardened the design; the shipped architecture is:
    file-existence oracle.
 5. **CI.** `ci.yml` (standalone, lockfile-installed) is the only PR workflow.
    The DECAF integration lives in `integration.yml`, trusted contexts only
-   (push to main + workflow_dispatch), because a private-monorepo checkout —
+   (push to main + workflow_dispatch), because a private-repository checkout —
    whose Git pack contains blobs beyond the sparse worktree — must never
    coexist with PR-controlled code. Requires a read-only `ARGUS_PAT` secret;
    DECAF ref pinned to an immutable merge commit.

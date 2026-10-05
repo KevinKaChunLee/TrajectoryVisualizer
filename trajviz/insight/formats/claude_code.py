@@ -1,8 +1,28 @@
 """Claude Code session dump → internal trajectory."""
 
+import math
 import os
 
 from .common import _iso_to_epoch_ms
+
+
+def _cc_token_value(value: object) -> int | float:
+    """A reported token count, or 0 when the value is not a usable number.
+
+    Same reading as ``parser._finite_token``: a string/bool/None/non-finite
+    count carries no information and must be *rejected* rather than coerced.
+    Without it a ``"input_tokens": "50"`` raised ``TypeError: can only
+    concatenate str`` straight out of ``load_trajectory``, which ``run_group``
+    does not catch, so one such file aborted a whole batch.  Local to this
+    module because the dependency runs parser → loaders → formats, so a
+    converter cannot import ``parser``.
+    """
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not math.isfinite(value):
+        return 0
+    return value
+
 
 def _cc_extract_usage(usage: dict | None) -> dict:
     """Extract token usage from a Claude Code message's usage field.
@@ -13,10 +33,10 @@ def _cc_extract_usage(usage: dict | None) -> dict:
     if not isinstance(usage, dict):
         return {"total": 0, "input": 0, "output": 0,
                 "cache": {"read": 0, "write": 0}}
-    inp = usage.get("input_tokens", 0) or 0
-    out = usage.get("output_tokens", 0) or 0
-    cache_read = usage.get("cache_read_input_tokens", 0) or 0
-    cache_write = usage.get("cache_creation_input_tokens", 0) or 0
+    inp = _cc_token_value(usage.get("input_tokens"))
+    out = _cc_token_value(usage.get("output_tokens"))
+    cache_read = _cc_token_value(usage.get("cache_read_input_tokens"))
+    cache_write = _cc_token_value(usage.get("cache_creation_input_tokens"))
     # input_tokens, cache_creation_input_tokens and cache_read_input_tokens are
     # mutually exclusive in the Anthropic usage object, so the processed total is
     # their sum; cache_creation must be included to agree with the session total.
@@ -212,6 +232,12 @@ def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
     counts (no ``reasoning`` key — Claude Code does not report that field).
     Callers compute their own ``text_preview`` (the preview heuristics
     intentionally differ between the main-trajectory and event paths).
+
+    The key set matches ``parser.parse_steps``' generic path except for
+    ``is_sub_agent``, whose ABSENCE is load-bearing (see the return dict), and
+    the fields only an OpenCode session hierarchy (``parent_session_id``,
+    ``session_depth``, ``session_title``) or a compaction checkpoint
+    (``compaction_reason``) ever carries.
     """
     if tool_calls is None:
         tool_calls = [p for p in parts if p.get("type") == "tool_call"]
@@ -246,6 +272,11 @@ def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
         "time_created_ms": timestamp_ms,
         "time_completed_ms": None,
         "agent": agent,
+        # is_sub_agent is deliberately ABSENT, not False.  metrics.effective_agent()
+        # reads a MISSING key as the Claude Code convention — a non-empty ``agent``
+        # names a sub-agent — whereas OpenCode sets the key and a named main agent
+        # must map to "".  Adding it here, even as False, re-buckets every
+        # sub-agent step into the main agent and moves every per-agent surface.
         "mode": "",
         "message_id": message_id,
         "id": step_id,
@@ -253,6 +284,17 @@ def _cc_build_step(parts: list, *, role: str, usage: dict | None = None,
         "session_id": "",
         "cwd": cwd,
         "root": "",
+        # Claude Code reports none of the following, but the generic path always
+        # emits them, so they carry neutral values rather than being absent: a
+        # reader that stops using ``.get()`` must not see a different schema for
+        # one format.  ``_metrics_unavailable_fields`` stays EMPTY on purpose —
+        # rendering._unavailable_metric_fields derives the missing labels from
+        # the token values, and populating it here would change which per-step
+        # rows render as "Metrics unavailable".
+        "message_type": "",
+        "is_compaction_checkpoint": False,
+        "summary": False,
+        "_metrics_unavailable_fields": [],
     }
 
 
@@ -496,13 +538,13 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
     tokens_raw = stats_raw.get("tokens", {}) if isinstance(stats_raw.get("tokens"), dict) else {}
     token_usage = {
         "total_tokens": (
-            (tokens_raw.get("input", 0) or 0)
-            + (tokens_raw.get("output", 0) or 0)
-            + (tokens_raw.get("cache_read", 0) or 0)
-            + (tokens_raw.get("cache_creation", 0) or 0)
+            _cc_token_value(tokens_raw.get("input"))
+            + _cc_token_value(tokens_raw.get("output"))
+            + _cc_token_value(tokens_raw.get("cache_read"))
+            + _cc_token_value(tokens_raw.get("cache_creation"))
         ),
-        "prompt_tokens": tokens_raw.get("input", 0) or 0,
-        "completion_tokens": tokens_raw.get("output", 0) or 0,
+        "prompt_tokens": _cc_token_value(tokens_raw.get("input")),
+        "completion_tokens": _cc_token_value(tokens_raw.get("output")),
     }
     stats = {
         "total_messages": stats_raw.get("turns", 0),
@@ -574,6 +616,13 @@ def _convert_claude_code_to_internal(raw: dict) -> dict:
 
     for idx, step in enumerate(converted_trajectory):
         step["index"] = idx
+        # raw_index is the generic path's position in the SOURCE trajectory.
+        # Claude Code merges entries by message_id and re-sorts by timestamp,
+        # and exports ``trajectory`` as [] (the steps live in
+        # ``_cc_parsed_steps``), so there is no distinct source position to
+        # point at — equal to ``index`` is the honest value, and patterns.py's
+        # raw-trajectory lookups bail on the empty list either way.
+        step["raw_index"] = idx
 
     # Compute per-step durations WITHIN each agent's own timeline.  A delegated
     # sub-agent runs concurrently while the main agent is blocked on the Task

@@ -2,15 +2,42 @@ name: DECAF integration (trusted)
 
 # Runs the DECAF failure-attribution integration tests. DELIBERATELY NOT a
 # pull_request workflow, and HARD-GUARDED to main: the integration needs a
-# checkout of the private ARGUS monorepo, and a fetched Git pack contains
-# monorepo blobs beyond the sparse worktree — so no branch-controlled code
-# (install hooks, tests, or even this workflow file from a branch) may execute
-# alongside that checkout. workflow_dispatch from a non-main ref no-ops via the
-# job-level guard below; the trusted path is push-to-main (post-merge
-# verification) or dispatching ON main.
-# Requires the ARGUS_PAT secret: a READ-ONLY fine-grained PAT for rshu/ARGUS.
+# checkout of a private repository, and a fetched Git pack contains blobs beyond
+# the sparse worktree — so no branch-controlled code (install hooks, tests, or
+# even this workflow file from a branch) may execute alongside that checkout.
+# workflow_dispatch from a non-main ref no-ops via the job-level guard below; the
+# trusted path is push-to-main (post-merge verification) or dispatching ON main.
+#
+# Configuration, neither of which is set today:
+#   vars.DECAF_REPO          — owner/name of the private repository carrying
+#                              DECAF/awe. A repository VARIABLE, not a literal,
+#                              so this public file names no private repository.
+#   secrets.DECAF_REPO_TOKEN — a READ-ONLY fine-grained PAT for it.
 # TRAJVIZ_REQUIRE_ATTRIBUTION=1 turns a missing environment into a hard failure,
 # so this workflow can never be green by silently skipping the integration tests.
+#
+# WHY THIS JOB CANNOT RUN WITHOUT A CREDENTIAL, and what the alternatives were.
+# This repository is PUBLIC; the repository carrying DECAF/awe and the DECAF
+# upstream are both PRIVATE. A public repository's GITHUB_TOKEN cannot read a
+# private one, so the DECAF checkout below needs a credential — any credential is
+# a secret, so there is no token-free variant of THIS workflow. The three
+# alternatives were considered and rejected:
+#   * check DECAF out from a public remote — no public DECAF exists;
+#   * vendor `awe` into tests/fixtures/ — that publishes DECAF's unpublished
+#     method implementation from a paper under submission into a public repo;
+#   * let tests/fixtures/decaf_cache stand in — it already does the job it can do.
+#     That fixture is the attribution *data* (a hermetic reference set + cached
+#     trajsignals, tracked via the .gitignore negations). What these tests
+#     exercise is the awe *code*: attribution.diagnose() drives
+#     awe.adapters/trajsignals/arbiter and asserts pinned goldens precisely so
+#     DECAF drift fails loudly. Stubbing awe would make every golden assertion
+#     tautological — a green job proving nothing.
+# Until both are configured, the DECAF-gated tests do not execute in any workflow
+# of this repository; they skip in `CI / standalone` and this job fails at the
+# preflight below rather than at an opaque `actions/checkout` token error. The
+# executable alternative that needs no new secret is a workflow inside that
+# PRIVATE repository (checkout self for DECAF/awe + checkout this PUBLIC repo, no
+# token on either side); see docs for `trajviz-decaf-integration.yml`.
 
 on:
   push:
@@ -26,27 +53,51 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
+      # Fail here, not at actions/checkout. Without this, a missing secret
+      # surfaces as "Input required and not supplied: token" on a step whose name
+      # mentions DECAF, which reads like a broken pin rather than an unconfigured
+      # repository. A step-level `if:` cannot see the `secrets` context, so the
+      # secret is mapped into env and tested in the shell instead.
+      # Fail here, not at actions/checkout. Without this, missing configuration
+      # surfaces as "Input required and not supplied: token" on a step whose name
+      # mentions DECAF, which reads like a broken pin rather than an unconfigured
+      # repository. A step-level `if:` cannot see the `secrets` context, so both
+      # values are mapped into env and tested in the shell instead.
+      - name: Preflight — DECAF_REPO and DECAF_REPO_TOKEN must be configured
+        env:
+          REPO: ${{ vars.DECAF_REPO }}
+          TOK: ${{ secrets.DECAF_REPO_TOKEN }}
+        run: |
+          missing=""
+          [ -z "$REPO" ] && missing="$missing vars.DECAF_REPO"
+          [ -z "$TOK" ] && missing="$missing secrets.DECAF_REPO_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error title=DECAF integration is not configured::Not set:$missing. The DECAF-gated attribution tests cannot run here — this public repository has no credential for the private repository that carries DECAF/awe. Set vars.DECAF_REPO to its owner/name and secrets.DECAF_REPO_TOKEN to a read-only fine-grained PAT for it, or run the equivalent job from inside that repository (see this workflow's header). Deliberately a hard failure: a green run here must mean the integration tests executed."
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Check out DECAF (pinned, from the ARGUS monorepo)
+      - name: Check out DECAF (pinned, from the private repository)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          repository: rshu/ARGUS
-          token: ${{ secrets.ARGUS_PAT }}
+          repository: ${{ vars.DECAF_REPO }}
+          token: ${{ secrets.DECAF_REPO_TOKEN }}
           path: _argus
           sparse-checkout: DECAF
           persist-credentials: false
-          # rshu/ARGUS main @ merge of PR #13 (gold-reference fingerprint in
+          # That repository's main @ merge of PR #13 (gold-reference fingerprint in
           # trajsig cache + requirements_sha256 verdict stamps, v0.34.1).
           # Bump deliberately on DECAF API change.
           ref: 7db5295929b2d267336c3c102624b5c035ac8d24
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - name: Install (locked)
         run: uv sync --locked --extra dev
+      # No PYTHONPATH: the repo root now reaches sys.path through
+      # `pythonpath = ["."]` in [tool.pytest.ini_options], which is declared,
+      # rootdir-relative and identical locally and in CI.
       - name: Test (integration — DECAF present, no silent skips)
         env:
-          PYTHONPATH: ${{ github.workspace }}
           AWE_DECAF_PATH: ${{ github.workspace }}/_argus/DECAF
           TRAJVIZ_REQUIRE_ATTRIBUTION: "1"
         run: uv run python -m pytest tests -q

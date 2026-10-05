@@ -97,6 +97,13 @@ class LoadedSession:
     tool_selection: list
     edit_thrash: list
     repeated_searches: list
+    # Computed on every load but read by no presenter, chart, report or UI
+    # module — only by the two tests that construct a LoadedSession by keyword.
+    # Kept rather than deleted: the field has no default, so dropping it is a
+    # breaking change to every constructor site, and wiring it to Overview
+    # Issues instead would add new antipattern issues to most files (1,750
+    # unintentional_drift regressions across 500 real trajectories), i.e. a
+    # product decision about what the Overview claims, not a cleanup.
     phase_regressions: list
     premature_compactions: list
     truncated: bool = False

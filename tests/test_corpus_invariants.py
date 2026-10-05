@@ -287,13 +287,26 @@ class GenerationWindowTests(unittest.TestCase):
 
 
 def _corpus_root() -> Path | None:
-    """Research corpus location, when this checkout happens to sit beside one."""
+    """A real trajectory set, when this checkout happens to sit beside one.
+
+    `TRAJVIZ_CORPUS` points straight at the directory. Otherwise look for a
+    sibling of this checkout carrying `data/trajectory/`, and accept it only if
+    exactly one does — found by layout rather than by a hard-coded directory
+    name, so this suite does not depend on what the set is called locally.
+    """
     override = os.environ.get("TRAJVIZ_CORPUS")
     if override:
         path = Path(override)
         return path if path.is_dir() else None
-    candidate = Path(__file__).resolve().parents[2] / "TraceProbe" / "data" / "trajectory"
-    return candidate if candidate.is_dir() else None
+    try:
+        matches = [
+            d / "data" / "trajectory"
+            for d in Path(__file__).resolve().parents[2].iterdir()
+            if d.is_dir() and (d / "data" / "trajectory").is_dir()
+        ]
+    except OSError:
+        return None
+    return matches[0] if len(matches) == 1 else None
 
 
 _CORPUS = _corpus_root()

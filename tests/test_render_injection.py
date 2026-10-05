@@ -494,17 +494,94 @@ class ReportInjectionTests(unittest.TestCase):
         self.assertNotIn(ATTR_DQ, body)
         self.assertNotIn(ATTR_SQ, body)
 
-    @unittest.expectedFailure
     def test_agent_name_with_a_newline_cannot_inject_markup(self):
-        """report.py:287 — a markdown line starting with ``<`` is emitted verbatim.
+        """A newline must not end a markdown block and open a markup line.
 
-        A sub-agent's session id is written raw into the Per-Message table, so a
-        newline in it ends the table row and the next line is handed through as
-        pre-built HTML. Remove this decorator when `_mixed_md_to_html` escapes
-        untrusted lines (or the metrics markdown escapes role/agent/finish).
+        A sub-agent's session id used to be written raw into the Per-Message
+        table, so a newline in it ended the table row and `_mixed_md_to_html`
+        handed the next line through as pre-built HTML. Two layers close this:
+        `formatting._md_cell_text` flattens the scalar, and the pass-through
+        branch in `_mixed_md_to_html` now only admits TrajViz's own chip grid.
         """
         body = self.report_body()
         self.assertNotIn(TAG, body)
+
+class StepIndexJsInjectionTests(unittest.TestCase):
+    """A step index is interpolated into JS string literals and element ids.
+
+    Every producer derives it from ``enumerate``, so no real trajectory can
+    reach these sinks with a non-numeric index — but the sinks are the kind
+    where a broken invariant upstream becomes code execution downstream, so
+    they coerce rather than trust.
+    """
+
+    # A distinct marker: the fixture's text payloads already carry 1-4 (escaped),
+    # so only the index sink can put this one in the output.
+    INDEX_MARKER = "__tvxss(9)"
+    BAD_INDEX = JS_BREAK.replace("__tvxss(4)", INDEX_MARKER)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="trajviz-injection-index-")
+        path = os.path.join(cls.tmp, "payload.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload_trajectory(), handle)
+        result = load_session(path)
+        if isinstance(result, LoadError):  # pragma: no cover - fixture must load
+            raise AssertionError(f"payload fixture failed to load: {result.message}")
+        cls.steps = result.steps
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _step(self):
+        """A real parsed step with only its index corrupted."""
+        return dict(self.steps[0], index=self.BAD_INDEX)
+
+    def test_toc_sidebar_coerces_the_index(self):
+        from trajviz.insight.rendering import render_toc_sidebar
+
+        out = render_toc_sidebar([self._step()])
+        self.assertNotIn(self.INDEX_MARKER, out)
+        self.assertIn("wf-card-0", out)
+
+    def test_diag_jump_onclick_coerces_the_index(self):
+        from trajviz.insight.rendering import _diag_jump_onclick
+
+        self.assertNotIn(self.INDEX_MARKER, _diag_jump_onclick(self.BAD_INDEX))
+
+    def test_workflow_cards_coerce_the_index(self):
+        from trajviz.insight.rendering import render_workflow_html
+
+        self.assertNotIn(self.INDEX_MARKER, render_workflow_html([self._step()]))
+
+    def test_step_link_chip_coerces_the_index(self):
+        from trajviz.insight.rendering import _step_link_chip, _step_link_chips
+
+        self.assertNotIn(self.INDEX_MARKER, _step_link_chip(self.BAD_INDEX))
+        self.assertNotIn(self.INDEX_MARKER, _step_link_chips([self.BAD_INDEX]))
+
+    def test_agent_card_coerces_the_spawning_step(self):
+        from trajviz.insight.rendering import _render_one_agent_card
+
+        card = _render_one_agent_card(
+            {
+                "label": "sub",
+                "agent_id": "a1",
+                "spawned_by_step": self.BAD_INDEX,
+                "step_count": 1,
+                "cache_read_tokens": 0,
+                "total_tokens": 0,
+                "cache_efficiency_pct": None,
+                "total_duration_s": 0.0,
+                "tool_call_count": 0,
+                "error_count": 0,
+                "tokens_per_second": 0.0,
+            },
+            "#111111",
+        )
+        self.assertNotIn(self.INDEX_MARKER, card)
 
 
 if __name__ == "__main__":  # pragma: no cover

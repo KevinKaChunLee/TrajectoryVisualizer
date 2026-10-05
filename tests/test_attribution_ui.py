@@ -32,7 +32,7 @@ def test_render_degraded_shows_reason():
     assert "score-dim-grid" not in out
 
 
-@pytest.mark.skipif(not _corpus_present(), reason="TraceProbe corpus not present")
+@pytest.mark.skipif(not _corpus_present(), reason="reference data not present")
 def test_render_full_attribution():
     res = attribution.diagnose(agent=GOLD_AGENT, instance_id=GOLD_INST)
     assert res.available

@@ -172,7 +172,7 @@ a tamper-evidence audit verdict) for each fault.
 
 The attribution is powered by the DECAF (`awe`) method, imported as a library
 through `trajviz/insight/attribution.py`. DECAF is currently part of a private
-research monorepo (a public artifact release is planned with the accompanying
+private research repository (a public artifact release is planned with the accompanying
 paper) — so this feature is usable today only if you have a DECAF checkout:
 clone it and point `AWE_DECAF_PATH` at it (default: a sibling `../DECAF`
 directory). Without DECAF, TrajViz runs fully standalone and the Attribution
@@ -182,7 +182,7 @@ from a gold corpus laid out as
 `<corpus_root>/data/{requirements,patch,trajectory}/` plus
 `eval_<agent>.json`, with trajectories at
 `.../trajectory/<agent>/<instance_id>.json`. The corpus root is set via the
-`AWE_ARGUS_ROOT` environment variable (default: a sibling `../TraceProbe`
+`AWE_ARGUS_ROOT` environment variable (default: an auto-detected sibling
 checkout). When a trajectory is loaded from such a path, its
 `(agent, instance_id)` are auto-detected and the tab populates on load; for an
 uploaded file, set them in the tab's override fields. The uploaded file must be

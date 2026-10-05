@@ -143,7 +143,7 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
 def _from_failure_chains(session: LoadedSession) -> list[OverviewIssue]:
     """Consecutive assistant error runs (cascades). Skip length-1 (covered by clusters)."""
     out: list[OverviewIssue] = []
-    chains = getattr(session, "failure_chains", None) or []
+    chains = session.failure_chains or []
     for i, chain in enumerate(chains):
         steps = tuple(int(s) for s in (chain.get("steps") or []) if s is not None)
         if len(steps) < 2:
@@ -263,7 +263,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
     if plan_resets > 0:
         plan_steps = sorted({
             int(snap["step"])
-            for snap in (getattr(session, "plan_history", None) or [])
+            for snap in (session.plan_history or [])
             if snap.get("step") is not None
         })
         out.append(
@@ -280,7 +280,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
             )
         )
 
-    for i, thrash in enumerate(getattr(session, "edit_thrash", None) or []):
+    for i, thrash in enumerate(session.edit_thrash or []):
         path = str(thrash.get("path") or "")
         count = int(thrash.get("count") or 0)
         fail_count = int(thrash.get("fail_count") or 0)
@@ -303,7 +303,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
             )
         )
 
-    for i, rep in enumerate(getattr(session, "repeated_searches", None) or []):
+    for i, rep in enumerate(session.repeated_searches or []):
         display = str(rep.get("display") or rep.get("signature") or "")
         count = int(rep.get("count") or 0)
         steps = tuple(int(s) for s in (rep.get("steps") or []) if s is not None)
@@ -328,7 +328,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
 def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
     """Compactions that ran before the window was full, or grew it."""
     out: list[OverviewIssue] = []
-    flagged = getattr(session, "premature_compactions", None) or []
+    flagged = session.premature_compactions or []
     if not flagged:
         return out
 
@@ -394,7 +394,7 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
 def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
     """Map detected performance bottlenecks (outlier + clear cause), not top-N slow steps."""
     out: list[OverviewIssue] = []
-    for i, bn in enumerate(getattr(session, "performance_bottlenecks", None) or []):
+    for i, bn in enumerate(session.performance_bottlenecks or []):
         step_idx = bn.get("step_idx")
         if step_idx is None:
             continue

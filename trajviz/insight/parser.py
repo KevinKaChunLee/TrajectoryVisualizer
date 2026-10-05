@@ -275,7 +275,6 @@ def parse_steps(raw: dict) -> list[dict]:
         if not isinstance(tokens_info, dict):
             tokens_info = {}
         metrics_unavailable_fields = _missing_token_metric_fields(tokens_info)
-        metrics_source_format = ""
         reasoning = _optional_token_count(tokens_info, "reasoning")
         # NaN/Infinity are dropped here rather than downstream: JSON permits
         # the bare literals, and a non-finite token count propagates into
@@ -345,7 +344,6 @@ def parse_steps(raw: dict) -> list[dict]:
             "is_compaction_checkpoint": is_compaction_checkpoint,
             "compaction_reason": info.get("reason", "") if is_compaction_checkpoint else "",
             "_metrics_unavailable_fields": metrics_unavailable_fields,
-            "_metrics_source_format": metrics_source_format,
         })
 
     _fill_missing_last_step_duration(steps, raw)

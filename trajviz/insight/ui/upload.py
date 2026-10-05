@@ -15,6 +15,10 @@ from ..report import ReportError, write_report_file
 from ..session import LoadedSession
 from .shared import SharedState
 
+# Picking a file re-clicks this button from the browser instead of binding a
+# second Python load path; see `load.bind_load`.
+LOAD_BTN_ELEM_ID = "tv-load-btn"
+
 
 @dataclass
 class UploadRefs:
@@ -54,7 +58,13 @@ def layout() -> UploadRefs:
                 height=110,
             )
             with gr.Row():
-                load_btn = gr.Button("Load Trajectory", variant="primary", size="sm", min_width=120)
+                load_btn = gr.Button(
+                    "Load Trajectory",
+                    variant="primary",
+                    size="sm",
+                    min_width=120,
+                    elem_id=LOAD_BTN_ELEM_ID,
+                )
                 export_btn = gr.DownloadButton(
                     label="Export HTML",
                     variant="secondary",
@@ -99,25 +109,30 @@ def load_slots(refs: UploadRefs) -> dict:
 
 
 _TEMP_EXPORT_PREFIX = "trajviz-report-"
-_last_temp_export_dir: str | None = None
+# Keyed by Gradio session hash (``None`` for direct/library callers). One process
+# serves every viewer and each export deletes the directory it recorded, so a
+# single module-level string meant the next viewer's export rmtree'd the report
+# the previous viewer's Export HTML button was still pointing at. The cost of
+# keying it is that an abandoned session's last temp dir lives until the process
+# exits; losing another viewer's armed download is the worse of the two.
+_last_temp_export_dirs: dict[str | None, str] = {}
 
 
 def _export_off():
     return gr.update(value=None, interactive=False)
 
 
-def _replace_temp_export_dir(new_path: str) -> None:
-    """Drop the previous mkdtemp export dir after a replacement file is written."""
-    global _last_temp_export_dir
+def _replace_temp_export_dir(new_path: str, session: str | None = None) -> None:
+    """Drop *this session's* previous mkdtemp export dir once its replacement is written."""
     parent = os.path.dirname(os.path.abspath(new_path))
-    previous = _last_temp_export_dir
+    previous = _last_temp_export_dirs.get(session)
     if os.path.basename(parent).startswith(_TEMP_EXPORT_PREFIX):
-        _last_temp_export_dir = parent
+        _last_temp_export_dirs[session] = parent
     if previous and previous != parent and os.path.basename(previous).startswith(_TEMP_EXPORT_PREFIX):
         shutil.rmtree(previous, ignore_errors=True)
 
 
-def prepare_html_export(raw, _steps=None, dark=False):
+def prepare_html_export(raw, _steps=None, dark=False, request: gr.Request | None = None):
     """Build the HTML snapshot after a trajectory loads.
 
     Gradio's DownloadButton only saves in the same click that already has a
@@ -135,7 +150,9 @@ def prepare_html_export(raw, _steps=None, dark=False):
     except Exception:
         traceback.print_exc()
         return _export_off()
-    _replace_temp_export_dir(path)
+    # Gradio injects *request* on a browser call (annotation-driven) and leaves
+    # it None for a direct call, which is the key library callers share.
+    _replace_temp_export_dir(path, getattr(request, "session_hash", None))
     return gr.update(value=path, interactive=True)
 
 
@@ -168,6 +185,9 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "export_btn": export_off,
         }
     warnings = load_warnings_html(session)
+    # `summary_area` is a plain Column above the Tabs — never an accordion — so a
+    # step-truncation notice (session.MAX_STEPS) cannot be collapsed out of
+    # sight, and `report.py` repeats the same strip in the exported header.
     return {
         # Keep area visible so label badges can appear after Load Labels.
         "summary_area": gr.update(visible=True),

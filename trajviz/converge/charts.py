@@ -11,26 +11,19 @@ except ImportError:
 
 import plotly.graph_objects as go
 
+from .milestones import MILESTONE_LABELS, MILESTONE_NAMES
+
 
 # -- Layout helpers -----------------------------------------------------------
 
 _TPL = "plotly_white"
 
-_MILESTONE_NAMES = [
-    "first_relevant_file",
-    "first_edit",
-    "first_surviving_edit",
-    "first_passing_validation",
-    "final_patch",
-]
-
-_MILESTONE_LABELS = {
-    "first_relevant_file": "First Relevant File",
-    "first_edit": "First Edit",
-    "first_surviving_edit": "First Surviving Edit",
-    "first_passing_validation": "First Passing Validation",
-    "final_patch": "Final Patch",
-}
+# Milestone names/labels live in milestones.py, next to extract_milestones, so
+# the chart and the HTML table cannot drift apart (C5). Aliased to the private
+# names this module already used; the miss fallback stays `.get(name, name)`
+# here and `.title()`-cased in rendering.py, so no rendered string changes.
+_MILESTONE_NAMES = MILESTONE_NAMES
+_MILESTONE_LABELS = MILESTONE_LABELS
 
 _REF_COLOR = "#1d4ed8"   # blue
 _CMP_COLOR = "#dc2626"   # red

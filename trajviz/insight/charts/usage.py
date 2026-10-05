@@ -6,7 +6,7 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Callable
 
-from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure, _truncate_chart_label
+from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure, _truncate_chart_labels
 import plotly.graph_objects as go
 
 from ..parser import infer_non_cache_input
@@ -357,7 +357,7 @@ def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
         return fig
 
     sorted_tools = sorted(all_tools.keys(), key=lambda t: all_tools[t])
-    display_names = [_truncate_chart_label(n) for n in sorted_tools]
+    display_names = _truncate_chart_labels(sorted_tools)
 
     fig = go.Figure()
     if has_agents:
@@ -447,10 +447,18 @@ def build_tool_duration_chart(steps: list[dict], dark: bool = False) -> go.Figur
         return fig
 
     sorted_tools = sorted(total_secs.keys(), key=lambda t: total_secs[t])
-    display_names = [_truncate_chart_label(n) for n in sorted_tools]
+    display_names = _truncate_chart_labels(sorted_tools)
 
     fig = go.Figure()
     legend_seen: set[str] = set()
+    # One trace per timed call, deliberately: each segment needs its own base,
+    # color and step index in customdata, which is what makes a bar clickable
+    # back to its Workflow step. Trace count therefore equals timed-call count.
+    # Measured over 2,500 real exports: median 12 traces, worst case 177
+    # (opencode_glm/sympy__sympy-15599) at 0.10s to build and 70 KB of chart
+    # HTML, so the cost only bites far outside any real trajectory (10,000
+    # synthetic calls: 1.4s, 3.1 MB). Batching into one array-valued Bar per
+    # agent would have to keep the per-point step index resolvable.
     for tool_name, y_label in zip(sorted_tools, display_names, strict=True):
         base = 0.0
         for step_idx, secs, agent_id in calls_by_tool[tool_name]:
@@ -714,9 +722,20 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
             )
         )
 
+    # Say so when a bar is a partial sum. `compute_agent_summary` drops any step
+    # whose token counts are unusable (OpenCode can report a negative input), so
+    # without this the chart presents an incomplete total as a definitive one —
+    # and `infer_non_cache_input` clamps at 0, which reads as a confident "no
+    # fresh input" rather than "not all of it could be counted". The Overview
+    # token chip already carries the same caveat.
+    dropped = sum(a.get("input_tokens_unusable_steps", 0) or 0 for a in agent_summaries)
+    title = "Token Breakdown by Agent" if has_breakdown else "Total Tokens by Agent"
+    if dropped:
+        title += f" — partial, excludes {dropped} step{'s' if dropped != 1 else ''}"
+
     _apply_chart_layout(
         fig,
-        "Token Breakdown by Agent" if has_breakdown else "Total Tokens by Agent",
+        title,
         xaxis="Agent",
         yaxis="Tokens (count)",
         height=320,

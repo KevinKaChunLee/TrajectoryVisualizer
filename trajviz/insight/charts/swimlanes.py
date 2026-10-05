@@ -9,7 +9,7 @@ from ._layout import (
     _apply_chart_layout,
     _apply_dark,
     _empty_figure,
-    _truncate_chart_label,
+    _truncate_chart_labels,
 )
 import plotly.graph_objects as go
 
@@ -270,7 +270,7 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
         for tc in s.get("tool_calls") or []:
             if not isinstance(tc, dict):
                 continue
-            tool_name = _truncate_chart_label(tool_chart_name(tc))
+            tool_name = tool_chart_name(tc)
             ok = not (tc.get("error") or tc.get("status") == "error")
             by_agent[agent].append((idx, tool_name, ok, tool_call_hint(tc)))
             tool_names.add(tool_name)
@@ -283,6 +283,15 @@ def build_tool_outcome_timeline(steps: list[dict], dark: bool = False) -> go.Fig
         fig = _empty_figure(340, "No tool calls recorded in this trajectory.")
         _apply_dark(fig, dark)
         return fig
+
+    # Truncate the y labels as a set, not per call: two names agreeing on their
+    # first 27 characters would otherwise land on one merged row.
+    ordered = sorted(tool_names)
+    label_of = dict(zip(ordered, _truncate_chart_labels(ordered), strict=True))
+    by_agent = {
+        agent: [(idx, label_of[name], ok, hint) for idx, name, ok, hint in calls]
+        for agent, calls in by_agent.items()
+    }
 
     has_agents = len(by_agent) > 1
     fig = go.Figure()

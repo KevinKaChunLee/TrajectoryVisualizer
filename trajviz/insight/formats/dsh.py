@@ -689,27 +689,48 @@ def _dsh_session_header(events: list[dict]) -> dict:
 
 def _dsh_keep_descendant_children(
     parent_id: str,
-    child_event_lists: list[list[dict]],
-) -> list[list[dict]]:
-    """Drop logs whose ``parentSession`` is not this session or a discovered sibling."""
+    child_logs: list[tuple[str | None, list[dict]]],
+) -> list[tuple[str | None, list[dict]]]:
+    """Drop logs whose ``parentSession`` is not this session or a discovered sibling.
+
+    Each entry is ``(path, events)``; the path is the file the events were read
+    from, or None for zip members (whose bytes are already inside the archive
+    hash). It travels with the events so the caller can report which FILES were
+    merged — the parent log's sha alone is not the identity of a merged tree.
+    """
     if not parent_id:
-        return [events for events in child_event_lists if events]
-    parsed: list[tuple[str, str, list[dict]]] = []
-    for events in child_event_lists:
+        return [(path, events) for path, events in child_logs if events]
+    parsed: list[tuple[str, str, str | None, list[dict]]] = []
+    for path, events in child_logs:
         if not events:
             continue
         header = _dsh_session_header(events)
         child_id = header.get("id") if isinstance(header.get("id"), str) else ""
         parent_session = header.get("parentSession") if isinstance(header.get("parentSession"), str) else ""
-        parsed.append((child_id, parent_session, events))
-    child_ids = {child_id for child_id, _, _ in parsed if child_id}
+        parsed.append((child_id, parent_session, path, events))
+    child_ids = {child_id for child_id, _, _, _ in parsed if child_id}
     allowed_parents = {parent_id} | child_ids
-    kept: list[list[dict]] = []
-    for _child_id, parent_session, events in parsed:
+    kept: list[tuple[str | None, list[dict]]] = []
+    for _child_id, parent_session, path, events in parsed:
         if parent_session and parent_session not in allowed_parents:
             continue
-        kept.append(events)
+        kept.append((path, events))
     return kept
+
+
+def _dsh_merged_source_key(child_id: str, path: str) -> str:
+    """Stable key for one merged child log inside the tree digest.
+
+    The child's SESSION ID, not a path: it keeps the digest unchanged when the
+    export is relocated, and children may come from ``TRAJVIZ_DSH_EXPORT_ROOT``
+    rather than from next to the parent, where a relative path would be
+    ``../..``-shaped. Falls back to the trailing ``subagents/<dir>/session.jsonl``
+    components for a child log with no id in its header.
+    """
+    if child_id:
+        return child_id
+    parts = [part for part in path.replace("\\", "/").split("/") if part]
+    return "/".join(parts[-3:])
 
 
 def _dsh_message_sort_key(msg: dict) -> tuple[float, int]:
@@ -741,21 +762,27 @@ def _convert_dsh_to_internal(
     """
     session, messages, model, provider, title = _dsh_session_to_messages(events)
     session_id = session.get("id", "") if isinstance(session.get("id"), str) else ""
+    child_logs: list[tuple[str | None, list[dict]]]
     if child_event_lists is None:
         origin = session.get("origin")
         parent_session = session.get("parentSession")
         is_child_log = origin == "subagent" or (isinstance(parent_session, str) and bool(parent_session))
-        child_event_lists = [
-            _dsh_read_event_list(path)
+        child_logs = [
+            (path, _dsh_read_event_list(path))
             for path in _dsh_discover_child_log_paths(
                 session_id,
                 source_path,
                 allow_export_root=not is_child_log,
             )
         ]
-    child_event_lists = _dsh_keep_descendant_children(session_id, child_event_lists)
+    else:
+        # Zip members: their bytes are already covered by the archive's own hash,
+        # so there is no separate file to report.
+        child_logs = [(None, child_events) for child_events in child_event_lists]
+    child_logs = _dsh_keep_descendant_children(session_id, child_logs)
     sub_agent_ids: set[str] = set()
-    for child_events in child_event_lists:
+    merged_sources: list[tuple[str, str]] = []
+    for child_path, child_events in child_logs:
         if not child_events:
             continue
         child_session, child_messages, child_model, child_provider, child_title = _dsh_session_to_messages(child_events)
@@ -764,6 +791,11 @@ def _convert_dsh_to_internal(
             if child_id in sub_agent_ids:
                 continue
             sub_agent_ids.add(child_id)
+        if child_path:
+            # Recorded only AFTER the dedupe above, so the list names the files
+            # whose events actually reach `messages` — nothing else.
+            key = _dsh_merged_source_key(child_id if isinstance(child_id, str) else "", child_path)
+            merged_sources.append((key, child_path))
         if child_model and not model:
             model = child_model
         if child_provider and not provider:
@@ -846,6 +878,10 @@ def _convert_dsh_to_internal(
         "token_usage": {"total_tokens": total_tokens},
         "stats": {},
         "_dsh_format": True,
+        # Files merged into the trajectory above, besides the one the loader
+        # read. The loader pops this and folds it into the content identity
+        # (`_source_sha256`); nothing downstream of that sees the key.
+        "_dsh_merged_sources": merged_sources,
     }
 
 
@@ -924,7 +960,7 @@ def _zip_dsh_members(names: list[str]) -> tuple[str | None, list[tuple[str, str]
         if not child_id:
             continue
         prev = by_id.get(child_id)
-        if prev is None or (name.count("/"), len(name)) < (prev.count("/"), len(name)):
+        if prev is None or (name.count("/"), len(name)) < (prev.count("/"), len(prev)):
             by_id[child_id] = name
     children = sorted(by_id.items(), key=lambda item: item[0])
     return parent, children
@@ -947,7 +983,16 @@ def _zip_member_over_budget(archive: zipfile.ZipFile, member: str, used: list[in
 def resolve_dsh_session_path(file_path: str) -> tuple[str, str | None]:
     """If *file_path* is a DSH session directory, return its ``session.jsonl``.
 
-    Returns ``(path, error)``. Directories without ``session.jsonl`` error.
+    Returns ``(path, error)``. Directories without ``session.jsonl`` error:
+    there is no session header to anchor ids, ``createdAt`` or the descendant
+    filter, so a bare ``subagents/`` tree cannot be loaded on its own.
+
+    The returned path is the PARENT log only. The sub-agent logs under the
+    sibling ``subagents/`` tree also feed the analysed trajectory (they are
+    discovered later, in :func:`_dsh_discover_child_log_paths`), so this one
+    path is not a complete identity for the load — see
+    ``_dsh_tree_sha256`` in ``loaders.py``, which is why
+    :func:`_convert_dsh_to_internal` reports ``_dsh_merged_sources``.
     """
     if os.path.isdir(file_path):
         nested = os.path.join(file_path, "session.jsonl")
@@ -958,9 +1003,14 @@ def resolve_dsh_session_path(file_path: str) -> tuple[str, str | None]:
 
 
 def _parse_zip_member_events(archive: zipfile.ZipFile, member: str) -> list[dict]:
+    # Every failure mode of a single member degrades to "no events" here, which
+    # the callers turn into a clean `_error` for the parent and a skipped child:
+    # zipfile raises a BARE RuntimeError for an encrypted member and BadZipFile
+    # for a bad CRC, and either one escaping would break the never-raise ingest
+    # contract over one damaged member of an otherwise readable export.
     try:
         raw = archive.read(member)
-    except KeyError:
+    except (KeyError, RuntimeError, zipfile.BadZipFile, OSError, EOFError):
         return []
     try:
         text = raw.decode("utf-8-sig")

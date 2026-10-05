@@ -65,9 +65,13 @@ def classify_file(
 
 def classify_anchor_files(
     anchor_files: set[str],
-    custom_rules: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, str], dict[str, int]]:
     """Classify all anchor files.
+
+    No custom-rules parameter (C6): nothing could reach it — no entry point,
+    CLI flag or UI control ever threaded one through compute_anchor_analysis,
+    so it was permanently None. :func:`classify_file` keeps its own hook, which
+    is the documented first-match-wins extension point.
 
     Returns:
         (file_to_class, class_counts) where:
@@ -80,7 +84,7 @@ def classify_anchor_files(
     }
 
     for f in sorted(anchor_files):
-        cat = classify_file(f, custom_rules)
+        cat = classify_file(f)
         file_to_class[f] = cat
         class_counts[cat] = class_counts.get(cat, 0) + 1
 
@@ -180,7 +184,6 @@ def compute_anchor_analysis(
     ref_actions: list[CanonicalAction],
     cmp_actions: list[CanonicalAction],
     anchor_files: set[str],
-    custom_rules: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     """Compute full anchor analysis for both trajectories.
 
@@ -189,7 +192,7 @@ def compute_anchor_analysis(
     if not anchor_files:
         return None
 
-    file_to_class, class_counts = classify_anchor_files(anchor_files, custom_rules)
+    file_to_class, class_counts = classify_anchor_files(anchor_files)
 
     ref_metrics = compute_anchor_metrics(ref_actions, anchor_files, file_to_class)
     cmp_metrics = compute_anchor_metrics(cmp_actions, anchor_files, file_to_class)

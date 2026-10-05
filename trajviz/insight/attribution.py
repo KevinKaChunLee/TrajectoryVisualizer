@@ -73,12 +73,40 @@ _DECAF_ROOT = _decaf_root()
 if _DECAF_ROOT is not None and str(_DECAF_ROOT) not in sys.path:
     sys.path.insert(0, str(_DECAF_ROOT))
 
-# The corpus root default is captured ONCE at import (immutable thereafter):
-# env override, else a sibling TraceProbe. Every diagnose() call explicitly
-# configures this default or the caller's root — never "whatever the previous
-# caller left behind".
-_DEFAULT_ROOT = Path(os.environ.get(
-    "AWE_ARGUS_ROOT", str(Path(__file__).resolve().parents[3] / "TraceProbe")))
+def _reference_root() -> Path:
+    """Where the gold reference data lives, resolved by LAYOUT, not by name.
+
+    ``AWE_ARGUS_ROOT`` (DECAF's own variable) wins. Otherwise look for a sibling
+    of this checkout that actually has the layout attribution needs —
+    ``data/requirements/`` and ``data/trajectory/`` — and take it only if exactly
+    one sibling qualifies. Discovering it by content rather than by a hard-coded
+    directory name keeps TrajViz independent of whatever the reference set is
+    called locally, and keeps an ambiguous tree from being silently picked.
+
+    With no match, the neighbouring directory is returned unchanged; attribution
+    then degrades with a message naming ``AWE_ARGUS_ROOT`` rather than guessing.
+    """
+    env = os.environ.get("AWE_ARGUS_ROOT")
+    if env:
+        return Path(env)
+
+    neighbourhood = Path(__file__).resolve().parents[3]
+    try:
+        matches = [
+            d for d in neighbourhood.iterdir()
+            if d.is_dir()
+            and (d / "data" / "requirements").is_dir()
+            and (d / "data" / "trajectory").is_dir()
+        ]
+    except OSError:
+        return neighbourhood
+    return matches[0] if len(matches) == 1 else neighbourhood
+
+
+# Captured ONCE at import and immutable thereafter. Every diagnose() call
+# explicitly configures either this default or the caller's root — never
+# "whatever the previous caller left behind".
+_DEFAULT_ROOT = _reference_root()
 os.environ.setdefault("AWE_ARGUS_ROOT", str(_DEFAULT_ROOT))
 # DECAF's judge/arbiter caches are partitioned by model slug; the checked-in
 # caches were produced with z-ai/glm-5.2 — the awe default (claude-sonnet-4.5)
@@ -247,7 +275,7 @@ def _llm_layer_policy(agent: str, instance_id: str, canon_sha: str):
 # --------------------------------------------------------------------------- #
 def diagnose(*, agent: str | None, instance_id: str | None,
              source_path: str | os.PathLike | None = None, fmt: str | None = None,
-             expected_sha: str | None = None,
+             expected_sha: str | None = None, merged_sources: int = 0,
              argus_root: str | os.PathLike | None = None) -> AttributionResult:
     """Diagnose the failure of the *displayed* trajectory. Never raises; never
     fabricates; degrades with an explicit reason. See the module docstring for
@@ -255,20 +283,27 @@ def diagnose(*, agent: str | None, instance_id: str | None,
 
     ``expected_sha`` — the sha256 captured when the UI LOADED the trajectory
     (the immutable identity of the displayed content). Diagnosis requires the
-    canonical file's CURRENT bytes to equal it, so a corpus file mutated between
+    canonical file's CURRENT bytes to equal it, so a real export mutated between
     load and diagnosis is refused rather than diagnosed while the UI still
     shows the old state.
+
+    ``merged_sources`` — how many ADDITIONAL files the loader merged into the
+    displayed trajectory (``_source_merged_count``; non-zero only for a DSH
+    export tree). Anything above zero is unverifiable here by construction, so
+    it is refused with that reason rather than compared.
     """
     if not DECAF_AVAILABLE:
         return AttributionResult(False, reason=f"DECAF unavailable ({_IMPORT_ERROR})")
     with _LOCK:
         return _diagnose_locked(agent=agent, instance_id=instance_id,
                                 source_path=source_path, fmt=fmt,
-                                expected_sha=expected_sha, argus_root=argus_root)
+                                expected_sha=expected_sha,
+                                merged_sources=merged_sources,
+                                argus_root=argus_root)
 
 
 def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
-                     argus_root):
+                     argus_root, merged_sources=0):
     # per-call, explicit configuration — never inherited from a previous caller
     _configure_unlocked(argus_root if argus_root else _DEFAULT_ROOT)
 
@@ -305,9 +340,24 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     if canon is None:
         return AttributionResult(
             False, mode="corpus", agent=agent, instance_id=instance_id,
-            reason=f"no corpus trajectory for {agent}/{instance_id} under "
+            reason=f"no real trajectory for {agent}/{instance_id} under "
                    f"{config.ARGUS_ROOT} — cannot verify the displayed trajectory "
                    f"belongs to this run")
+    if merged_sources:
+        # A merged export (DSH parent log + N sub-agent logs) has no single-file
+        # identity to compare: `canonical_trajectory_path` resolves exactly ONE
+        # file per (agent, instance) and the LLM-layer provenance is keyed on
+        # that file's sha, so the composite the loader stamped cannot match by
+        # construction. Say that, rather than let the sha comparison below blame
+        # a mismatch or (worse) certify a tree whose children were never hashed.
+        return AttributionResult(
+            False, mode="gold_free", agent=agent, instance_id=instance_id,
+            reason=f"the displayed trajectory is a merged multi-file export "
+                   f"(parent log + {merged_sources} sub-agent log"
+                   f"{'s' if merged_sources != 1 else ''}), while the canonical "
+                   f"source for {agent}/{instance_id} is a single file — its "
+                   f"content cannot be certified as this run, so no "
+                   f"gold-grounded verdict is issued")
     canon_sha = _sha256(canon)
     # Identity is CONTENT identity, never path identity: the displayed bytes'
     # hash (captured at load) — or, failing that, the current source file's
@@ -328,7 +378,7 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
             False, mode="gold_free", agent=agent, instance_id=instance_id,
             reason=f"the displayed trajectory does not match the canonical "
                    f"{agent}/{instance_id} run's current content — either it "
-                   f"belongs to a different execution, or the corpus file "
+                   f"belongs to a different execution, or the real export "
                    f"changed after it was loaded (reload to re-sync). A "
                    f"gold-grounded verdict would otherwise describe different "
                    f"bytes than the ones shown")
@@ -361,7 +411,7 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     if _sha256(canon) != canon_sha:
         return AttributionResult(
             False, mode="corpus", agent=agent, instance_id=instance_id,
-            reason=f"the corpus trajectory for {agent}/{instance_id} changed "
+            reason=f"the real trajectory for {agent}/{instance_id} changed "
                    f"while the diagnosis was running — reload and retry")
     return _shape(rec, d.get("opportunities", {}), notes)
 

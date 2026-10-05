@@ -19,7 +19,7 @@ targeted.
 ## Verification performed
 
 Full-corpus differential over **all 2,500 real trajectories** in
-`TraceProbe/data/trajectory` (claude_code, codex, opencode ×3), main
+a real trajectory set (claude_code, codex, opencode ×3), main
 (`9e663c3`) vs PR head (`8cd3c48`):
 
 | Check | Result |
@@ -216,6 +216,98 @@ Regression tests for all four are mutation-verified (removing each guard kills
 documented the broken token contracts now pass, so their decorators are gone:
 xfails 8 → 6. Suite 823 → 844 passing, ruff clean, full deep sweep 2,500/2,500.
 
+## Walkthrough gap remediation (2026-10-05)
+
+An architecture walkthrough of the whole package surfaced 66 candidate gaps.
+Each was triaged against the live tree with its blast radius measured *before*
+any edit: **53 fix-safe, 8 document-only, 4 number-moving, 1 not a defect**. All
+66 are now dispositioned. Suite **844 → 998 passing**, 2 skipped, **xfails
+6 → 0**, ruff clean, DECAF present so the environment-gated attribution tests ran.
+
+Measurements below come from a differential over 2,500 real trajectory exports
+(500 each from Claude Code, Codex and three OpenCode model variants), run under
+both revisions and diffed key by key. The harness is described at the end of
+this document.
+
+Two triage findings corrected earlier claims and are worth keeping:
+
+- The dead branch in the tool-success classifier is **unreachable**, not a live
+  over-count: 0 of 81,139 tool calls across that set carry an unset status.
+  Collapsing it is a provable no-op, so it does not restate `tool_success_rate`.
+- `avg_tokens_per_step` was fixed **additively**. Redefining its denominator
+  would have moved it on 2,500/2,500 files (median +6.3%, max +25%); that is a
+  re-reporting decision, so the existing key is untouched and
+  `avg_tokens_per_assistant_step` sits beside it.
+
+### The correctness fix this closes
+
+`_source_sha256` covered the parent `session.jsonl` alone on every **non-zip**
+DeepSeek-Harness load, while the converter merged sibling
+`subagents/<id>/session.jsonl` into the analysed trajectory. Two trees with
+identical parents and different children hashed alike, and `diagnose()` would
+certify either as the other. Reproduced by building both trees. This is exactly
+the hole the evidence-gaps section below predicted — the identity gate had never
+been executed against a DSH directory. The hash is now a domain-separated
+composite over the parent plus each child's `(session id, sha)`, computed **only
+when a merge happened**, so every single-file load keeps the plain sha256 it has
+always had (verified: `_source_sha256` moves on 0 of 2,500 files).
+
+### Differential — what moved
+
+Digest of `load_trajectory` → `parse_steps` → `compute_metrics` /
+`compute_health_verdict` / `compute_agent_summary`, before vs after the 53
+fix-safe changes:
+
+| Change | Files | Note |
+|---|---|---|
+| **0 parsed-step changes** | 0 / 2500 | the ingest fixes are error paths only |
+| **0 pre-existing `metrics.*` values** | 0 / 2500 | no reported metric restated |
+| `agents[].input_tokens` | 82 | negative OpenCode inputs no longer summed; 18 were strictly negative |
+| 8 new keys added | 2500 | per-agent unusable-step counts, `avg_tokens_per_assistant_step` |
+
+### The two number-moving changes (separate commits, droppable)
+
+Both are in `patterns.py`, both landed alone so either can be reverted without
+losing the rest.
+
+1. **The recovery walk's failure definition.** PR #13 corrected OpenCode's
+   `status=completed` + non-zero `metadata.exit` everywhere *except* here, where
+   the private predicate also compared statuses case-sensitively. Now delegates
+   to `tool_failure.step_has_success`. Moves `recovery_path` on **449 / 2500**
+   files (591 clusters); "no recovery found" rises 236 → 325. Claude Code and
+   Codex are **bit-identical** (neither emits `metadata.exit`). Phase
+   composition untouched.
+2. **The validation-command vocabulary.** The bare words `lint`, `check` and
+   `verify` were substring-matched against whole commands, so they fired on
+   `git checkout`, `subprocess.check_call`, `checklist.txt`,
+   `astropy.io.fits.verify`, and above all on standalone words inside quoted
+   script bodies (`python -c "... # check if attribute exists ..."`). A
+   word-boundary match would not have helped. Validate-phase steps **9,786 →
+   7,998 (-18.3%, 607 files)**, segments 27,910 → 26,783, `phase_regressions`
+   9,488 → 8,984. All five export variants; worst on OpenCode GLM (-31.4%).
+   This also reaches converge, which imports `_is_validation_command`:
+   `effect_label`, `first_passing_validation` and its deltas all move.
+
+**Any previously reported OpenCode recovery-path or phase-composition figure is
+stale.** The direction is toward honesty in both cases.
+
+### Still not possible without a secret
+
+The DECAF-gated tests remain outside CI — **38** of them, measured by blocking
+the `awe` import and diffing the run: 14 in `test_attribution.py`, 20 in
+`test_attribution_live.py`, 3 in `test_concurrency_isolation.py` and 1 in
+`test_dsh_source_identity.py`. (An earlier note in this file said 39; that
+counted a `test_attribution_ui.py` case which is gated on absent reference data
+rather than on `awe`.) This repository is public and the
+repository carrying `DECAF/awe` is private, so the checkout needs a credential
+and every credential is a secret — there is no token-free variant. Vendoring
+`awe` would publish an unpublished method into a public repository; stubbing it
+would make every golden assertion tautological. `integration.yml` now fails at a
+**preflight with an actionable message** instead of an opaque checkout error, and
+its header records the one alternative needing no new secret: run the equivalent
+job from inside the private repository that holds DECAF. A coverage job was added
+but has **not** been verified in CI.
+
 ## Open backlog (confirmed, not yet fixed)
 
 Ranked. Each was reproduced against current code by an adversarial verifier.
@@ -382,7 +474,9 @@ Each was claimed by a finder and disproven by a verifier with executable proof:
   through a rewritten read path (`utf-8-sig` decode, `resolve_dsh_session_path`
   rewriting `file_path` before hashing, the zip branch hashing the archive).
   The content-sha identity gate has not been executed against a DSH
-  zip/directory or a Cursor export.
+  zip/directory or a Cursor export. **DSH closed 2026-10-05** — executing it
+  is what found the tree-vs-file hashing defect; see the remediation section
+  above. Cursor remains unexecuted.
 - `ARGUS_PAT` is still not configured on the repository, so `integration.yml`
   continues to fail at checkout with "Input required and not supplied: token".
   `ci.yml` (the only PR workflow) is unaffected.

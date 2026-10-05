@@ -1,13 +1,43 @@
 """Markdown and HTML display string generation."""
 
 import html
+import re
 
 
 _VERDICT_STYLES = {
-    "good": ("var(--ov-success, #16a34a)", "#f0fdf4", "#bbf7d0"),
-    "warn": ("var(--ov-warn, #d97706)", "#fffbeb", "#fde68a"),
-    "bad":  ("var(--ov-bad, #dc2626)",  "#fef2f2", "#fecaca"),
+    "good": ("var(--ov-success, #16a34a)",
+             "var(--ov-chip-good-bg, #f0fdf4)", "var(--ov-chip-good-border, #bbf7d0)"),
+    "warn": ("var(--ov-warn, #d97706)",
+             "var(--ov-chip-warn-bg, #fffbeb)", "var(--ov-chip-warn-border, #fde68a)"),
+    "bad":  ("var(--ov-bad, #dc2626)",
+             "var(--ov-chip-bad-bg, #fef2f2)", "var(--ov-chip-bad-border, #fecaca)"),
 }
+
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def _display_text(value: object) -> str:
+    """Flatten an untrusted scalar to a single line of display text.
+
+    Every scalar rendered here comes out of the opened trajectory (role, agent
+    id, finish reason, tool and model names), and both sinks are line-oriented:
+    a newline ends the markdown block it sits in, and the report's HTML pass
+    then hands the *next* line to the browser as live markup. Collapsing
+    whitespace runs keeps the payload inside its own cell, where the caller's
+    ``html.escape`` renders it inert.
+    """
+    return _WHITESPACE_RUN.sub(" ", str(value)).strip()
+
+
+def _md_cell_text(value: object) -> str:
+    r"""Flatten an untrusted scalar for use inside a markdown table cell.
+
+    As :func:`_display_text`, plus the cell delimiter: a bare ``|`` would open
+    a new column and shift every later value one cell to the left. ``\|`` is
+    the markdown escape, and ``report._md_table_to_html`` splits on unescaped
+    pipes only, so both sinks render it as one literal pipe.
+    """
+    return _display_text(value).replace("|", "\\|")
 
 
 def _metric_chip(label: str, value: str, *, wide: bool = False,
@@ -17,25 +47,30 @@ def _metric_chip(label: str, value: str, *, wide: bool = False,
     *verdict* adds a colored left border (good/warn/bad).
     *hint* adds a subtitle line below the value.
     """
-    # label/value can be untrusted (tool, model, agent names); escape for HTML.
-    label = html.escape(str(label))
-    value = html.escape(str(value))
-    hint = html.escape(str(hint)) if hint else ""
+    # label/value can be untrusted (tool, model, agent names); flatten to one
+    # line (a newline would break the chip out of its markdown block) and
+    # escape for HTML.
+    label = html.escape(_display_text(label))
+    value = html.escape(_display_text(value))
+    hint = html.escape(_display_text(hint)) if hint else ""
     min_w = "140px" if wide else "100px"
     border_left = ""
-    bg = "#f8fafc"
-    border_color = "#e2e8f0"
+    bg = "var(--ov-chip-bg, #f8fafc)"
+    border_color = "var(--ov-chip-border, #e2e8f0)"
     if verdict and verdict in _VERDICT_STYLES:
         color, bg, border_color = _VERDICT_STYLES[verdict]
         border_left = f"border-left:3px solid {color};"
-    hint_html = (f"<span style='font-size:9px;color:#94a3b8;margin-top:1px;'>{hint}</span>"
+    hint_html = (f"<span style='font-size:9px;color:var(--ov-chip-hint, #94a3b8);"
+                 f"margin-top:1px;'>{hint}</span>"
                  if hint else "")
     return (
         f"<div style='display:inline-flex;flex-direction:column;background:{bg};"
         f"border:1px solid {border_color};border-radius:8px;padding:6px 10px;"
         f"min-width:{min_w};{border_left}'>"
-        f"<span style='font-size:10px;color:#64748b;text-transform:uppercase;'>{label}</span>"
-        f"<span style='font-size:13px;color:#1e293b;font-weight:500;'>{value}</span>"
+        f"<span style='font-size:10px;color:var(--ov-chip-label, #64748b);"
+        f"text-transform:uppercase;'>{label}</span>"
+        f"<span style='font-size:13px;color:var(--ov-chip-value, #1e293b);"
+        f"font-weight:500;'>{value}</span>"
         f"{hint_html}"
         f"</div>"
     )
@@ -88,7 +123,7 @@ def _build_hotspots_md(rows: list[dict]) -> str:
                 format(r[f], ef) if isinstance(r[f], (int, float)) and ef else str(r[f])
                 for f, _, ef in extra
             )
-            lines.append(f"| {r['index']} | `{r['role']}` | {v_str} | {extras} |")
+            lines.append(f"| {r['index']} | `{_md_cell_text(r['role'])}` | {v_str} | {extras} |")
         return "\n".join(lines)
 
     sections = [
@@ -118,7 +153,7 @@ def _build_hotspots_md(rows: list[dict]) -> str:
         ]
         for r in low_cache:
             lines.append(
-                f"| {r['index']} | `{r['role']}` | {r['cache_ratio'] * 100:.1f}% | "
+                f"| {r['index']} | `{_md_cell_text(r['role'])}` | {r['cache_ratio'] * 100:.1f}% | "
                 f"{r['non_cache_tokens']:,} | {r['tokens_total']:,} |"
             )
         sections.append(
@@ -152,17 +187,20 @@ def _build_per_message_md(rows: list[dict], limit: int = 80) -> str:
         dur = "N/A" if r["duration"] is None else f"{r['duration']:.2f}"
         tokps = "N/A" if r["tokens_per_sec"] is None else f"{r['tokens_per_sec']:.1f}"
         cache_pct = "N/A" if r["cache_ratio"] is None else f"{r['cache_ratio'] * 100:.1f}%"
-        finish = _friendly_finish(r['finish']) or '-'
+        # role/agent/finish are trajectory strings: flatten before they become
+        # table cells (see `_md_cell_text`).
+        role = _md_cell_text(r['role'])
+        finish = _md_cell_text(_friendly_finish(r['finish'])) or '-'
         if has_agent:
-            agent = r.get("agent", "") or "Main agent"
+            agent = _md_cell_text(r.get("agent", "")) or "Main agent"
             lines.append(
-                f"| {r['index']} | `{r['role']}` | `{agent}` | `{finish}` | {dur} | "
+                f"| {r['index']} | `{role}` | `{agent}` | `{finish}` | {dur} | "
                 f"{r['tokens_total']:,} | {tokps} | {cache_pct} | "
                 f"{r['non_cache_tokens']:,} | {r['tool_calls']} |"
             )
         else:
             lines.append(
-                f"| {r['index']} | `{r['role']}` | `{finish}` | {dur} | "
+                f"| {r['index']} | `{role}` | `{finish}` | {dur} | "
                 f"{r['tokens_total']:,} | {tokps} | {cache_pct} | "
                 f"{r['non_cache_tokens']:,} | {r['tool_calls']} |"
             )
@@ -217,7 +255,11 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
                      if has_breakdown else "N/A"),
     ]
     eff_chips = [
-        _metric_chip("Avg tok/step", f"{metrics['avg_tokens_per_step']:,}"),
+        # Assistant-step denominator on purpose: this chip is read against
+        # "Med tok/step" / "P95 tok/step" in the Behavioral grid, and those use
+        # assistant rows only. `avg_tokens_per_step` (all steps, user turns
+        # included) is still emitted for continuity but is not comparable here.
+        _metric_chip("Avg tok/asst step", f"{metrics['avg_tokens_per_assistant_step']:,}"),
         _metric_chip("Total processed tok/sec", f"{metrics['tokens_per_second']:,}"),
         _metric_chip("Median processed tok/sec", f"{metrics['median_tokens_per_second']:,}"),
         _metric_chip("Out/In ratio",

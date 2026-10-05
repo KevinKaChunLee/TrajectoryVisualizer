@@ -38,8 +38,7 @@ def main():
         return
 
     try:
-        from .insight import build_ui
-        from .styles import APP_CSS
+        from .insight import LAUNCH_PRESENTATION, build_ui
     except ImportError:
         print(
             "Error: Insight dependencies are not installed.\n"
@@ -55,8 +54,9 @@ def main():
         server_name=args.host,
         server_port=args.port,
         share=args.share,
-        css=APP_CSS,
-        head='<meta name="color-scheme" content="light">',
+        # build_ui() returns a deliberately unstyled app; presentation is applied
+        # at launch. Spread the shared dict so an embedder cannot drift from it.
+        **LAUNCH_PRESENTATION,
     )
 
 

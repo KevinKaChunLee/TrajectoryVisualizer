@@ -235,6 +235,10 @@ def _load_zip_trajectory(file_path: str, format_hint: str | None, source_sha: st
             source_path=file_path,
             child_event_lists=parsed.child_event_lists,
         )
+    # Zip members carry no path, so this is always empty here; drop it so the
+    # internal-only key never reaches the raw dict. The archive's own bytes
+    # already cover every merged member.
+    result.pop("_dsh_merged_sources", None)
     if "_error" in result:
         return result
     result["_source_path"] = file_path
@@ -288,12 +292,23 @@ def load_trajectory(file_path: str, format_hint: str | None = None) -> dict:
         return _format_mismatch_error(hint or "", detected)
 
     result = _apply_format(payload, fmt, source_path=file_path)
+    merged_sources = result.pop("_dsh_merged_sources", None)
     if "_error" in result:
         return result
     result["_source_path"] = file_path
+    if merged_sources:
+        # A DSH export is a TREE: the converter merged sibling
+        # `subagents/<id>/session.jsonl` logs that are not in `source_sha`, so
+        # the parent file's bytes do not identify what is displayed — two trees
+        # with identical parents and different children would hash alike and
+        # attribution would certify either as the other. Keep the plain sha for
+        # display/debug and make the identity cover the whole tree.
+        result["_source_file_sha256"] = source_sha
+        result["_source_merged_count"] = len(merged_sources)
+        source_sha = _dsh_tree_sha256(source_sha, merged_sources)
     # The displayed content's immutable identity — the sha256 of the EXACT
     # bytes parsed above (one read, one buffer): attribution requires the
-    # canonical corpus file to still have these bytes at diagnosis time
+    # canonical real export to still have these bytes at diagnosis time
     # (TOCTOU guard — never diagnose bytes the UI isn't showing).
     result["_source_sha256"] = source_sha
     return result
@@ -303,3 +318,34 @@ def _sha256_bytes(data: bytes) -> str:
     import hashlib
 
     return hashlib.sha256(data).hexdigest()
+
+
+def _dsh_tree_sha256(parent_sha: str, merged_sources: list[tuple[str, str]]) -> str:
+    """Content identity of a DSH export tree: parent log + merged child logs.
+
+    Domain-separated so it can never collide with a plain file sha256, and keyed
+    on each child's SESSION ID (see ``_dsh_merged_source_key``) so relocating or
+    re-downloading the export does not change the identity of the same run.
+    Computed ONLY when at least one child was merged, which is what keeps every
+    single-file load — i.e. the whole corpus and every other format — on the
+    plain sha256 it has always had.
+
+    If DSH ever becomes a corpus agent with a sibling ``subagents/`` tree, this
+    helper has to be SHARED with DECAF and applied on both sides: attribution
+    compares against ``awe.adapters.canonical_trajectory_path``, which resolves
+    exactly one file, so a composite can only ever be refused there today.
+    """
+    import hashlib
+
+    h = hashlib.sha256(b"trajviz-dsh-tree-v1\n")
+    h.update(b"parent\x00" + parent_sha.encode() + b"\n")
+    for key, path in sorted(merged_sources):
+        try:
+            with open(path, "rb") as f:
+                child_sha = _sha256_bytes(f.read())
+        except OSError:
+            # It parsed moments ago; if it has since vanished the identity must
+            # still differ from any tree whose children are all readable.
+            child_sha = "unreadable"
+        h.update(key.encode() + b"\x00" + child_sha.encode() + b"\n")
+    return h.hexdigest()

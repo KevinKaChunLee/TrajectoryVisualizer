@@ -189,7 +189,7 @@ def _render_one_agent_card(a: dict, agent_hex: str) -> str:
     # Spawning link (only meaningful for sub-agents)
     spawn_html = ""
     if a.get("spawned_by_step") is not None:
-        sidx = a["spawned_by_step"]
+        sidx = _step_index(a["spawned_by_step"])
         spawn_html = (
             f"<div class='agent-card-spawn'>"
             f"<span class='insight-step-link' onclick=\"{_diag_jump_onclick(sidx)}\">"
@@ -362,7 +362,7 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
         return ""
     items: list[str] = []
     for step in steps:
-        idx = step.get("index", 0)
+        idx = _step_index(step.get("index", 0))
         role = workflow_role(step)
         role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
         onclick = (
@@ -449,7 +449,7 @@ def render_workflow_html(steps: list[dict]) -> str:
         role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
         role_label = workflow_role_label(step)
 
-        orig_idx = step.get("index", i)
+        orig_idx = _step_index(step.get("index", i))
 
         sub_agent_badge = ""
         sub_indent = ""
@@ -959,12 +959,30 @@ def format_step_detail(step: dict) -> str:
 # Diagnostic renderers
 # ---------------------------------------------------------------------------
 
+def _step_index(value: object) -> int:
+    """Coerce a step index for interpolation into emitted JS and element ids.
+
+    Every producer sets ``index`` from ``enumerate`` (``parser``), and the
+    derived indices (``spawned_by_step``, a cluster's ``first_step``) are copied
+    from it — so this is an invariant, not validation. It is enforced at the
+    sink anyway because the value lands inside a JavaScript string literal,
+    where one non-numeric character would close the literal and run whatever
+    follows it. A value that is not a number degrades to step 0 rather than
+    raising inside a renderer.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _diag_jump_onclick(idx: int) -> str:
     """JS onclick to switch to Workflow tab and scroll to a step card.
 
     Prefers ``window.tvGotoWorkflowStep`` (bound on app load for duration-chart
     clicks) so overview badges and Plotly jumps share one path.
     """
+    idx = _step_index(idx)
     return (
         f"(function(){{"
         f"if(typeof window.tvGotoWorkflowStep==='function'){{"
@@ -1220,7 +1238,7 @@ _STEP_CHIP_STYLE = (
 
 def _step_link_chip(idx: int) -> str:
     """Clickable ``#N`` chip that jumps to Workflow step *idx*."""
-    n = int(idx)
+    n = _step_index(idx)
     return (
         f"<span class='insight-step-link' style='{_STEP_CHIP_STYLE}' "
         f"onclick=\"{_diag_jump_onclick(n)}\">#{n}</span>"
@@ -1233,7 +1251,7 @@ def _step_link_chips(indices: list[int], *, limit: int = 8) -> str:
     for raw in indices:
         if raw is None:
             continue
-        n = int(raw)
+        n = _step_index(raw)
         if n not in seen:
             seen.append(n)
     if not seen:
