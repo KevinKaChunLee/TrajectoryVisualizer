@@ -5,15 +5,16 @@ from trajviz.converge.styles import CONVERGE_CSS as _CONVERGE_CSS
 
 _pygments_css = _HtmlFormatter(style="github-dark").get_style_defs(".wf-code-hl")
 
-APP_CSS = """
-/* CJK and non-Latin font fallback */
-.gradio-container, .gradio-container * {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-        'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei',
-        'Hiragino Sans GB', 'Noto Sans JP', 'Noto Sans KR', sans-serif;
-}
-:root {
-    color-scheme: light;
+# Theme tokens live here, once, and are emitted three times: in `:root` (light,
+# the dashboard default), inside `@media (prefers-color-scheme: dark)` (the
+# dashboard following the OS), and under `html.tv-theme-light` /
+# `html.tv-theme-dark` for a surface that DECLARES its theme. The exported
+# report is the second kind — it sets the class on <html> and must not inherit
+# the reader's OS preference, or a dark export renders dark charts on light
+# chrome. `html.tv-theme-*` has specificity (0,1,1) against `:root`'s (0,1,0),
+# so it wins both inside and outside the media query with no `!important`, and
+# the live dashboard never sets either class.
+_LIGHT_TOKENS = """
     --ov-bg: #f6f8fc;
     --ov-card: #ffffff;
     --ov-border: #dce3ef;
@@ -66,6 +67,113 @@ APP_CSS = """
     --wf-connector-from: #d1d5db;
     --wf-connector-to: #e5e7eb;
     --wf-scroll-thumb: #cbd5e1;
+    /* Metric-chip surface (formatting._metric_chip) */
+    --ov-chip-bg: #f8fafc;
+    --ov-chip-border: #e2e8f0;
+    --ov-chip-label: #64748b;
+    --ov-chip-value: #1e293b;
+    --ov-chip-hint: #94a3b8;
+    --ov-chip-good-bg: #f0fdf4;
+    --ov-chip-good-border: #bbf7d0;
+    --ov-chip-warn-bg: #fffbeb;
+    --ov-chip-warn-border: #fde68a;
+    --ov-chip-bad-bg: #fef2f2;
+    --ov-chip-bad-border: #fecaca;
+"""
+
+_DARK_TOKENS = """
+        /* Core tokens */
+        --ov-bg: #1a1b2e;
+        --ov-card: #1e1f33;
+        --ov-border: #2d2f45;
+        --ov-text: #e2e8f0;
+        --ov-muted: #94a3b8;
+        --ov-accent: #60a5fa;
+        --ov-success: #34d399;
+        --ov-warn: #fbbf24;
+        --ov-bad: #f87171;
+        /* Component-level dark tokens */
+        --ov-card-bg: linear-gradient(180deg, #1e1f33 0%, #1a1b2e 100%);
+        --ov-card-shadow: rgba(0, 0, 0, 0.3);
+        --ov-banner-bg: linear-gradient(135deg, #1e2a4a 0%, #1a2e2a 55%, #2a2418 100%);
+        --ov-banner-border: #2d3a5c;
+        --ov-code-bg: #161726;
+        --ov-code-border: #2d2f45;
+        --ov-body-text: #cbd5e1;
+        --ov-insight-bg: #1a2040;
+        --ov-insight-border: #2d3a5c;
+        --ov-insight-text: #94a3b8;
+        --ov-link-hover-bg: #1e2a4a;
+        --ov-anomaly-bg: rgba(245,158,11,0.12);
+        --ov-anomaly-border: rgba(245,158,11,0.3);
+        --ov-anomaly-text: #fbbf24;
+        --ov-anomaly-hover: rgba(245,158,11,0.2);
+        --ov-chart-ctrl-bg: #1a2040;
+        --ov-table-header-bg: #1e2040;
+        --ov-nav-bg: #161726;
+        --ov-acc-bg: #1e1f33;
+        /* Workflow card palette (dark) */
+        --wf-bg-user: rgba(30,64,175,0.15);
+        --wf-border-user: #60a5fa;
+        --wf-bg-assistant: rgba(245,158,11,0.1);
+        --wf-border-assistant: #fbbf24;
+        --wf-bg-error: rgba(220,38,38,0.12);
+        --wf-border-error: #f87171;
+        --wf-bg-system-error: rgba(217,119,6,0.12);
+        --wf-border-system-error: #fbbf24;
+        --wf-bg-final: rgba(5,150,105,0.12);
+        --wf-border-final: #34d399;
+        --wf-bg-tool: rgba(217,119,6,0.1);
+        --wf-border-tool: #fbbf24;
+        --wf-bg-reasoning: rgba(124,58,237,0.12);
+        --wf-border-reasoning: #a78bfa;
+        --wf-bg-default: rgba(107,114,128,0.1);
+        --wf-border-default: #6b7280;
+        --wf-card-border: #2d2f45;
+        --wf-meta-color: #94a3b8;
+        --wf-preview-color: #cbd5e1;
+        --wf-connector-from: #374151;
+        --wf-connector-to: #2d2f45;
+        --wf-scroll-thumb: #4b5563;
+        /* Metric-chip surface (dark) */
+        --ov-chip-bg: #1e1f33;
+        --ov-chip-border: #2d2f45;
+        --ov-chip-label: #94a3b8;
+        --ov-chip-value: #e2e8f0;
+        --ov-chip-hint: #7c8899;
+        --ov-chip-good-bg: rgba(5,150,105,0.12);
+        --ov-chip-good-border: rgba(52,211,153,0.35);
+        --ov-chip-warn-bg: rgba(245,158,11,0.12);
+        --ov-chip-warn-border: rgba(251,191,36,0.35);
+        --ov-chip-bad-bg: rgba(220,38,38,0.12);
+        --ov-chip-bad-border: rgba(248,113,113,0.35);
+"""
+
+# Dark component rules (not tokens), with a `%(s)s` slot for the scope prefix.
+_DARK_COMPONENTS = """
+    %(s)s.diag-rc-primary {
+        background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3);
+        color: #fca5a5;
+    }
+    %(s)s.diag-rc-primary:hover { background: rgba(220,38,38,0.15); }
+    /* Detail panel header stays light text on colored bg — no override needed */
+    %(s)s.dp-diff-pre { background: #0d1117; }
+    %(s)s.filter-chip { background: var(--ov-card); color: var(--ov-muted); }
+    %(s)s.filter-chip:hover { background: var(--ov-link-hover-bg); }
+    %(s)s.filter-chip.chip-active { background: var(--ov-accent); color: #0f172a; }
+"""
+
+
+APP_CSS = """
+/* CJK and non-Latin font fallback */
+.gradio-container, .gradio-container * {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+        'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei',
+        'Hiragino Sans GB', 'Noto Sans JP', 'Noto Sans KR', sans-serif;
+}
+:root {
+    color-scheme: light;
+""" + _LIGHT_TOKENS + """
 }
 /* Type scale */
 h2, .section-header { font-size: 18px; font-weight: 700; }
@@ -899,71 +1007,18 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 /* Dark mode overrides */
 @media (prefers-color-scheme: dark) {
     :root {
-        /* Core tokens */
-        --ov-bg: #1a1b2e;
-        --ov-card: #1e1f33;
-        --ov-border: #2d2f45;
-        --ov-text: #e2e8f0;
-        --ov-muted: #94a3b8;
-        --ov-accent: #60a5fa;
-        --ov-success: #34d399;
-        --ov-warn: #fbbf24;
-        --ov-bad: #f87171;
-        /* Component-level dark tokens */
-        --ov-card-bg: linear-gradient(180deg, #1e1f33 0%, #1a1b2e 100%);
-        --ov-card-shadow: rgba(0, 0, 0, 0.3);
-        --ov-banner-bg: linear-gradient(135deg, #1e2a4a 0%, #1a2e2a 55%, #2a2418 100%);
-        --ov-banner-border: #2d3a5c;
-        --ov-code-bg: #161726;
-        --ov-code-border: #2d2f45;
-        --ov-body-text: #cbd5e1;
-        --ov-insight-bg: #1a2040;
-        --ov-insight-border: #2d3a5c;
-        --ov-insight-text: #94a3b8;
-        --ov-link-hover-bg: #1e2a4a;
-        --ov-anomaly-bg: rgba(245,158,11,0.12);
-        --ov-anomaly-border: rgba(245,158,11,0.3);
-        --ov-anomaly-text: #fbbf24;
-        --ov-anomaly-hover: rgba(245,158,11,0.2);
-        --ov-chart-ctrl-bg: #1a2040;
-        --ov-table-header-bg: #1e2040;
-        --ov-nav-bg: #161726;
-        --ov-acc-bg: #1e1f33;
-        /* Workflow card palette (dark) */
-        --wf-bg-user: rgba(30,64,175,0.15);
-        --wf-border-user: #60a5fa;
-        --wf-bg-assistant: rgba(245,158,11,0.1);
-        --wf-border-assistant: #fbbf24;
-        --wf-bg-error: rgba(220,38,38,0.12);
-        --wf-border-error: #f87171;
-        --wf-bg-system-error: rgba(217,119,6,0.12);
-        --wf-border-system-error: #fbbf24;
-        --wf-bg-final: rgba(5,150,105,0.12);
-        --wf-border-final: #34d399;
-        --wf-bg-tool: rgba(217,119,6,0.1);
-        --wf-border-tool: #fbbf24;
-        --wf-bg-reasoning: rgba(124,58,237,0.12);
-        --wf-border-reasoning: #a78bfa;
-        --wf-bg-default: rgba(107,114,128,0.1);
-        --wf-border-default: #6b7280;
-        --wf-card-border: #2d2f45;
-        --wf-meta-color: #94a3b8;
-        --wf-preview-color: #cbd5e1;
-        --wf-connector-from: #374151;
-        --wf-connector-to: #2d2f45;
-        --wf-scroll-thumb: #4b5563;
+""" + _DARK_TOKENS + """
     }
-    .diag-rc-primary {
-        background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3);
-        color: #fca5a5;
-    }
-    .diag-rc-primary:hover { background: rgba(220,38,38,0.15); }
-    /* Detail panel header stays light text on colored bg — no override needed */
-    .dp-diff-pre { background: #0d1117; }
-    .filter-chip { background: var(--ov-card); color: var(--ov-muted); }
-    .filter-chip:hover { background: var(--ov-link-hover-bg); }
-    .filter-chip.chip-active { background: var(--ov-accent); color: #0f172a; }
+""" + _DARK_COMPONENTS % {"s": ""} + """
 }
+/* The report declares its theme on <html> instead of asking the OS. */
+html.tv-theme-light {
+""" + _LIGHT_TOKENS + """
+}
+html.tv-theme-dark {
+""" + _DARK_TOKENS + """
+}
+""" + _DARK_COMPONENTS % {"s": "html.tv-theme-dark "} + """
 
 /* ===== Trajectory Quality Score ===== */
 .score-dim-grid {

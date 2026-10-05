@@ -1,5 +1,8 @@
 """Shared Plotly chrome for insight charts."""
 
+from collections import Counter
+from collections.abc import Sequence
+
 # Pre-import pandas before plotly to avoid circular import error
 # in plotly's basevalidators when running inside Gradio async threads.
 try:
@@ -79,6 +82,33 @@ def _truncate_chart_label(name: str, limit: int = 30) -> str:
     if len(name) <= limit:
         return name
     return name[: limit - 3] + "..."
+
+
+def _truncate_chart_labels(names: Sequence[str], limit: int = 30) -> list[str]:
+    """Truncate a whole label set at once, keeping the labels distinct.
+
+    Two names that agree on their first ``limit - 3`` characters truncate to
+    the same string, and Plotly treats equal category labels as one category:
+    the rows merge and their bars are drawn on top of each other. Long MCP tool
+    ids (``mcp__<server>__<verb>``) are the realistic source. A colliding label
+    therefore gets a ``~N`` counter, budgeted inside *limit* so the axis gutter
+    still fits. With no collision the plain truncation is returned unchanged,
+    so existing charts are byte-identical.
+    """
+    labels = [_truncate_chart_label(n, limit) for n in names]
+    counts = Counter(labels)
+    if all(count == 1 for count in counts.values()):
+        return labels
+    seen: Counter[str] = Counter()
+    out: list[str] = []
+    for name, label in zip(names, labels, strict=True):
+        if counts[label] == 1:
+            out.append(label)
+            continue
+        seen[label] += 1
+        suffix = f"~{seen[label]}"
+        out.append(_truncate_chart_label(name, limit - len(suffix)) + suffix)
+    return out
 
 
 def _add_dummy_marker_legend(

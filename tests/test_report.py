@@ -127,7 +127,12 @@ class ReportBuildTests(unittest.TestCase):
         self.assertIn("class='tv-theme-light'", doc)
         self.assertIn("color-scheme: light", doc)
         self.assertIn("<meta name='color-scheme' content='light'>", doc)
-        self.assertNotIn("Skill calls by agent", doc)
+        # This fixture logs no Skill calls, and its chart is therefore an
+        # explanatory empty state. Those are now exported rather than dropped:
+        # `_figure_is_empty` only suppresses a figure with no traces AND no
+        # annotation, so the reader sees the explanation instead of a gap.
+        # See tests/test_report_sections.py::EmptyFigureExport.
+        self.assertIn("Skill calls by agent", doc)
 
     def test_context_utilization_section_owns_usage_breakdown(self):
         from trajviz.insight.ui.overview_tab import OVERVIEW_SECTION_NAMES
