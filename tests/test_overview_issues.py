@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from trajviz.insight.presenters.issues import (
     OverviewIssue,
+    _zh_duration,
+    _zh_error_message,
     build_overview_issues_html,
     collect_overview_issues,
     rank_issues,
@@ -94,6 +96,7 @@ class OverviewIssuesTests(unittest.TestCase):
             _session(
                 failure_patterns=[{
                     "cluster_label": "Grep: No matches found",
+                    "tool": "Grep",
                     "count": 2,
                     "example_error": "No matches found",
                     "recovery_path": None,
@@ -104,15 +107,16 @@ class OverviewIssuesTests(unittest.TestCase):
         )
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].kind, "antipattern")
-        self.assertIn("系统错误", issues[0].title)
-        self.assertNotIn("频发", issues[0].title)
-        self.assertIn("low risk", issues[0].why)
+        self.assertEqual(issues[0].title, "系统错误 · Grep：未找到匹配项（2 次）")
+        self.assertEqual(issues[0].detail, "")
+        self.assertIn("风险不高", issues[0].why)
 
     def test_frequent_system_errors_call_out_volume(self):
         issues = collect_overview_issues(
             _session(
                 failure_patterns=[{
                     "cluster_label": "Read: ENOENT",
+                    "tool": "Read",
                     "count": 6,
                     "example_error": "ENOENT",
                     "recovery_path": None,
@@ -123,9 +127,8 @@ class OverviewIssuesTests(unittest.TestCase):
         )
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].kind, "antipattern")
-        self.assertIn("系统错误频发", issues[0].title)
-        self.assertIn("6 次", issues[0].title)
-        self.assertIn("volume", issues[0].why)
+        self.assertEqual(issues[0].title, "系统错误频发 · Read：ENOENT（6 次）")
+        self.assertIn("数量多", issues[0].why)
 
     def test_bottleneck_issue_from_performance_bottlenecks(self):
         issues = collect_overview_issues(
@@ -170,33 +173,126 @@ class OverviewIssuesTests(unittest.TestCase):
                 }],
             )
         )
-        self.assertEqual(issues[0].title, "空闲/排队瓶颈：第7步前等待 30 秒")
+        self.assertEqual(issues[0].title, "空闲/排队瓶颈：第7步前等待 30.0 秒")
         self.assertTrue(issues[0].detail.startswith("第7步耗时 4.0 秒：开始前空闲 30.0 秒"))
         self.assertTrue(issues[0].detail.endswith("（计时不完整）"))
+        self.assertIn("排队或限流", issues[0].why)
 
-    def test_synthetic_error_patterns_are_translated_raw_output_is_not(self):
+    def test_context_bottleneck_shows_minutes_and_token_load(self):
         issues = collect_overview_issues(
             _session(
-                failure_patterns=[
-                    {
-                        "cluster_label": "npm: exit code 1",
-                        "count": 2,
-                        "example_error": "exit code 1",
-                        "steps": [3],
+                performance_bottlenecks=[{
+                    "step_idx": 6,
+                    "duration": 2830.8,
+                    "cause": "context",
+                    "tokens": 45_000,
+                    "cache_ratio": 0.0,
+                    "decomposition": {
+                        "tool_s": 0, "inference_s": 2830.8, "idle_s": 0,
+                        "timing_incomplete": False, "dominant_tool": None,
                     },
-                    {
-                        "cluster_label": "Read: ENOENT: no such file or directory",
-                        "count": 1,
-                        "example_error": "ENOENT: no such file or directory",
-                        "steps": [5],
-                    },
-                ],
+                }],
             )
         )
-        self.assertEqual(issues[0].title, "npm: 退出码 1（2 次）")
-        self.assertEqual(issues[0].detail, "退出码 1")
-        self.assertEqual(issues[1].title, "Read: ENOENT: no such file or directory（1 次）")
-        self.assertEqual(issues[1].detail, "ENOENT: no such file or directory")
+        self.assertEqual(issues[0].title, "上下文/缓存瓶颈：第6步（47 分 11 秒）")
+        self.assertEqual(
+            issues[0].detail,
+            "第6步耗时 47 分 11 秒：模型推理 47 分 11 秒；本步 45k token，缓存命中率 0%",
+        )
+        self.assertIn("缓存命中率低", issues[0].why)
+
+    def test_zh_duration(self):
+        for seconds, expected in (
+            (4.04, "4.0 秒"),
+            (59.9, "59.9 秒"),
+            (60, "1 分 0 秒"),
+            (2830.8, "47 分 11 秒"),
+            (3725, "1 小时 2 分"),
+        ):
+            with self.subTest(seconds=seconds):
+                self.assertEqual(_zh_duration(seconds), expected)
+
+    def test_failure_pattern_title_carries_translated_message_without_detail(self):
+        issues = collect_overview_issues(
+            _session(
+                failure_patterns=[{
+                    "cluster_label": "Bash: {...}",
+                    "tool": "Bash",
+                    "count": 24,
+                    "example_error": (
+                        '{"clientVisibleErrorMessage":"Invalid arguments:\\ncommand: Required",'
+                        '"modelVisibleErrorMessage":"Invalid arguments:\\ncom'
+                    ),
+                    "steps": [545],
+                }],
+            )
+        )
+        self.assertEqual(issues[0].title, "Bash：参数无效，缺少 command（24 次）")
+        self.assertEqual(issues[0].detail, "")
+
+    def test_recovery_path_collapses_repeated_tools(self):
+        issues = collect_overview_issues(
+            _session(
+                failure_patterns=[{
+                    "cluster_label": "Bash: exit code 1",
+                    "tool": "Bash",
+                    "count": 1,
+                    "example_error": "exit code 1",
+                    "recovery_path": ["Bash", "Bash", "Bash", "Read", "Edit", "Edit"],
+                    "steps": [2],
+                }],
+            )
+        )
+        self.assertTrue(issues[0].why.endswith("常见恢复路径：Bash ×3 → Read → Edit ×2"))
+
+    def test_zh_error_message(self):
+        cursor = '{{"clientVisibleErrorMessage":"{0}","modelVisibleErrorMessage":"{0}"}}'
+        for raw, expected in (
+            ("exit code 1", "退出码 1"),
+            ("Exit code 127", "退出码 127"),
+            ("status: cancelled", "状态：cancelled"),
+            ("unknown error", "未知错误"),
+            (cursor.format("Tool execution error"), "工具执行出错"),
+            (cursor.format("File not found"), "文件不存在"),
+            (cursor.format("Incorrect tool arguments"), "工具参数错误"),
+            (cursor.format("Invalid arguments:\\npath: Required"), "参数无效，缺少 path"),
+            (
+                cursor.format("The string to replace was not found in the file."),
+                "文件中找不到要替换的文本",
+            ),
+            (
+                cursor.format("Offset 260 is beyond file length (245 lines)"),
+                "偏移量 260 超出文件长度（共 245 行）",
+            ),
+            ("Error: Argument parsing failed.", "参数解析失败"),
+            (
+                "ENOENT: no such file or directory, open '/tmp/x'",
+                "文件或目录不存在：open '/tmp/x'",
+            ),
+            (
+                "<tool_use_error>Cancelled: parallel tool call Bash(ls)",
+                "已取消（同批并行调用出错）：Bash(ls)",
+            ),
+            # Unrecognised messages keep their wording, minus the JSON/Error: wrapper.
+            ('Error: Requested function "" not found.', 'Requested function "" not found.'),
+            (
+                '{"clientVisibleErrorMessage":"Tool \\"AskQuestion\\" is already available ',
+                'Tool "AskQuestion" is already available…',
+            ),
+            ("", "未知错误"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(_zh_error_message(raw), expected)
+
+    def test_hint_carries_navigation_and_tooltip_cue(self):
+        html = render_overview_issues_html([
+            OverviewIssue(kind="error", title="a", detail="", why="w", steps=(1,)),
+        ])
+        self.assertIn(
+            "<div class='overview-issues-hint'>按严重程度排序 · 点击步骤可跳转到 Workflow"
+            " · 鼠标悬停 ⓘ 查看说明</div>",
+            html,
+        )
 
     def test_progress_banner_visible_while_judging(self):
         html = render_overview_issues_html(
@@ -236,7 +332,15 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn(">第7步<", html)
         self.assertNotIn(">#3<", html)
         self.assertNotIn("Why it matters", html)
-        self.assertNotIn("Typical recovery", html)
+        self.assertIn(
+            "<span class='overview-issue-title' title='Typical recovery: Read'>", html,
+        )
+        self.assertIn(
+            "<span class='overview-issue-info' title='Typical recovery: Read' "
+            "aria-hidden='true'>ⓘ</span>",
+            html,
+        )
+        self.assertNotIn(">Typical recovery", html)
         self.assertNotIn("修改位置", html)
         self.assertNotIn("修复建议", html)
         self.assertNotIn("补充：", html)
@@ -250,7 +354,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("另有 2 步", html)
         self.assertNotIn("more", html)
 
-    def test_cards_are_numbered_in_ranked_order(self):
+    def test_cards_are_labelled_with_their_kind(self):
         ranked = rank_issues([
             OverviewIssue(kind="bottleneck", title="slow", detail="", steps=(1,)),
             OverviewIssue(kind="error", title="broken", detail="", steps=(9,)),
@@ -258,12 +362,19 @@ class OverviewIssuesTests(unittest.TestCase):
         ])
         html = render_overview_issues_html(ranked)
         positions = [
-            html.find(f">问题 {n}</span><span class='overview-issue-title'>{title}<")
-            for n, title in ((1, "broken"), (2, "wasteful"), (3, "slow"))
+            html.find(
+                f"<span class='overview-issue-kind' style='color:{color};'>{label}</span>"
+                f"<span class='overview-issue-title'>{title}<"
+            )
+            for label, color, title in (
+                ("错误", "var(--ov-bad)", "broken"),
+                ("低效行为", "var(--ov-warn)", "wasteful"),
+                ("性能瓶颈", "var(--ov-accent)", "slow"),
+            )
         ]
         self.assertNotIn(-1, positions)
         self.assertEqual(positions, sorted(positions))
-        self.assertNotIn("问题 4", html)
+        self.assertNotIn("问题 1", html)
 
     def test_failure_shows_recovery_as_why_not_fix(self):
         issues = collect_overview_issues(
@@ -280,7 +391,8 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertIn("Read → Edit", issues[0].why)
         html = render_overview_issues_html(issues)
-        self.assertNotIn("Read → Edit", html)
+        self.assertIn(f"title='{issues[0].why}'", html)
+        self.assertNotIn(">这类错误", html)
         self.assertNotIn("修复建议", html)
         self.assertNotIn("修改位置", html)
 
@@ -299,7 +411,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertEqual(len(shown), 12)
         html = render_overview_issues_html(shown)
         self.assertIn("12 个问题", html)
-        self.assertIn("问题 12", html)
+        self.assertEqual(html.count("class='overview-issue-kind'"), 12)
         self.assertNotIn("Show all", html)
         self.assertNotIn("overview-issues-remainder", html)
         for i in range(12):

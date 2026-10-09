@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from dataclasses import dataclass, replace
+from itertools import groupby
 from typing import Literal
 
 from ..rendering import (
@@ -31,6 +33,12 @@ ISSUE_KIND_COLORS: dict[IssueKind, str] = {
     "bottleneck": "var(--ov-accent)",
 }
 
+_ISSUE_KIND_LABELS_ZH: dict[IssueKind, str] = {
+    "error": "错误",
+    "antipattern": "低效行为",
+    "bottleneck": "性能瓶颈",
+}
+
 _CONFIDENCE_ZH: dict[str, str] = {"high": "高", "medium": "中", "low": "低"}
 
 _STEP_CHIP_LABEL = "第{n}步"
@@ -51,7 +59,7 @@ class IssueJudgment:
 class OverviewIssue:
     """One Overview triage item (session diagnostics; optional LLM judgment).
 
-    *why* is not rendered; it is extra context for the LLM judge only.
+    *why* is shown as a hover tooltip and sent to the LLM judge as context.
     """
 
     kind: IssueKind
@@ -96,51 +104,96 @@ def _count_label(label: str, count: int, unit: str = "次") -> str:
     return f"{label}（{count} {unit}）" if count else label
 
 
-# Only the fallback patterns diagnostics._error_pattern synthesizes itself;
-# raw tool output stays verbatim.
-_SYNTHETIC_ERROR_ZH: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(^|: )exit code (-?\d+)$"), r"\1退出码 \2"),
-    (re.compile(r"(^|: )status: (\w+)$"), r"\1状态：\2"),
-    (re.compile(r"(^|: )unknown error$"), r"\1未知错误"),
+# Harnesses that wrap errors in JSON (e.g. Cursor's
+# {"clientVisibleErrorMessage": "...", "modelVisibleErrorMessage": "..."}).
+# The pattern is clipped upstream, so the value may lack its closing quote.
+_JSON_ERROR_MESSAGE = re.compile(
+    r'"(?:clientVisibleErrorMessage|modelVisibleErrorMessage|message|error)"\s*:\s*'
+    r'"((?:[^"\\]|\\.)*)(")?'
+)
+_ERROR_WRAPPER = re.compile(r"</?tool_use_error>|^\s*error:\s*", re.IGNORECASE)
+
+# Prefix-matched (case-insensitive) against the unwrapped message; any
+# remainder after the match is kept verbatim after a "：". Unmatched messages
+# stay in their original language.
+_ERROR_MESSAGES_ZH: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(pattern, re.IGNORECASE), zh)
+    for pattern, zh in (
+        (r"exit code (-?\d+)", r"退出码 \1"),
+        (r"status: (\w+)", r"状态：\1"),
+        (r"unknown error", "未知错误"),
+        (r"tool execution error", "工具执行出错"),
+        (r"incorrect tool arguments", "工具参数错误"),
+        (r"invalid arguments:\s*(\w+): required", r"参数无效，缺少 \1"),
+        (r"invalid arguments", "参数无效"),
+        (r"argument parsing failed", "参数解析失败"),
+        (r"file not found|file does not exist", "文件不存在"),
+        (r"(?:the )?string to replace (?:was )?not found in (?:the )?file", "文件中找不到要替换的文本"),
+        (r"offset (\d+) is beyond file length \((\d+) lines\)", r"偏移量 \1 超出文件长度（共 \2 行）"),
+        (r'tool "(.+?)" not found in namespace "(.+?)"', r"命名空间 \2 中没有工具 \1"),
+        (r"no (?:matches|files) found", "未找到匹配项"),
+        (r"permission denied", "权限不足"),
+        (r"enoent: no such file or directory", "文件或目录不存在"),
+        (r"eisdir: illegal operation on a directory", "不能对目录执行此操作"),
+        (r"cancelled: parallel tool call", "已取消（同批并行调用出错）"),
+    )
 )
 
 
-def _zh_error_text(text: str) -> str:
-    for pattern, repl in _SYNTHETIC_ERROR_ZH:
-        text = pattern.sub(repl, text)
-    return text
+def _unwrap_error_message(raw: str) -> str:
+    match = _JSON_ERROR_MESSAGE.search(raw)
+    if match:
+        value, closed = match.group(1), match.group(2)
+        try:
+            text = json.loads(f'"{value}"')
+        except ValueError:
+            text = value.replace("\\n", "\n").replace('\\"', '"')
+        raw = text if closed else text.rstrip("\\").rstrip() + "…"
+    return _ERROR_WRAPPER.sub("", raw).strip()
+
+
+def _zh_error_message(raw: str) -> str:
+    """Readable Chinese for a clustered tool error (unknown messages pass through)."""
+    message = _unwrap_error_message(raw)
+    for pattern, zh in _ERROR_MESSAGES_ZH:
+        match = pattern.match(message)
+        if match:
+            translated = match.expand(zh)
+            rest = message[match.end():].strip(" ,:.\n")
+            return f"{translated}：{rest}" if rest else translated
+    return " ".join(message.split()) or "未知错误"
 
 
 def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
     out: list[OverviewIssue] = []
     for i, pat in enumerate(session.failure_patterns or []):
         label = str(pat.get("cluster_label") or "Unknown error")
-        zh_label = _zh_error_text(str(pat.get("cluster_label") or "")) or "未知错误"
+        tool = str(pat.get("tool") or "")
+        message = _zh_error_message(str(pat.get("example_error") or ""))
+        error_label = f"{tool}：{message}" if tool else message
         count = int(pat.get("count") or 0)
-        example = _zh_error_text(str(pat.get("example_error") or "")[:200])
         recovery = pat.get("recovery_path")
         steps = tuple(int(s) for s in (pat.get("steps") or []) if s is not None)
         error_class = str(pat.get("error_class") or "tool").lower()
 
         if error_class == "system":
             if count >= _SYSTEM_ERROR_HIGH:
-                title = f"系统错误频发：{_count_label(zh_label, count)}"
+                title = f"系统错误频发 · {_count_label(error_label, count)}"
                 why = (
-                    "Many Read/Grep/Edit-style failures in one run — each is usually "
-                    "low risk, but volume suggests path, permission, or harness setup "
-                    "problems worth checking."
+                    "读取、搜索、编辑类工具在本次运行中多次失败。单次失败通常风险不高，"
+                    "但数量多往往说明路径、权限或运行环境配置有问题，值得检查。"
                 )
             else:
-                title = f"系统错误：{_count_label(zh_label, count)}"
+                title = f"系统错误 · {_count_label(error_label, count)}"
                 why = (
-                    "Scaffold/tooling miss (search, read, or write) — usually low risk; "
-                    "the agent can often recover without an author change."
+                    "读取、搜索或写入类工具的常见失败，通常风险不高，"
+                    "智能体一般能自行恢复，不需要修改配置。"
                 )
             out.append(
                 OverviewIssue(
                     kind="antipattern",
                     title=title,
-                    detail=example or "系统工具调用失败",
+                    detail="",
                     why=why,
                     steps=steps,
                     source_id=f"fail:system:{i}:{label}",
@@ -149,14 +202,18 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
             continue
 
         if recovery and isinstance(recovery, (list, tuple)):
-            why = "Typical recovery: " + " → ".join(str(t) for t in recovery)
+            runs = [(name, len(list(group))) for name, group in groupby(str(t) for t in recovery)]
+            why = (
+                "这类错误要花额外的步骤和 token 才能恢复。常见恢复路径："
+                + " → ".join(f"{name} ×{n}" if n > 1 else name for name, n in runs)
+            )
         else:
-            why = "No recovery path found after this error cluster."
+            why = "出现这类错误后没有找到恢复路径，智能体可能并没有真正解决它。"
         out.append(
             OverviewIssue(
                 kind="error",
-                title=_count_label(zh_label, count),
-                detail=example,
+                title=_count_label(error_label, count),
+                detail="",
                 why=why,
                 steps=steps,
                 source_id=f"fail:{i}:{label}",
@@ -181,8 +238,8 @@ def _from_failure_chains(session: LoadedSession) -> list[OverviewIssue]:
                 title=f"连续失败（{len(steps)} 步）",
                 detail=f"第{start}–{end}步",
                 why=(
-                    "Consecutive assistant steps failed without a clean recovery in between; "
-                    "cascades often amplify one root error into thrash."
+                    "多个连续步骤都失败了，中间没有成功恢复；"
+                    "一个根本错误常会这样被放大成反复试错。"
                 ),
                 steps=steps,
                 source_id=f"cascade:{i}:{start}-{end}",
@@ -204,8 +261,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                     title=_count_label("工具调用错误", error_count),
                     detail="从工具输出中检测到（平台、权限、文件缺失等）",
                     why=(
-                        "Failed tool calls cost tokens and turns to recover from, and often "
-                        "indicate environment problems rather than agent mistakes."
+                        "失败的工具调用要花额外的步骤和 token 来恢复，"
+                        "而且往往是运行环境的问题，而不是智能体的错误。"
                     ),
                     steps=tuple(error_steps),
                     source_id="antipattern:tool_errors",
@@ -235,8 +292,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                 title=_count_label("连续无结果搜索", len(streaks)),
                 detail=f"浪费 {total_wasted} 步 — {streak_desc}",
                 why=(
-                    "Three or more consecutive searches that returned no matches; "
-                    "sustained streaks suggest looking in the wrong place."
+                    "连续 3 次或以上搜索都没有结果，"
+                    "说明智能体很可能找错了地方，而不是在改进搜索条件。"
                 ),
                 steps=tuple(streak_indices),
                 source_id="antipattern:fruitless",
@@ -254,8 +311,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                 title=_count_label("用 Bash 读取文件", len(tool_selection)),
                 detail="使用 sed/cat/head 读取文件，而不是 Read 工具",
                 why=(
-                    "Shell reads bypass structured Read tooling — no line numbers, "
-                    "weaker cache, larger context."
+                    "用 shell 命令读文件绕过了 Read 工具：没有行号、缓存效果差，"
+                    "还会让上下文变大。"
                 ),
                 steps=tuple(bash_steps),
                 source_id="antipattern:bash_read",
@@ -276,8 +333,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                 title=_count_label("停滞的待办项", len(stalled), "项"),
                 detail=items_desc,
                 why=(
-                    "Todo items stayed in_progress without completion — often a "
-                    "context switch that never closed the loop."
+                    "待办项一直处于进行中却没有完成，"
+                    "通常是智能体转去做别的事后忘了收尾。"
                 ),
                 steps=tuple(stall_steps),
                 source_id="antipattern:stalled_plan",
@@ -297,8 +354,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                 title=_count_label("计划重置", plan_resets),
                 detail="待办列表被整体替换，新旧条目没有重叠",
                 why=(
-                    "A full plan rewrite mid-run usually means the agent abandoned context "
-                    "instead of completing or revising items in place."
+                    "运行中途整体重写待办列表，通常意味着智能体放弃了原来的思路，"
+                    "而不是逐项完成或调整。"
                 ),
                 steps=tuple(plan_steps[:12]),
                 source_id="antipattern:plan_resets",
@@ -320,8 +377,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                     f"有 {fail_count} 次写入失败"
                 ),
                 why=(
-                    "Same file rewritten after write failures — usually a bad path, "
-                    "patch mismatch, or approach that needs a precondition check."
+                    "同一个文件在写入失败后被反复修改，通常是路径错误、补丁对不上，"
+                    "或需要先检查前提条件。"
                 ),
                 steps=steps,
                 source_id=f"antipattern:edit_thrash:{i}:{path}",
@@ -339,8 +396,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
                 title=f"重复的空搜索（{count} 次）",
                 detail=short,
                 why=(
-                    "The same search ran multiple times with empty results (not only as a "
-                    "consecutive streak) — the query or path is likely wrong."
+                    "同一个搜索多次执行都没有结果（不只是连续出现），"
+                    "搜索条件或路径很可能有误。"
                 ),
                 steps=steps,
                 source_id=f"antipattern:repeated_search:{i}",
@@ -375,10 +432,9 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
                 title=_count_label("压缩后上下文反而变大", len(grew)),
                 detail=detail,
                 why=(
-                    f"Compacting left the window at least as large as before (worst: "
-                    f"{_fmt(worst.get('occupancy_before'))} → {_fmt(worst.get('occupancy_after'))}) — "
-                    "the stored summary cost more tokens than the compacted messages freed, "
-                    "so the compaction was wasted work at that point."
+                    f"压缩后上下文窗口没有变小（最严重的一次："
+                    f"{_fmt(worst.get('occupancy_before'))} → {_fmt(worst.get('occupancy_after'))}）："
+                    "保存的摘要比被压缩掉的消息占用更多 token，这次压缩白做了。"
                 ),
                 steps=tuple(int(c.get("step", 0)) for c in grew),
                 source_id="antipattern:compaction_grew",
@@ -404,10 +460,8 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
                 title=_count_label("过早压缩上下文", len(premature)),
                 detail=f"压缩时窗口占用：{pct_desc}",
                 why=(
-                    "The context window was compacted well before it was full — usually "
-                    "an agent-initiated compress/compact call rather than a harness-forced "
-                    "one. Context was lost early; check the stored summaries kept what "
-                    "mattered."
+                    "上下文窗口远未用满就被压缩了，通常是智能体主动调用压缩，"
+                    "而不是系统强制的。上下文过早丢失，请确认保留的摘要包含了关键信息。"
                 ),
                 steps=tuple(int(c.get("step", 0)) for c in premature),
                 source_id="antipattern:compaction_premature",
@@ -416,57 +470,99 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
     return out
 
 
+_BOTTLENECK_WHY: dict[str, str] = {
+    "idle": (
+        "这一步开始前空闲了很久，通常是排队或限流导致的——"
+        "应减少并发压力或调整等待策略，而不是修改提示词。"
+    ),
+    "tool": (
+        "这一步的大部分时间花在工具上——可改用更轻量的工具、缩小范围，"
+        "或缓存结果，避免重复执行耗时操作。"
+    ),
+    "context": (
+        "这一步模型推理耗时异常长，而且上下文很大或缓存命中率低——"
+        "可精简上下文、提高缓存复用，避免每轮重新读取大文件。"
+    ),
+    "inference": (
+        "这一步几乎没有等待工具，但模型推理耗时异常长——"
+        "通常是推理过长或提示词过大，可收紧指令或拆分任务。"
+    ),
+}
+_BOTTLENECK_WHY_DEFAULT = "与本次运行的其他步骤相比，这一步耗时异常长。"
+
+
+def _zh_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f} 秒"
+    hours, rem = divmod(round(seconds), 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours} 小时 {minutes} 分"
+    return f"{minutes} 分 {secs} 秒"
+
+
 def _bottleneck_title(bn: dict, idx: int) -> str:
     decomp = bn.get("decomposition") or {}
-    duration = float(bn.get("duration") or 0)
+    duration = _zh_duration(float(bn.get("duration") or 0))
     cause = bn.get("cause")
     if cause == "idle":
-        idle_s = float(decomp.get("idle_s") or 0)
-        return f"空闲/排队瓶颈：第{idx}步前等待 {idle_s:.0f} 秒"
+        idle = _zh_duration(float(decomp.get("idle_s") or 0))
+        return f"空闲/排队瓶颈：第{idx}步前等待 {idle}"
     if cause == "tool":
-        tool_s = float(decomp.get("tool_s") or 0)
+        tool = _zh_duration(float(decomp.get("tool_s") or 0))
         dt = decomp.get("dominant_tool") or {}
         name = str(dt.get("name") or "")
         if not name:
-            return f"工具瓶颈：第{idx}步（{tool_s:.1f} 秒）"
+            return f"工具瓶颈：第{idx}步（{tool}）"
         target = str(dt.get("target") or "")
         label = f"{name}: {target}" if target else name
         short = label if len(label) <= 40 else (label[:37] + "…")
-        return f"工具瓶颈：{short}（{tool_s:.1f} 秒）"
+        return f"工具瓶颈：{short}（{tool}）"
     if cause == "context":
-        return f"上下文/缓存瓶颈：第{idx}步（{duration:.1f} 秒）"
+        return f"上下文/缓存瓶颈：第{idx}步（{duration}）"
     if cause == "inference":
-        return f"推理瓶颈：第{idx}步（{duration:.1f} 秒）"
-    return f"性能瓶颈：第{idx}步（{duration:.1f} 秒）"
+        return f"推理瓶颈：第{idx}步（{duration}）"
+    return f"性能瓶颈：第{idx}步（{duration}）"
 
 
 def _bottleneck_detail(bn: dict, idx: int) -> str:
-    """Duration breakdown, largest component first."""
+    """Duration breakdown, largest component first; token/cache load for model-side causes."""
     decomp = bn.get("decomposition") or {}
     duration = float(bn.get("duration") or 0)
     parts: list[tuple[float, str]] = []
 
     tool_s = float(decomp.get("tool_s") or 0)
     if tool_s > 0:
-        text = f"工具执行 {tool_s:.1f} 秒"
+        text = f"工具执行 {_zh_duration(tool_s)}"
         dt = decomp.get("dominant_tool") or {}
         if dt.get("name"):
             target = f": {dt['target']}" if dt.get("target") else ""
-            text += f"（{dt['name']}{target} {float(dt.get('duration_s') or 0):.1f} 秒）"
+            text += f"（{dt['name']}{target} {_zh_duration(float(dt.get('duration_s') or 0))}）"
         parts.append((tool_s, text))
     inference_s = float(decomp.get("inference_s") or 0)
     if inference_s > 0:
-        parts.append((inference_s, f"模型推理 {inference_s:.1f} 秒"))
+        parts.append((inference_s, f"模型推理 {_zh_duration(inference_s)}"))
     idle_s = float(decomp.get("idle_s") or 0)
     if idle_s > 0:
-        parts.append((idle_s, f"开始前空闲 {idle_s:.1f} 秒（排队或限流）"))
+        parts.append((idle_s, f"开始前空闲 {_zh_duration(idle_s)}（排队或限流）"))
 
-    detail = f"第{idx}步耗时 {duration:.1f} 秒"
+    detail = f"第{idx}步耗时 {_zh_duration(duration)}"
     if parts:
         parts.sort(key=lambda p: p[0], reverse=True)
         detail += "：" + "，".join(text for _, text in parts)
     if decomp.get("timing_incomplete"):
         detail += "（计时不完整）"
+
+    if bn.get("cause") in ("context", "inference"):
+        load: list[str] = []
+        tokens = int(bn.get("tokens") or 0)
+        if tokens:
+            load.append(f"本步 {format_token_count(tokens)} token")
+        cache_ratio = bn.get("cache_ratio")
+        if isinstance(cache_ratio, (int, float)):
+            load.append(f"缓存命中率 {cache_ratio:.0%}")
+        if load:
+            detail += "；" + "，".join(load)
     return detail[:200]
 
 
@@ -478,16 +574,12 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
         if step_idx is None:
             continue
         idx = int(step_idx)
-        why = str(bn.get("why") or (
-            "Session-relative duration outlier with a dominant tool, idle/queue, "
-            "or context/inference cause."
-        ))
         out.append(
             OverviewIssue(
                 kind="bottleneck",
                 title=_bottleneck_title(bn, idx),
                 detail=_bottleneck_detail(bn, idx),
-                why=why,
+                why=_BOTTLENECK_WHY.get(str(bn.get("cause")), _BOTTLENECK_WHY_DEFAULT),
                 steps=(idx,),
                 source_id=f"bottleneck:{bn.get('cause', 'unknown')}:{i}:{idx}",
             )
@@ -495,8 +587,8 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
     return out
 
 
-def _issue_card(issue: OverviewIssue, number: int) -> str:
-    """Compact scan row: issue number + title + step chips + optional LLM fix."""
+def _issue_card(issue: OverviewIssue) -> str:
+    """Compact scan row: kind badge + title + step chips + optional LLM fix."""
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
     border = ISSUE_KIND_COLORS[issue.kind]
@@ -535,11 +627,18 @@ def _issue_card(issue: OverviewIssue, number: int) -> str:
     detail_html = (
         f"<span class='overview-issue-detail'>{detail}</span>" if issue.detail else ""
     )
+    why_attr = f" title='{html.escape(issue.why)}'" if issue.why else ""
+    info_html = (
+        f"<span class='overview-issue-info'{why_attr} aria-hidden='true'>ⓘ</span>"
+        if issue.why else ""
+    )
     return (
         f"<div class='overview-issue-card' style='border-left-color:{border};'>"
         f"<div class='overview-issue-head'>"
-        f"<span class='overview-issue-num' style='color:{border};'>问题 {number}</span>"
-        f"<span class='overview-issue-title'>{title}</span>"
+        f"<span class='overview-issue-kind' style='color:{border};'>"
+        f"{_ISSUE_KIND_LABELS_ZH[issue.kind]}</span>"
+        f"<span class='overview-issue-title'{why_attr}>{title}</span>"
+        f"{info_html}"
         f"{detail_html}"
         f"</div>"
         f"{steps_html}"
@@ -549,10 +648,8 @@ def _issue_card(issue: OverviewIssue, number: int) -> str:
 
 
 def _issue_cards_html(issues: list[OverviewIssue]) -> str:
-    """Render all issue cards (no preview cap), numbered from 1 in ranked order."""
-    return "".join(
-        _issue_card(issue, number) for number, issue in enumerate(issues, start=1)
-    )
+    """Render all issue cards (no preview cap)."""
+    return "".join(_issue_card(issue) for issue in issues)
 
 
 def render_overview_issues_html(
@@ -615,10 +712,14 @@ def render_overview_issues_html(
     elif judged:
         count_label += f" · 已为 {judged} 个问题生成修复建议"
 
-    hint = (
-        "下方为 LLM 给出的修改位置和修复建议 — 点击步骤可跳转到 Workflow"
+    lead = (
+        "各问题下方为 LLM 给出的修改位置和修复建议"
         if judged and not progress
-        else "按严重程度排序 — 点击步骤可跳转到 Workflow"
+        else "按严重程度排序"
+    )
+    hint = (
+        f"<div class='overview-issues-hint'>{lead} · 点击步骤可跳转到 Workflow"
+        " · 鼠标悬停 ⓘ 查看说明</div>"
     )
     return (
         "<details class='overview-issues-panel' id='overview-issues' open>"
@@ -629,7 +730,7 @@ def render_overview_issues_html(
         "<div class='overview-issues-body'>"
         f"{progress_html}"
         f"{banner_html}"
-        f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>{hint}</div>"
+        f"{hint}"
         + _issue_cards_html(issues)
         + "</div></details>"
     )

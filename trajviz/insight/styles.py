@@ -776,6 +776,77 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     font-style: italic;
 }
 
+/* ===== Overview Contents section guide (summary + hover panel) ===== */
+.section-guide {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: -8px 0 12px 0;
+    font-size: 13px;
+    color: var(--ov-muted);
+}
+.section-guide-tip {
+    outline: none;
+}
+.section-guide-trigger {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ov-accent, #1d4ed8);
+    border-bottom: 1px dotted currentColor;
+    cursor: help;
+    white-space: nowrap;
+}
+.section-guide-tip:focus-visible .section-guide-trigger {
+    outline: 2px solid var(--ov-accent, #1d4ed8);
+    outline-offset: 2px;
+}
+/* Anchored to .section-guide (not the trigger) so it never runs off the right
+   edge; padding-top bridges the gap so the pointer can move into the panel. */
+.section-guide-pop {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 1000;
+    width: min(640px, 100%);
+    padding-top: 6px;
+}
+.section-guide-tip:hover .section-guide-pop,
+.section-guide-tip:focus-within .section-guide-pop {
+    display: block;
+}
+.section-guide-panel {
+    padding: 12px 14px;
+    background: var(--ov-card);
+    color: var(--ov-text);
+    border: 1px solid var(--ov-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    font-size: 13px;
+    line-height: 1.65;
+}
+.section-guide-heading {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ov-muted);
+    margin: 0 0 4px;
+}
+.section-guide-charts {
+    margin: 0 0 10px;
+    padding-left: 18px;
+}
+.section-guide-chart {
+    margin: 0 0 4px;
+}
+.section-guide-chart-name {
+    font-weight: 600;
+}
+.section-guide-example {
+    margin: 0;
+}
+
 /* ===== Detail panel tabs ===== */
 .dp-tabs {
     position: sticky;
@@ -1104,7 +1175,7 @@ html.tv-theme-dark {
     gap: 8px;
     flex-wrap: wrap;
 }
-.overview-issue-num {
+.overview-issue-kind {
     align-self: center;
     padding: 1px 6px;
     border-radius: 4px;
@@ -1121,6 +1192,17 @@ html.tv-theme-dark {
     line-height: 1.35;
 }
 .overview-issue-detail {
+    font-size: 12px;
+    color: var(--ov-muted);
+}
+.overview-issue-info {
+    align-self: center;
+    font-size: 12px;
+    color: var(--ov-muted);
+    cursor: help;
+}
+.overview-issues-hint {
+    margin: 8px 0;
     font-size: 12px;
     color: var(--ov-muted);
 }
