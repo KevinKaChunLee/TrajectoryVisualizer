@@ -759,7 +759,6 @@ def detect_performance_bottlenecks(
                 "reasoning or prompt; tighten instructions or split the task."
             )
 
-        step_tokens = step.get("tokens") or {}
         candidates.append({
             "step_idx": idx,
             "duration": duration,
@@ -769,7 +768,7 @@ def detect_performance_bottlenecks(
             "why": why,
             "decomposition": decomp,
             "explanation": explanation,
-            "tokens": int(step_tokens.get("total") or 0) if isinstance(step_tokens, dict) else 0,
+            "tokens": step["tokens"]["total"],
             "cache_ratio": analytics_row.get("cache_ratio") if analytics_row else None,
         })
 

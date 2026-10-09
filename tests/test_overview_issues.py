@@ -65,6 +65,7 @@ class OverviewIssuesTests(unittest.TestCase):
             _session(
                 failure_patterns=[{
                     "cluster_label": "npm: exit code 1",
+                    "tool": "npm",
                     "count": 2,
                     "example_error": "command failed",
                     "recovery_path": ["Read", "Edit"],
@@ -205,6 +206,7 @@ class OverviewIssuesTests(unittest.TestCase):
         for seconds, expected in (
             (4.04, "4.0 秒"),
             (59.9, "59.9 秒"),
+            (59.96, "1 分 0 秒"),
             (60, "1 分 0 秒"),
             (2830.8, "47 分 11 秒"),
             (3725, "1 小时 2 分"),
@@ -382,6 +384,7 @@ class OverviewIssuesTests(unittest.TestCase):
             _session(
                 failure_patterns=[{
                     "cluster_label": "Bash: exit 1",
+                    "tool": "Bash",
                     "count": 2,
                     "example_error": "command failed",
                     "recovery_path": ["Read", "Edit"],
@@ -423,6 +426,7 @@ class OverviewIssuesTests(unittest.TestCase):
         session = _session(
             failure_patterns=[{
                 "cluster_label": "Bash: exit 1",
+                "tool": "Bash",
                 "count": 1,
                 "example_error": "fail",
                 "recovery_path": None,
@@ -539,6 +543,21 @@ class OverviewIssuesTests(unittest.TestCase):
                 title[:1].isdigit(),
                 f"issue title should not start with a digit: {title!r}",
             )
+
+    def test_edit_retries_within_one_step_name_a_single_step(self):
+        issues = collect_overview_issues(
+            _session(
+                edit_thrash=[{
+                    "path": "src/app.py",
+                    "count": 3,
+                    "fail_count": 1,
+                    "steps": [7],
+                    "start_step": 7,
+                    "end_step": 7,
+                }],
+            )
+        )
+        self.assertEqual(issues[0].detail, "第7步中有 1 次写入失败")
 
 
 if __name__ == "__main__":

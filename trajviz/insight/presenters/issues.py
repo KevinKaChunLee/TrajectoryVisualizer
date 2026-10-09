@@ -39,10 +39,7 @@ _ISSUE_KIND_LABELS_ZH: dict[IssueKind, str] = {
     "bottleneck": "耗时过长",
 }
 
-_CONFIDENCE_ZH: dict[str, str] = {"high": "高", "medium": "中", "low": "低"}
-
-_STEP_CHIP_LABEL = "第{n}步"
-_STEP_CHIP_MORE = "另有 {extra} 步"
+_CONFIDENCE_ZH: dict[Confidence, str] = {"high": "高", "medium": "中", "low": "低"}
 
 
 @dataclass(frozen=True)
@@ -104,6 +101,10 @@ def _count_label(label: str, count: int, unit: str = "次") -> str:
     return f"{label}（{count} {unit}）" if count else label
 
 
+def _zh_step_range(start: object, end: object) -> str:
+    return f"第{start}步" if start == end else f"第{start}–{end}步"
+
+
 # Harnesses that wrap errors in JSON (e.g. Cursor's
 # {"clientVisibleErrorMessage": "...", "modelVisibleErrorMessage": "..."}).
 # The pattern is clipped upstream, so the value may lack its closing quote.
@@ -148,7 +149,7 @@ def _unwrap_error_message(raw: str) -> str:
             text = json.loads(f'"{value}"')
         except ValueError:
             text = value.replace("\\n", "\n").replace('\\"', '"')
-        raw = text if closed else text.rstrip("\\").rstrip() + "…"
+        raw = text if closed else text.rstrip() + "…"
     return _ERROR_WRAPPER.sub("", raw).strip()
 
 
@@ -168,9 +169,8 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
     out: list[OverviewIssue] = []
     for i, pat in enumerate(session.failure_patterns or []):
         label = str(pat.get("cluster_label") or "Unknown error")
-        tool = str(pat.get("tool") or "")
         message = _zh_error_message(str(pat.get("example_error") or ""))
-        error_label = f"{tool}：{message}" if tool else message
+        error_label = f"{pat['tool']}：{message}"
         count = int(pat.get("count") or 0)
         recovery = pat.get("recovery_path")
         steps = tuple(int(s) for s in (pat.get("steps") or []) if s is not None)
@@ -235,8 +235,8 @@ def _from_failure_chains(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="error",
-                title=f"连续失败（{len(steps)} 步）",
-                detail=f"第{start}–{end}步",
+                title=_count_label("连续失败", len(steps), "步"),
+                detail=_zh_step_range(start, end),
                 why=(
                     "多个连续步骤都失败了，中间没有成功恢复；"
                     "一个根本错误常会这样被放大成反复试错。"
@@ -274,7 +274,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         total_wasted = sum(int(s.get("length") or 0) for s in streaks)
         shown = streaks[:3]
         streak_desc = "、".join(
-            f"第{s.get('start_step')}–{s.get('end_step')}步（{s.get('length')} 步）"
+            f"{_zh_step_range(s.get('start_step'), s.get('end_step'))}（{s.get('length')} 步）"
             for s in shown
         )
         remaining = len(streaks) - len(shown)
@@ -371,9 +371,9 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"编辑失败后反复重试：{short}（{count} 次）",
+                title=_count_label(f"编辑失败后反复重试：{short}", count),
                 detail=(
-                    f"第{thrash.get('start_step')}–{thrash.get('end_step')}步中"
+                    f"{_zh_step_range(thrash.get('start_step'), thrash.get('end_step'))}中"
                     f"有 {fail_count} 次写入失败"
                 ),
                 why=(
@@ -393,7 +393,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"重复的空搜索（{count} 次）",
+                title=_count_label("重复的空搜索", count),
                 detail=short,
                 why=(
                     "同一个搜索多次执行都没有结果（不只是连续出现），"
@@ -488,11 +488,10 @@ _BOTTLENECK_WHY: dict[str, str] = {
         "通常是推理过长或提示词过大，可收紧指令或拆分任务。"
     ),
 }
-_BOTTLENECK_WHY_DEFAULT = "与本次运行的其他步骤相比，这一步耗时异常长。"
 
 
 def _zh_duration(seconds: float) -> str:
-    if seconds < 60:
+    if round(seconds, 1) < 60:
         return f"{seconds:.1f} 秒"
     hours, rem = divmod(round(seconds), 3600)
     minutes, secs = divmod(rem, 60)
@@ -501,28 +500,30 @@ def _zh_duration(seconds: float) -> str:
     return f"{minutes} 分 {secs} 秒"
 
 
+def _dominant_tool_label(decomp: dict) -> str:
+    dt = decomp.get("dominant_tool") or {}
+    if not dt.get("name"):
+        return ""
+    return f"{dt['name']}: {dt['target']}" if dt.get("target") else str(dt["name"])
+
+
 def _bottleneck_title(bn: dict, idx: int) -> str:
     decomp = bn.get("decomposition") or {}
-    duration = _zh_duration(float(bn.get("duration") or 0))
-    cause = bn.get("cause")
+    cause = bn["cause"]
     if cause == "idle":
         idle = _zh_duration(float(decomp.get("idle_s") or 0))
         return f"空闲/排队瓶颈：第{idx}步前等待 {idle}"
     if cause == "tool":
         tool = _zh_duration(float(decomp.get("tool_s") or 0))
-        dt = decomp.get("dominant_tool") or {}
-        name = str(dt.get("name") or "")
-        if not name:
+        label = _dominant_tool_label(decomp)
+        if not label:
             return f"工具瓶颈：第{idx}步（{tool}）"
-        target = str(dt.get("target") or "")
-        label = f"{name}: {target}" if target else name
         short = label if len(label) <= 40 else (label[:37] + "…")
         return f"工具瓶颈：{short}（{tool}）"
+    duration = _zh_duration(float(bn.get("duration") or 0))
     if cause == "context":
         return f"上下文/缓存瓶颈：第{idx}步（{duration}）"
-    if cause == "inference":
-        return f"推理瓶颈：第{idx}步（{duration}）"
-    return f"性能瓶颈：第{idx}步（{duration}）"
+    return f"推理瓶颈：第{idx}步（{duration}）"
 
 
 def _bottleneck_detail(bn: dict, idx: int) -> str:
@@ -534,10 +535,10 @@ def _bottleneck_detail(bn: dict, idx: int) -> str:
     tool_s = float(decomp.get("tool_s") or 0)
     if tool_s > 0:
         text = f"工具执行 {_zh_duration(tool_s)}"
-        dt = decomp.get("dominant_tool") or {}
-        if dt.get("name"):
-            target = f": {dt['target']}" if dt.get("target") else ""
-            text += f"（{dt['name']}{target} {_zh_duration(float(dt.get('duration_s') or 0))}）"
+        label = _dominant_tool_label(decomp)
+        if label:
+            dt_s = float(decomp["dominant_tool"].get("duration_s") or 0)
+            text += f"（{label} {_zh_duration(dt_s)}）"
         parts.append((tool_s, text))
     inference_s = float(decomp.get("inference_s") or 0)
     if inference_s > 0:
@@ -553,14 +554,12 @@ def _bottleneck_detail(bn: dict, idx: int) -> str:
     if decomp.get("timing_incomplete"):
         detail += "（计时不完整）"
 
-    if bn.get("cause") in ("context", "inference"):
+    if bn["cause"] in ("context", "inference"):
         load: list[str] = []
-        tokens = int(bn.get("tokens") or 0)
-        if tokens:
-            load.append(f"本步 {format_token_count(tokens)} token")
-        cache_ratio = bn.get("cache_ratio")
-        if isinstance(cache_ratio, (int, float)):
-            load.append(f"缓存命中率 {cache_ratio:.0%}")
+        if bn["tokens"]:
+            load.append(f"本步 {format_token_count(bn['tokens'])} token")
+        if bn["cache_ratio"] is not None:
+            load.append(f"缓存命中率 {bn['cache_ratio']:.0%}")
         if load:
             detail += "；" + "，".join(load)
     return detail[:200]
@@ -579,7 +578,7 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
                 kind="bottleneck",
                 title=_bottleneck_title(bn, idx),
                 detail=_bottleneck_detail(bn, idx),
-                why=_BOTTLENECK_WHY.get(str(bn.get("cause")), _BOTTLENECK_WHY_DEFAULT),
+                why=_BOTTLENECK_WHY[bn["cause"]],
                 steps=(idx,),
                 source_id=f"bottleneck:{bn.get('cause', 'unknown')}:{i}:{idx}",
             )
@@ -592,9 +591,7 @@ def _issue_card(issue: OverviewIssue, number: int) -> str:
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
     border = ISSUE_KIND_COLORS[issue.kind]
-    steps_html = _step_link_chips(
-        list(issue.steps), label=_STEP_CHIP_LABEL, more=_STEP_CHIP_MORE,
-    )
+    steps_html = _step_link_chips(list(issue.steps), label="第{n}步", more="另有 {extra} 步")
 
     judgment_html = ""
     if issue.judgment is not None:
@@ -605,20 +602,19 @@ def _issue_card(issue: OverviewIssue, number: int) -> str:
                 f"<div style='font-size:11px;color:var(--ov-muted);margin-top:6px;"
                 f"line-height:1.35;'>补充：{html.escape(j.also)}</div>"
             )
-        conf = html.escape(_CONFIDENCE_ZH.get(j.confidence, j.confidence))
         judgment_html = (
             "<div style='margin-top:8px;font-size:12px;line-height:1.4;'>"
             "<span style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
-            "text-transform:uppercase;color:var(--ov-muted);'>修改位置</span>"
+            "color:var(--ov-muted);'>修改位置</span>"
             f"<div style='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
             f"font-size:12px;color:var(--ov-text);margin-top:2px;'>"
             f"{html.escape(j.where)}</div></div>"
             "<div style='margin-top:8px;padding:8px 10px;background:var(--ov-bg);"
             "border-radius:4px;'>"
             "<div style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
-            "text-transform:uppercase;color:var(--ov-muted);margin-bottom:4px;'>"
-            f"修复建议 <span style='font-weight:500;letter-spacing:0;text-transform:none;"
-            f"color:var(--ov-muted);'>（置信度：{conf}）</span></div>"
+            "color:var(--ov-muted);margin-bottom:4px;'>"
+            f"修复建议 <span style='font-weight:500;letter-spacing:0;"
+            f"color:var(--ov-muted);'>（置信度：{_CONFIDENCE_ZH[j.confidence]}）</span></div>"
             f"<div style='font-size:13px;line-height:1.4;color:var(--ov-text);'>"
             f"{html.escape(j.fix)}</div>"
             f"{also_html}</div>"
@@ -627,11 +623,10 @@ def _issue_card(issue: OverviewIssue, number: int) -> str:
     detail_html = (
         f"<span class='overview-issue-detail'>{detail}</span>" if issue.detail else ""
     )
-    why_attr = f" title='{html.escape(issue.why)}'" if issue.why else ""
-    info_html = (
-        f"<span class='overview-issue-info'{why_attr} aria-hidden='true'>ⓘ</span>"
-        if issue.why else ""
-    )
+    why_attr = info_html = ""
+    if issue.why:
+        why_attr = f" title='{html.escape(issue.why)}'"
+        info_html = f"<span class='overview-issue-info'{why_attr} aria-hidden='true'>ⓘ</span>"
     return (
         f"<div class='overview-issue-card' style='border-left-color:{border};'>"
         f"<div class='overview-issue-head'>"

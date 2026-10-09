@@ -1256,13 +1256,7 @@ def _step_link_chips(
     more: str = "+{extra} more",
 ) -> str:
     """Deduped step chips; shows *more* (``+N more``) when truncated."""
-    seen: list[int] = []
-    for raw in indices:
-        if raw is None:
-            continue
-        n = _step_index(raw)
-        if n not in seen:
-            seen.append(n)
+    seen = list(dict.fromkeys(_step_index(raw) for raw in indices if raw is not None))
     if not seen:
         return ""
     shown = seen[:limit]

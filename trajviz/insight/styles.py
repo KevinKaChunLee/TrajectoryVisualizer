@@ -1190,7 +1190,6 @@ html.tv-theme-dark {
     background: var(--ov-table-header-bg);
     font-size: 11px;
     font-weight: 700;
-    font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 .overview-issue-title {
