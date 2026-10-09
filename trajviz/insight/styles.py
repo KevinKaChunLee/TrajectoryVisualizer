@@ -1175,6 +1175,14 @@ html.tv-theme-dark {
     gap: 8px;
     flex-wrap: wrap;
 }
+.overview-issue-index {
+    align-self: center;
+    min-width: 2.2em;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ov-muted);
+    font-variant-numeric: tabular-nums;
+}
 .overview-issue-kind {
     align-self: center;
     padding: 1px 6px;

@@ -35,8 +35,8 @@ ISSUE_KIND_COLORS: dict[IssueKind, str] = {
 
 _ISSUE_KIND_LABELS_ZH: dict[IssueKind, str] = {
     "error": "错误",
-    "antipattern": "低效行为",
-    "bottleneck": "性能瓶颈",
+    "antipattern": "行为问题",
+    "bottleneck": "耗时过长",
 }
 
 _CONFIDENCE_ZH: dict[str, str] = {"high": "高", "medium": "中", "low": "低"}
@@ -587,8 +587,8 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
     return out
 
 
-def _issue_card(issue: OverviewIssue) -> str:
-    """Compact scan row: kind badge + title + step chips + optional LLM fix."""
+def _issue_card(issue: OverviewIssue, number: int) -> str:
+    """Compact scan row: number + kind badge + title + step chips + optional LLM fix."""
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
     border = ISSUE_KIND_COLORS[issue.kind]
@@ -635,6 +635,7 @@ def _issue_card(issue: OverviewIssue) -> str:
     return (
         f"<div class='overview-issue-card' style='border-left-color:{border};'>"
         f"<div class='overview-issue-head'>"
+        f"<span class='overview-issue-index'>#{number}</span>"
         f"<span class='overview-issue-kind' style='color:{border};'>"
         f"{_ISSUE_KIND_LABELS_ZH[issue.kind]}</span>"
         f"<span class='overview-issue-title'{why_attr}>{title}</span>"
@@ -648,8 +649,10 @@ def _issue_card(issue: OverviewIssue) -> str:
 
 
 def _issue_cards_html(issues: list[OverviewIssue]) -> str:
-    """Render all issue cards (no preview cap)."""
-    return "".join(_issue_card(issue) for issue in issues)
+    """Render all issue cards (no preview cap), numbered from 1 in ranked order."""
+    return "".join(
+        _issue_card(issue, number) for number, issue in enumerate(issues, start=1)
+    )
 
 
 def render_overview_issues_html(

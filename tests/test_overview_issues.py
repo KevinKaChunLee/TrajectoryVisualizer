@@ -354,7 +354,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("另有 2 步", html)
         self.assertNotIn("more", html)
 
-    def test_cards_are_labelled_with_their_kind(self):
+    def test_cards_are_numbered_and_labelled_with_their_kind(self):
         ranked = rank_issues([
             OverviewIssue(kind="bottleneck", title="slow", detail="", steps=(1,)),
             OverviewIssue(kind="error", title="broken", detail="", steps=(9,)),
@@ -363,18 +363,19 @@ class OverviewIssuesTests(unittest.TestCase):
         html = render_overview_issues_html(ranked)
         positions = [
             html.find(
+                f"<span class='overview-issue-index'>#{number}</span>"
                 f"<span class='overview-issue-kind' style='color:{color};'>{label}</span>"
                 f"<span class='overview-issue-title'>{title}<"
             )
-            for label, color, title in (
-                ("错误", "var(--ov-bad)", "broken"),
-                ("低效行为", "var(--ov-warn)", "wasteful"),
-                ("性能瓶颈", "var(--ov-accent)", "slow"),
+            for number, label, color, title in (
+                (1, "错误", "var(--ov-bad)", "broken"),
+                (2, "行为问题", "var(--ov-warn)", "wasteful"),
+                (3, "耗时过长", "var(--ov-accent)", "slow"),
             )
         ]
         self.assertNotIn(-1, positions)
         self.assertEqual(positions, sorted(positions))
-        self.assertNotIn("问题 1", html)
+        self.assertNotIn("#4", html)
 
     def test_failure_shows_recovery_as_why_not_fix(self):
         issues = collect_overview_issues(
@@ -412,6 +413,7 @@ class OverviewIssuesTests(unittest.TestCase):
         html = render_overview_issues_html(shown)
         self.assertIn("12 个问题", html)
         self.assertEqual(html.count("class='overview-issue-kind'"), 12)
+        self.assertIn("<span class='overview-issue-index'>#12</span>", html)
         self.assertNotIn("Show all", html)
         self.assertNotIn("overview-issues-remainder", html)
         for i in range(12):
