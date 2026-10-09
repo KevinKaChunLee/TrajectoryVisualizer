@@ -462,7 +462,7 @@ def bind(
 
         if not cfg.ready:
             missing = ", ".join(cfg.missing)
-            banner = f"Configure {missing} in .env to auto-suggest fixes"
+            banner = f"请在 .env 中配置 {missing} 以自动生成修复建议"
             yield build_overview_issues_html(session, banner=banner)
             return
 
@@ -483,7 +483,7 @@ def bind(
                 if len(short) > 48:
                     short = short[:45] + "…"
                 progress_line = (
-                    f"Suggesting fixes {progress.current}/{progress.total} — {short}"
+                    f"正在生成修复建议 {progress.current}/{progress.total} — {short}"
                 )
                 yield build_overview_issues_html(
                     session, issues=judged, progress=progress_line,
@@ -492,7 +492,7 @@ def bind(
 
             ok = sum(1 for i in judged if i.judgment is not None)
             if errors and ok == 0:
-                banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
+                banner = f"修复建议生成失败（{len(errors)} 个）。首个错误：{errors[0][:160]}"
                 yield build_overview_issues_html(
                     session, issues=ranked, banner=banner,
                 )
@@ -501,11 +501,11 @@ def bind(
             banner = ""
             if errors:
                 banner = (
-                    f"{len(errors)} issue(s) could not be judged"
-                    f" ({ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} ok)."
+                    f"{len(errors)} 个问题未能生成修复建议"
+                    f"（成功 {ok}/{min(len(ranked), JUDGE_ISSUE_CAP)}）。"
                 )
             elif len(ranked) > JUDGE_ISSUE_CAP:
-                banner = f"Judged {ok}/{JUDGE_ISSUE_CAP} (capped)."
+                banner = f"已为前 {JUDGE_ISSUE_CAP} 个问题生成修复建议（成功 {ok} 个，已达上限）。"
             yield build_overview_issues_html(
                 session, issues=judged, banner=banner,
             )

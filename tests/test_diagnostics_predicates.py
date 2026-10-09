@@ -218,7 +218,7 @@ class JudgeErrorScrubbingTests(unittest.TestCase):
 
         html = build_overview_issues_html(
             SessionFieldAccessTests._stub(),
-            banner=f"Judge failed (1). First: {errors[0][:160]}",
+            banner=f"修复建议生成失败（1 个）。首个错误：{errors[0][:160]}",
         )
         self.assertNotIn("sk-SECRET123", html)
         self.assertNotIn("api.example.test", html)

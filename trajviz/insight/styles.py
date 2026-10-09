@@ -1104,6 +1104,16 @@ html.tv-theme-dark {
     gap: 8px;
     flex-wrap: wrap;
 }
+.overview-issue-num {
+    align-self: center;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--ov-table-header-bg);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
 .overview-issue-title {
     font-size: 14px;
     font-weight: 600;
@@ -1113,29 +1123,6 @@ html.tv-theme-dark {
 .overview-issue-detail {
     font-size: 12px;
     color: var(--ov-muted);
-}
-.overview-issue-more {
-    margin-top: 4px;
-}
-.overview-issue-more-summary {
-    list-style: none;
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--ov-accent, #1d4ed8);
-    user-select: none;
-}
-.overview-issue-more-summary::-webkit-details-marker { display: none; }
-.overview-issue-more-summary::before {
-    content: "▸ ";
-    color: var(--ov-muted);
-}
-.overview-issue-more[open] > .overview-issue-more-summary::before {
-    content: "▾ ";
-}
-.overview-issue-more-body {
-    margin-top: 4px;
-    padding-top: 2px;
 }
 .overview-issues-progress {
     display: flex;

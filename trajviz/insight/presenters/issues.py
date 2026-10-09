@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -30,6 +31,11 @@ ISSUE_KIND_COLORS: dict[IssueKind, str] = {
     "bottleneck": "var(--ov-accent)",
 }
 
+_CONFIDENCE_ZH: dict[str, str] = {"high": "高", "medium": "中", "low": "低"}
+
+_STEP_CHIP_LABEL = "第{n}步"
+_STEP_CHIP_MORE = "另有 {extra} 步"
+
 
 @dataclass(frozen=True)
 class IssueJudgment:
@@ -43,7 +49,10 @@ class IssueJudgment:
 
 @dataclass(frozen=True)
 class OverviewIssue:
-    """One Overview triage item (session diagnostics; optional LLM judgment)."""
+    """One Overview triage item (session diagnostics; optional LLM judgment).
+
+    *why* is not rendered; it is extra context for the LLM judge only.
+    """
 
     kind: IssueKind
     title: str
@@ -83,30 +92,46 @@ def collect_overview_issues(session: LoadedSession) -> list[OverviewIssue]:
 _SYSTEM_ERROR_HIGH = 5
 
 
-def _count_label(label: str, count: int) -> str:
-    return f"{label} ({count}×)" if count else label
+def _count_label(label: str, count: int, unit: str = "次") -> str:
+    return f"{label}（{count} {unit}）" if count else label
+
+
+# Only the fallback patterns diagnostics._error_pattern synthesizes itself;
+# raw tool output stays verbatim.
+_SYNTHETIC_ERROR_ZH: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(^|: )exit code (-?\d+)$"), r"\1退出码 \2"),
+    (re.compile(r"(^|: )status: (\w+)$"), r"\1状态：\2"),
+    (re.compile(r"(^|: )unknown error$"), r"\1未知错误"),
+)
+
+
+def _zh_error_text(text: str) -> str:
+    for pattern, repl in _SYNTHETIC_ERROR_ZH:
+        text = pattern.sub(repl, text)
+    return text
 
 
 def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
     out: list[OverviewIssue] = []
     for i, pat in enumerate(session.failure_patterns or []):
         label = str(pat.get("cluster_label") or "Unknown error")
+        zh_label = _zh_error_text(str(pat.get("cluster_label") or "")) or "未知错误"
         count = int(pat.get("count") or 0)
-        example = str(pat.get("example_error") or "")[:200]
+        example = _zh_error_text(str(pat.get("example_error") or "")[:200])
         recovery = pat.get("recovery_path")
         steps = tuple(int(s) for s in (pat.get("steps") or []) if s is not None)
         error_class = str(pat.get("error_class") or "tool").lower()
 
         if error_class == "system":
             if count >= _SYSTEM_ERROR_HIGH:
-                title = f"Frequent system errors: {_count_label(label, count)}"
+                title = f"系统错误频发：{_count_label(zh_label, count)}"
                 why = (
                     "Many Read/Grep/Edit-style failures in one run — each is usually "
                     "low risk, but volume suggests path, permission, or harness setup "
                     "problems worth checking."
                 )
             else:
-                title = f"System error: {_count_label(label, count)}"
+                title = f"系统错误：{_count_label(zh_label, count)}"
                 why = (
                     "Scaffold/tooling miss (search, read, or write) — usually low risk; "
                     "the agent can often recover without an author change."
@@ -115,7 +140,7 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
                 OverviewIssue(
                     kind="antipattern",
                     title=title,
-                    detail=example or "system tool failure",
+                    detail=example or "系统工具调用失败",
                     why=why,
                     steps=steps,
                     source_id=f"fail:system:{i}:{label}",
@@ -130,7 +155,7 @@ def _from_failure_patterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="error",
-                title=_count_label(label, count),
+                title=_count_label(zh_label, count),
                 detail=example,
                 why=why,
                 steps=steps,
@@ -153,8 +178,8 @@ def _from_failure_chains(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="error",
-                title=f"Failure cascade ({len(steps)} steps)",
-                detail=f"steps {start}–{end}",
+                title=f"连续失败（{len(steps)} 步）",
+                detail=f"第{start}–{end}步",
                 why=(
                     "Consecutive assistant steps failed without a clean recovery in between; "
                     "cascades often amplify one root error into thrash."
@@ -176,8 +201,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
             out.append(
                 OverviewIssue(
                     kind="error",
-                    title=_count_label("Tool errors", error_count),
-                    detail="detected from tool output (platform, permission, missing file)",
+                    title=_count_label("工具调用错误", error_count),
+                    detail="从工具输出中检测到（平台、权限、文件缺失等）",
                     why=(
                         "Failed tool calls cost tokens and turns to recover from, and often "
                         "indicate environment problems rather than agent mistakes."
@@ -191,14 +216,14 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
     if streaks:
         total_wasted = sum(int(s.get("length") or 0) for s in streaks)
         shown = streaks[:3]
-        streak_desc = ", ".join(
-            f"steps {s.get('start_step')}-{s.get('end_step')} ({s.get('length')})"
+        streak_desc = "、".join(
+            f"第{s.get('start_step')}–{s.get('end_step')}步（{s.get('length')} 步）"
             for s in shown
         )
         remaining = len(streaks) - len(shown)
         if remaining > 0:
             remaining_len = sum(int(s.get("length") or 0) for s in streaks[len(shown):])
-            streak_desc += f", +{remaining} more ({remaining_len})"
+            streak_desc += f"，另有 {remaining} 段（{remaining_len} 步）"
         streak_indices: list[int] = []
         for s in streaks:
             streak_indices.extend(
@@ -207,8 +232,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=_count_label("Fruitless search streaks", len(streaks)),
-                detail=f"{total_wasted} wasted steps — {streak_desc}",
+                title=_count_label("连续无结果搜索", len(streaks)),
+                detail=f"浪费 {total_wasted} 步 — {streak_desc}",
                 why=(
                     "Three or more consecutive searches that returned no matches; "
                     "sustained streaks suggest looking in the wrong place."
@@ -226,8 +251,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=_count_label("Bash-for-reading", len(tool_selection)),
-                detail="steps used sed/cat/head instead of Read tool",
+                title=_count_label("用 Bash 读取文件", len(tool_selection)),
+                detail="使用 sed/cat/head 读取文件，而不是 Read 工具",
                 why=(
                     "Shell reads bypass structured Read tooling — no line numbers, "
                     "weaker cache, larger context."
@@ -239,7 +264,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
 
     stalled = (session.plan_metrics or {}).get("stalled") or []
     if stalled:
-        items_desc = ", ".join(f"'{s.get('content', '')[:30]}'" for s in stalled[:2])
+        items_desc = "、".join(f"“{s.get('content', '')[:30]}”" for s in stalled[:2])
         stall_steps: list[int] = []
         for s in stalled:
             stall_steps.extend(
@@ -248,7 +273,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=_count_label("Stalled plan items", len(stalled)),
+                title=_count_label("停滞的待办项", len(stalled), "项"),
                 detail=items_desc,
                 why=(
                     "Todo items stayed in_progress without completion — often a "
@@ -269,8 +294,8 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=_count_label("Plan resets", plan_resets),
-                detail="todo list content replaced with no overlapping items",
+                title=_count_label("计划重置", plan_resets),
+                detail="待办列表被整体替换，新旧条目没有重叠",
                 why=(
                     "A full plan rewrite mid-run usually means the agent abandoned context "
                     "instead of completing or revising items in place."
@@ -289,10 +314,10 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"Failed edit retries on {short} ({count}×)",
+                title=f"编辑失败后反复重试：{short}（{count} 次）",
                 detail=(
-                    f"{fail_count} failed write(s) in steps "
-                    f"{thrash.get('start_step')}–{thrash.get('end_step')}"
+                    f"第{thrash.get('start_step')}–{thrash.get('end_step')}步中"
+                    f"有 {fail_count} 次写入失败"
                 ),
                 why=(
                     "Same file rewritten after write failures — usually a bad path, "
@@ -311,7 +336,7 @@ def _from_antipatterns(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=f"Repeated empty search ({count}×)",
+                title=f"重复的空搜索（{count} 次）",
                 detail=short,
                 why=(
                     "The same search ran multiple times with empty results (not only as a "
@@ -338,16 +363,16 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
     grew = [c for c in flagged if c.get("grew")]
     if grew:
         worst = max(grew, key=lambda c: int(c.get("occupancy_after") or 0))
-        detail = ", ".join(
-            f"step {c.get('step')}: {_fmt(c.get('occupancy_before'))} → {_fmt(c.get('occupancy_after'))}"
+        detail = "，".join(
+            f"第{c.get('step')}步：{_fmt(c.get('occupancy_before'))} → {_fmt(c.get('occupancy_after'))}"
             for c in grew[:4]
         )
         if len(grew) > 4:
-            detail += f", +{len(grew) - 4} more"
+            detail += f"，另有 {len(grew) - 4} 次"
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=_count_label("Compactions that grew the context window", len(grew)),
+                title=_count_label("压缩后上下文反而变大", len(grew)),
                 detail=detail,
                 why=(
                     f"Compacting left the window at least as large as before (worst: "
@@ -369,15 +394,15 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
         ]
         limit = _fmt(premature[0].get("window_limit"))
         pct_desc = (
-            f"{min(pcts):.0f}–{max(pcts):.0f}% of the assumed {limit}-token window"
+            f"假定 {limit} token 窗口的 {min(pcts):.0f}–{max(pcts):.0f}%"
             if pcts
-            else "well below the window limit"
+            else "远低于窗口上限"
         )
         out.append(
             OverviewIssue(
                 kind="antipattern",
-                title=_count_label("Premature compactions", len(premature)),
-                detail=f"window occupancy at compaction time: {pct_desc}",
+                title=_count_label("过早压缩上下文", len(premature)),
+                detail=f"压缩时窗口占用：{pct_desc}",
                 why=(
                     "The context window was compacted well before it was full — usually "
                     "an agent-initiated compress/compact call rather than a harness-forced "
@@ -391,6 +416,60 @@ def _from_premature_compactions(session: LoadedSession) -> list[OverviewIssue]:
     return out
 
 
+def _bottleneck_title(bn: dict, idx: int) -> str:
+    decomp = bn.get("decomposition") or {}
+    duration = float(bn.get("duration") or 0)
+    cause = bn.get("cause")
+    if cause == "idle":
+        idle_s = float(decomp.get("idle_s") or 0)
+        return f"空闲/排队瓶颈：第{idx}步前等待 {idle_s:.0f} 秒"
+    if cause == "tool":
+        tool_s = float(decomp.get("tool_s") or 0)
+        dt = decomp.get("dominant_tool") or {}
+        name = str(dt.get("name") or "")
+        if not name:
+            return f"工具瓶颈：第{idx}步（{tool_s:.1f} 秒）"
+        target = str(dt.get("target") or "")
+        label = f"{name}: {target}" if target else name
+        short = label if len(label) <= 40 else (label[:37] + "…")
+        return f"工具瓶颈：{short}（{tool_s:.1f} 秒）"
+    if cause == "context":
+        return f"上下文/缓存瓶颈：第{idx}步（{duration:.1f} 秒）"
+    if cause == "inference":
+        return f"推理瓶颈：第{idx}步（{duration:.1f} 秒）"
+    return f"性能瓶颈：第{idx}步（{duration:.1f} 秒）"
+
+
+def _bottleneck_detail(bn: dict, idx: int) -> str:
+    """Duration breakdown, largest component first."""
+    decomp = bn.get("decomposition") or {}
+    duration = float(bn.get("duration") or 0)
+    parts: list[tuple[float, str]] = []
+
+    tool_s = float(decomp.get("tool_s") or 0)
+    if tool_s > 0:
+        text = f"工具执行 {tool_s:.1f} 秒"
+        dt = decomp.get("dominant_tool") or {}
+        if dt.get("name"):
+            target = f": {dt['target']}" if dt.get("target") else ""
+            text += f"（{dt['name']}{target} {float(dt.get('duration_s') or 0):.1f} 秒）"
+        parts.append((tool_s, text))
+    inference_s = float(decomp.get("inference_s") or 0)
+    if inference_s > 0:
+        parts.append((inference_s, f"模型推理 {inference_s:.1f} 秒"))
+    idle_s = float(decomp.get("idle_s") or 0)
+    if idle_s > 0:
+        parts.append((idle_s, f"开始前空闲 {idle_s:.1f} 秒（排队或限流）"))
+
+    detail = f"第{idx}步耗时 {duration:.1f} 秒"
+    if parts:
+        parts.sort(key=lambda p: p[0], reverse=True)
+        detail += "：" + "，".join(text for _, text in parts)
+    if decomp.get("timing_incomplete"):
+        detail += "（计时不完整）"
+    return detail[:200]
+
+
 def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
     """Map detected performance bottlenecks (outlier + clear cause), not top-N slow steps."""
     out: list[OverviewIssue] = []
@@ -399,8 +478,6 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
         if step_idx is None:
             continue
         idx = int(step_idx)
-        title = str(bn.get("title") or f"Performance bottleneck at #{idx}")
-        detail = str(bn.get("detail") or "")[:200]
         why = str(bn.get("why") or (
             "Session-relative duration outlier with a dominant tool, idle/queue, "
             "or context/inference cause."
@@ -408,8 +485,8 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
         out.append(
             OverviewIssue(
                 kind="bottleneck",
-                title=title,
-                detail=detail,
+                title=_bottleneck_title(bn, idx),
+                detail=_bottleneck_detail(bn, idx),
                 why=why,
                 steps=(idx,),
                 source_id=f"bottleneck:{bn.get('cause', 'unknown')}:{i}:{idx}",
@@ -418,12 +495,14 @@ def _from_bottlenecks(session: LoadedSession) -> list[OverviewIssue]:
     return out
 
 
-def _issue_card(issue: OverviewIssue) -> str:
-    """Compact scan row: title + steps + visible Fix; Why behind a disclosure."""
+def _issue_card(issue: OverviewIssue, number: int) -> str:
+    """Compact scan row: issue number + title + step chips + optional LLM fix."""
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
     border = ISSUE_KIND_COLORS[issue.kind]
-    steps_html = _step_link_chips(list(issue.steps))
+    steps_html = _step_link_chips(
+        list(issue.steps), label=_STEP_CHIP_LABEL, more=_STEP_CHIP_MORE,
+    )
 
     judgment_html = ""
     if issue.judgment is not None:
@@ -432,13 +511,13 @@ def _issue_card(issue: OverviewIssue) -> str:
         if j.also:
             also_html = (
                 f"<div style='font-size:11px;color:var(--ov-muted);margin-top:6px;"
-                f"line-height:1.35;'>Also: {html.escape(j.also)}</div>"
+                f"line-height:1.35;'>补充：{html.escape(j.also)}</div>"
             )
-        conf = html.escape(j.confidence)
+        conf = html.escape(_CONFIDENCE_ZH.get(j.confidence, j.confidence))
         judgment_html = (
             "<div style='margin-top:8px;font-size:12px;line-height:1.4;'>"
             "<span style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
-            "text-transform:uppercase;color:var(--ov-muted);'>Change</span>"
+            "text-transform:uppercase;color:var(--ov-muted);'>修改位置</span>"
             f"<div style='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
             f"font-size:12px;color:var(--ov-text);margin-top:2px;'>"
             f"{html.escape(j.where)}</div></div>"
@@ -446,22 +525,11 @@ def _issue_card(issue: OverviewIssue) -> str:
             "border-radius:4px;'>"
             "<div style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
             "text-transform:uppercase;color:var(--ov-muted);margin-bottom:4px;'>"
-            f"Fix <span style='font-weight:500;letter-spacing:0;text-transform:none;"
-            f"color:var(--ov-muted);'>({conf})</span></div>"
+            f"修复建议 <span style='font-weight:500;letter-spacing:0;text-transform:none;"
+            f"color:var(--ov-muted);'>（置信度：{conf}）</span></div>"
             f"<div style='font-size:13px;line-height:1.4;color:var(--ov-text);'>"
             f"{html.escape(j.fix)}</div>"
             f"{also_html}</div>"
-        )
-
-    why_html = ""
-    if issue.why:
-        why_html = (
-            "<details class='overview-issue-more'>"
-            "<summary class='overview-issue-more-summary'>Why it matters</summary>"
-            f"<div class='overview-issue-more-body'>"
-            f"<div style='font-size:11px;color:var(--ov-muted);font-style:italic;"
-            f"margin-top:4px;'>{html.escape(issue.why)}</div>"
-            f"</div></details>"
         )
 
     detail_html = (
@@ -470,19 +538,21 @@ def _issue_card(issue: OverviewIssue) -> str:
     return (
         f"<div class='overview-issue-card' style='border-left-color:{border};'>"
         f"<div class='overview-issue-head'>"
+        f"<span class='overview-issue-num' style='color:{border};'>问题 {number}</span>"
         f"<span class='overview-issue-title'>{title}</span>"
         f"{detail_html}"
         f"</div>"
         f"{steps_html}"
         f"{judgment_html}"
-        f"{why_html}"
         f"</div>"
     )
 
 
 def _issue_cards_html(issues: list[OverviewIssue]) -> str:
-    """Render all issue cards (no preview cap)."""
-    return "".join(_issue_card(issue) for issue in issues)
+    """Render all issue cards (no preview cap), numbered from 1 in ranked order."""
+    return "".join(
+        _issue_card(issue, number) for number, issue in enumerate(issues, start=1)
+    )
 
 
 def render_overview_issues_html(
@@ -507,7 +577,7 @@ def render_overview_issues_html(
         # SMIL (not CSS) so prefers-reduced-motion / Gradio HTML swaps don't freeze it.
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
-            "<span class='overview-issues-progress-label'>Thinking…</span>"
+            "<span class='overview-issues-progress-label'>思考中…</span>"
             "<svg class='overview-issues-progress-spinner' width='14' height='14' "
             "viewBox='0 0 24 24' aria-hidden='true' "
             "style='flex-shrink:0;display:block'>"
@@ -527,28 +597,28 @@ def render_overview_issues_html(
             "<details class='overview-issues-panel' id='overview-issues'>"
             "<summary class='overview-issues-summary'>"
             "<span>Issues</span>"
-            "<span class='overview-issues-summary-meta'>none detected</span>"
+            "<span class='overview-issues-summary-meta'>未检测到问题</span>"
             "</summary>"
             "<div class='overview-issues-body'>"
             f"{progress_html}"
             f"{banner_html}"
             "<div style='padding:8px 0 4px;color:var(--ov-muted);text-align:center;font-size:13px;'>"
-            "No major workflow issues detected."
+            "未检测到明显的工作流问题。"
             "</div></div></details>"
         )
 
     count = len(issues)
     judged = sum(1 for i in issues if i.judgment is not None)
-    count_label = f"{count} issue{'s' if count != 1 else ''}"
+    count_label = f"{count} 个问题"
     if progress:
-        count_label += " · suggesting fixes…"
+        count_label += " · 正在生成修复建议…"
     elif judged:
-        count_label += f" · {judged} with LLM fix"
+        count_label += f" · 已为 {judged} 个问题生成修复建议"
 
     hint = (
-        "LLM Change/Fix shown below — click a step to open Workflow"
+        "下方为 LLM 给出的修改位置和修复建议 — 点击步骤可跳转到 Workflow"
         if judged and not progress
-        else "Ranked problems — click a step to open Workflow; expand Why for context"
+        else "按严重程度排序 — 点击步骤可跳转到 Workflow"
     )
     return (
         "<details class='overview-issues-panel' id='overview-issues' open>"
