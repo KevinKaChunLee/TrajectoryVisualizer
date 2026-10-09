@@ -48,6 +48,8 @@ class PerformanceBottleneckTests(unittest.TestCase):
         self.assertEqual(found[0]["cause"], "tool")
         self.assertEqual(found[0]["step_idx"], 4)
         self.assertIn("Bash", found[0]["title"])
+        self.assertEqual(found[0]["tokens"], 1000)
+        self.assertEqual(found[0]["cache_ratio"], 0.7)
 
     def test_idle_queue_outlier(self):
         steps = [

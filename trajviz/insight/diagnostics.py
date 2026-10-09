@@ -691,7 +691,8 @@ def detect_performance_bottlenecks(
     -------
     list[dict]
         ``step_idx``, ``duration``, ``cause``, ``title``, ``detail``, ``why``,
-        ``decomposition``, ``explanation``.
+        ``decomposition``, ``explanation``, ``tokens`` (step total),
+        ``cache_ratio`` (``None`` when unknown).
     """
     asst = [
         s for s in steps
@@ -767,6 +768,8 @@ def detect_performance_bottlenecks(
             "why": why,
             "decomposition": decomp,
             "explanation": explanation,
+            "tokens": step["tokens"]["total"],
+            "cache_ratio": analytics_row.get("cache_ratio") if analytics_row else None,
         })
 
     # Prefer largest wall impact; for idle, use idle_s as secondary sort key via duration+idle.

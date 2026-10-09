@@ -19,7 +19,6 @@ from ..context_usage import (
     usage_snapshot_choices,
 )
 from ..formatting import format_context_pressure_html
-from ..help import HELP_TEXT
 from ..presenters.label_ui import build_label_ui_payload
 from ..presenters.issues import (
     build_overview_issues_html,
@@ -31,6 +30,7 @@ from ..presenters.overview import (
     build_diagnostics_outputs,
     build_overview_outputs,
     empty_plotly_fig,
+    render_section_guide,
 )
 from ..issue_judge import JUDGE_ISSUE_CAP, iter_judge_overview_issues
 from ..llm_config import resolve_analysis_config
@@ -147,7 +147,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
 
             with gr.Column(scale=1, min_width=0, elem_classes=["overview-section-content"]):
                 with gr.Column(visible=True) as performance_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_summary'])}</div>")
+                    gr.HTML(render_section_guide("performance_section"))
                     with gr.Row(equal_height=True):
                         token_chart = gr.Plot(show_label=False, label="Token Usage")
                         duration_chart = gr.Plot(
@@ -157,7 +157,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                         )
 
                 with gr.Column(visible=False) as context_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_context_utilization'])}</div>")
+                    gr.HTML(render_section_guide("context_section"))
                     with gr.Row():
                         diag_pressure_agent = gr.Dropdown(
                             label="Agent",
@@ -191,7 +191,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                     )
 
                 with gr.Column(visible=False) as tools_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_tools'])}</div>")
+                    gr.HTML(render_section_guide("tools_section"))
                     behavior_md = gr.Markdown("")
                     with gr.Row(equal_height=True):
                         tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
@@ -211,7 +211,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                         gr.Column(scale=1)
 
                 with gr.Column(visible=False) as agents_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_agents'])}</div>")
+                    gr.HTML(render_section_guide("agents_section"))
                     agent_summary_html = gr.HTML("")
                     with gr.Row(equal_height=True):
                         agent_swimlane_chart = gr.Plot(
@@ -224,7 +224,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                         gr.Column(scale=1)
 
                 with gr.Column(visible=False) as diagnostics_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_diagnostics'])}</div>")
+                    gr.HTML(render_section_guide("diagnostics_section"))
                     diag_summary_html = gr.HTML("")
                     diag_file_chart = gr.Plot(
                         show_label=False,
@@ -236,13 +236,13 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                     plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
 
                 with gr.Column(visible=False) as deep_dive_section:
-                    gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_deep_dive'])}</div>")
+                    gr.HTML(render_section_guide("deep_dive_section"))
                     metrics_md = gr.Markdown("")
                     hotspots_md = gr.Markdown("")
                     per_message_md = gr.Markdown("")
 
                 with gr.Column(visible=False) as labels_section:
-                    gr.HTML("<div class='section-subtitle'>Phase and action classification from labeled JSON</div>")
+                    gr.HTML(render_section_guide("labels_section"))
                     label_status_html = gr.HTML(
                         "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
                         "Upload a <code>*_labeled.json</code> file to view label distributions and timeline.</div>"
@@ -462,7 +462,7 @@ def bind(
 
         if not cfg.ready:
             missing = ", ".join(cfg.missing)
-            banner = f"Configure {missing} in .env to auto-suggest fixes"
+            banner = f"请在 .env 中配置 {missing} 以自动生成修复建议"
             yield build_overview_issues_html(session, banner=banner)
             return
 
@@ -483,7 +483,7 @@ def bind(
                 if len(short) > 48:
                     short = short[:45] + "…"
                 progress_line = (
-                    f"Suggesting fixes {progress.current}/{progress.total} — {short}"
+                    f"正在生成修复建议 {progress.current}/{progress.total} — {short}"
                 )
                 yield build_overview_issues_html(
                     session, issues=judged, progress=progress_line,
@@ -492,7 +492,7 @@ def bind(
 
             ok = sum(1 for i in judged if i.judgment is not None)
             if errors and ok == 0:
-                banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
+                banner = f"修复建议生成失败（{len(errors)} 个）。首个错误：{errors[0][:160]}"
                 yield build_overview_issues_html(
                     session, issues=ranked, banner=banner,
                 )
@@ -501,11 +501,11 @@ def bind(
             banner = ""
             if errors:
                 banner = (
-                    f"{len(errors)} issue(s) could not be judged"
-                    f" ({ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} ok)."
+                    f"{len(errors)} 个问题未能生成修复建议"
+                    f"（成功 {ok}/{min(len(ranked), JUDGE_ISSUE_CAP)}）。"
                 )
             elif len(ranked) > JUDGE_ISSUE_CAP:
-                banner = f"Judged {ok}/{JUDGE_ISSUE_CAP} (capped)."
+                banner = f"已为前 {JUDGE_ISSUE_CAP} 个问题生成修复建议（成功 {ok} 个，已达上限）。"
             yield build_overview_issues_html(
                 session, issues=judged, banner=banner,
             )

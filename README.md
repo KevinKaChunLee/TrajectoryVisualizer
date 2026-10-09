@@ -74,8 +74,8 @@ python -m trajviz.insight --report path/to/trajectory.json -o report.html
 The **AI Trajectory Analysis** sidebar starts closed; open it from the
 labeled control on the right edge. It runs an automatic analysis
 when a trajectory loads, then answers follow-up questions. It uses the same
-dashboard statistics (health verdicts, bottlenecks, failures, fruitless
-streaks) and replies in Simplified Chinese. It does not re-upload the raw
+dashboard statistics (health verdicts, bottlenecks, failures, consecutive
+empty searches) and replies in Simplified Chinese. It does not re-upload the raw
 file. Configure the model in `.env`:
 
 ```bash

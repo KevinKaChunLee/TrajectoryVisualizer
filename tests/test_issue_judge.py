@@ -183,12 +183,14 @@ class JudgeMockTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertIsNotNone(judged[0].judgment)
         html = render_overview_issues_html(judged)
-        self.assertIn(">Change<", html)
-        self.assertIn(">Fix", html)
+        self.assertIn(">修改位置<", html)
+        self.assertIn(">修复建议", html)
+        self.assertIn("置信度：中", html)
+        self.assertIn("补充：预先给出路径", html)
         self.assertNotIn("Show fix", html)
         self.assertIn("CLAUDE.md", html)
         self.assertIn("空搜索超过 N 次后停止", html)
-        self.assertIn("with LLM fix", html)
+        self.assertIn("已为 1 个问题生成修复建议", html)
 
     def test_iter_judge_yields_before_each_and_finished(self):
         session = _session(steps=[{"index": 1, "role": "assistant", "tool_calls": []}])
@@ -237,8 +239,8 @@ class JudgeMockTests(unittest.TestCase):
                 steps=(1,),
             )
         ])
-        self.assertNotIn(">Change<", html)
-        self.assertNotIn(">Fix", html)
+        self.assertNotIn(">修改位置<", html)
+        self.assertNotIn(">修复建议", html)
 
 
 if __name__ == "__main__":

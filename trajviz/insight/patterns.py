@@ -275,7 +275,7 @@ def detect_failure_patterns(steps: list[dict]) -> list[dict]:
     Returns
     -------
     list[dict]
-        Each entry: ``{"cluster_label": str, "count": int,
+        Each entry: ``{"cluster_label": str, "tool": str, "count": int,
         "example_error": str, "recovery_path": [str] | None}``.
     """
     if not steps:
@@ -325,6 +325,7 @@ def detect_failure_patterns(steps: list[dict]) -> list[dict]:
 
         results.append({
             "cluster_label": f"{cluster['tool']}: {cluster['pattern']}",
+            "tool": cluster["tool"],
             "count": cluster["count"],
             "example_error": cluster["pattern"],
             "recovery_path": recovery_path,
