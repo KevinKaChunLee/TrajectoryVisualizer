@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure, _truncate_chart_labels
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from ..parser import infer_non_cache_input
 from ..palette import (
@@ -28,6 +29,13 @@ from ..shell_cmd import tool_chart_name
 from ..step_errors import step_error_kind
 
 
+def _subplot_rc(row: int | None, col: int | None) -> dict[str, int]:
+    """Plotly subplot kwargs, or ``{}`` for a standalone figure."""
+    if row is None or col is None:
+        return {}
+    return {"row": row, "col": col}
+
+
 def _add_token_bar_traces(
     fig: go.Figure,
     x_values: list,
@@ -39,6 +47,9 @@ def _add_token_bar_traces(
     cache_write: list | None = None,
     include_empty: bool = False,
     x_label: str = "Step",
+    row: int | None = None,
+    col: int | None = None,
+    showlegend: bool = True,
 ) -> None:
     """Add token category bar traces to a figure.
 
@@ -51,15 +62,22 @@ def _add_token_bar_traces(
 
     Pass ``cache_write`` to add a 5th stacked trace. For OpenCode this sample
     always reports zero, but the field is present and worth showing.
+
+    Stack order (bottom → top) mirrors context-window occupancy: cache read /
+    write form the base, then fresh input, then generated output / reasoning.
     """
-    traces = [
-        ("Fresh Input", fresh_input, TOKEN_COLORS["fresh_input"]),
-        ("Cache Read", cache_read, TOKEN_COLORS["cache_read"]),
-        ("Output", output, TOKEN_COLORS["output"]),
-        ("Reasoning", reasoning, TOKEN_COLORS["reasoning"]),
-    ]
+    traces = [("Cache Read", cache_read, TOKEN_COLORS["cache_read"])]
     if cache_write is not None:
         traces.append(("Cache Write", cache_write, TOKEN_COLORS["cache_write"]))
+    traces.extend(
+        [
+            ("Fresh Input", fresh_input, TOKEN_COLORS["fresh_input"]),
+            ("Output", output, TOKEN_COLORS["output"]),
+            ("Reasoning", reasoning, TOKEN_COLORS["reasoning"]),
+        ]
+    )
+    rc = _subplot_rc(row, col)
+    step_prefix = f"{x_label} " if x_label else ""
     for name, values, color in traces:
         if include_empty or any(v > 0 for v in values):
             fig.add_trace(
@@ -67,9 +85,12 @@ def _add_token_bar_traces(
                     x=x_values,
                     y=values,
                     name=name,
+                    legendgroup=name,
+                    showlegend=showlegend,
                     marker_color=color,
-                    hovertemplate=f"{(x_label + ' ') if x_label else ''}%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
-                )
+                    hovertemplate=f"{step_prefix}%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
+                ),
+                **rc,
             )
 
 
@@ -94,28 +115,96 @@ def _detect_outliers(values: list[float], threshold: float = 2.0) -> list[tuple[
     return outliers
 
 
-def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | None = None) -> go.Figure:
-    """Stacked bar of token breakdown over steps (non-overlapping segments).
+def _step_x_values(steps: list[dict]) -> list[int]:
+    """Workflow step indices for the x-axis (same numbering as the Workflow view)."""
+    return [int(s.get("index", i)) for i, s in enumerate(steps)]
 
-    Default segments: fresh_input + cache_read
-                      + net_output (output - reasoning) + reasoning = total
 
-    Per-format overrides:
-    - ``format in ("opencode", "codearts")``: render all five token fields
-      stacked — Fresh Input, Cache Read, Output, Reasoning, Cache Write — with
-      every trace forced into the legend even when a field is zero across the
-      trajectory.  Both formats expose the same complete token schema.
-    - No breakdown available: fall back to a single ``Total``
-      bar.
-    """
-    if not steps:
-        fig = _empty_figure(380)
-        _apply_dark(fig, dark)
-        return fig
+def _workflow_x_range(steps: list[dict]) -> list[float]:
+    xs = _step_x_values(steps)
+    return [-0.5, max(xs) + 0.5] if xs else [-0.5, 0.5]
 
-    indices = list(range(len(steps)))
+
+def _agent_panel_height(n_panels: int, base: int) -> int:
+    return min(2400, max(base, 200 * n_panels + 100))
+
+
+def _make_agent_subplots(agent_ids: list[str], labels: dict[str, str]) -> go.Figure:
+    """One shared-x row per timeline agent; room for per-panel Step axes."""
+    n = len(agent_ids)
+    # Plotly requires vertical_spacing <= 1/(rows-1).
+    return make_subplots(
+        rows=n,
+        cols=1,
+        shared_xaxes=True,
+        subplot_titles=[_legend_label(aid, labels) for aid in agent_ids],
+        vertical_spacing=min(0.10, 0.95 / max(n - 1, 1)),
+    )
+
+
+def _apply_shared_step_axes(fig: go.Figure, *, n_panels: int, x_range: list[float], y_title: str) -> None:
+    # shared_xaxes hides tick labels on upper panels by default.
+    for row in range(1, n_panels + 1):
+        fig.update_yaxes(title_text=y_title, row=row, col=1)
+        fig.update_xaxes(
+            title_text="Step",
+            range=x_range,
+            showticklabels=True,
+            row=row,
+            col=1,
+        )
+
+
+def _finalize_step_chart(
+    fig: go.Figure,
+    *,
+    title: str,
+    height: int,
+    barmode: str,
+    legend: dict,
+    dark: bool,
+    xaxis: str | None = None,
+    yaxis: str | None = None,
+    extra_layout: dict | None = None,
+) -> go.Figure:
+    _apply_chart_layout(
+        fig,
+        title,
+        xaxis=xaxis,
+        yaxis=yaxis,
+        height=height,
+        barmode=barmode,
+        legend=legend,
+    )
+    if extra_layout:
+        fig.update_layout(**extra_layout)
+    _add_legend_hint(fig)
+    _apply_dark(fig, dark)
+    return fig
+
+
+def _claim_legend(legend_shown: dict[str, bool], name: str) -> bool:
+    """True the first time *name* is drawn; keeps multi-panel legends unique."""
+    if legend_shown.get(name):
+        return False
+    legend_shown[name] = True
+    return True
+
+
+def _draw_token_panel(
+    fig: go.Figure,
+    steps: list[dict],
+    *,
+    format: str | None,
+    x_values: list,
+    row: int | None = None,
+    col: int | None = None,
+    showlegend: bool = True,
+    x_label: str = "Step",
+) -> None:
+    """Draw one stacked (or total-only) token panel onto *fig*."""
     cache_r = [s["tokens"]["cache_read"] for s in steps]
-    fresh_input = [
+    fresh = [
         infer_non_cache_input(
             total_tokens=s["tokens"]["total"],
             input_tokens=s["tokens"]["input"],
@@ -125,57 +214,236 @@ def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | No
         )
         for s in steps
     ]
-    reasoning_t = [s["tokens"].get("reasoning", 0) for s in steps]
+    reasoning = [s["tokens"].get("reasoning", 0) for s in steps]
     output_t = [s["tokens"]["output"] for s in steps]
-    net_output = [max(0, output - reasoning) for output, reasoning in zip(output_t, reasoning_t, strict=False)]
+    # OpenCode/CodeArts report output and reasoning as disjoint fields.
+    stacked_out = (
+        output_t
+        if format in ("opencode", "codearts")
+        else [max(0, out - rea) for out, rea in zip(output_t, reasoning, strict=True)]
+    )
     cache_w = [s["tokens"].get("cache_write", 0) or 0 for s in steps]
-
-    # Detect if token breakdown is available (any non-zero input/output/cache)
     has_breakdown = any(
         s["tokens"]["input"] > 0 or s["tokens"]["output"] > 0 or s["tokens"]["cache_read"] > 0 for s in steps
     )
-
-    fig = go.Figure()
-    if format in ("opencode", "codearts") and has_breakdown:
-        # OpenCode / CodeArts view: show all five fields explicitly, forcing
-        # zero traces into the legend so no existing legend item disappears.
-        # These formats report output and reasoning as disjoint fields, so use
-        # the raw output value instead of subtracting reasoning a second time.
+    if has_breakdown:
+        # Force empty categories into the legend only on the first panel; later
+        # panels omit all-zero series to avoid ~5×agent dead traces.
+        opencode_schema = format in ("opencode", "codearts")
         _add_token_bar_traces(
-            fig, indices, fresh_input, cache_r, output_t, reasoning_t, cache_write=cache_w, include_empty=True
+            fig,
+            x_values,
+            fresh,
+            cache_r,
+            stacked_out,
+            reasoning,
+            cache_write=cache_w if opencode_schema else None,
+            include_empty=opencode_schema and showlegend,
+            x_label=x_label,
+            row=row,
+            col=col,
+            showlegend=showlegend,
         )
-    elif has_breakdown:
-        _add_token_bar_traces(fig, indices, fresh_input, cache_r, net_output, reasoning_t)
-    else:
-        # No breakdown available — single "Total" trace.
-        totals = [s["tokens"]["total"] for s in steps]
+        return
+
+    fig.add_trace(
+        go.Bar(
+            x=x_values,
+            y=[s["tokens"]["total"] for s in steps],
+            name="Total",
+            legendgroup="Total",
+            showlegend=showlegend,
+            marker_color=CHART_ACCENT,
+            hovertemplate=f"{x_label + ' ' if x_label else ''}%{{x}}<br>Total: %{{y:,.0f}}<extra></extra>",
+        ),
+        **_subplot_rc(row, col),
+    )
+
+
+def _group_steps_by_timeline_agent(
+    steps: list[dict],
+) -> tuple[list[str], dict[str, str], dict[str, list[dict]]]:
+    """Ordered agent ids, legend labels, and per-agent step groups."""
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for step in steps:
+        groups[agent_id_of(step)].append(step)
+    agent_ids = [aid for aid in color_map if groups.get(aid)]
+    return agent_ids, labels, groups
+
+
+def build_token_chart(steps: list[dict], dark: bool = False, *, format: str | None = None) -> go.Figure:
+    """Stacked bar of token breakdown over steps (non-overlapping segments).
+
+    Default segments (bottom → top): cache_read + fresh_input
+                      + net_output (output - reasoning) + reasoning = total
+
+    Per-format overrides:
+    - ``format in ("opencode", "codearts")``: render all five token fields
+      stacked — Cache Read, Cache Write, Fresh Input, Output, Reasoning — with
+      every trace forced into the legend even when a field is zero across the
+      trajectory.  Both formats expose the same complete token schema.
+    - No breakdown available: fall back to a single ``Total``
+      bar.
+
+    When the trajectory has multiple timeline agents (OpenCode/CodeArts
+    subagent sessions, plan/build modes, …), each agent gets its own panel so
+    context growth stays readable instead of zigzagging across interleaved
+    sessions. Every panel shares the Workflow step index on the x-axis so a
+    bar at step N lines up with Workflow step N (and with the other panels).
+    """
+    if not steps:
+        fig = _empty_figure(380)
+        _apply_dark(fig, dark)
+        return fig
+
+    agent_ids, labels, groups = _group_steps_by_timeline_agent(steps)
+    legend = dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5)
+
+    if len(agent_ids) <= 1:
+        panel_steps = groups[agent_ids[0]] if agent_ids else steps
+        fig = go.Figure()
+        _draw_token_panel(fig, panel_steps, format=format, x_values=_step_x_values(panel_steps))
+        return _finalize_step_chart(
+            fig,
+            title="Token Usage by Step",
+            height=380,
+            barmode="stack",
+            legend=legend,
+            dark=dark,
+            xaxis="Step",
+            yaxis="Tokens",
+        )
+
+    n = len(agent_ids)
+    fig = _make_agent_subplots(agent_ids, labels)
+    x_range = _workflow_x_range(steps)
+    for row, agent_id in enumerate(agent_ids, start=1):
+        panel_steps = groups[agent_id]
+        _draw_token_panel(
+            fig,
+            panel_steps,
+            format=format,
+            x_values=_step_x_values(panel_steps),
+            row=row,
+            col=1,
+            showlegend=(row == 1),
+        )
+    _apply_shared_step_axes(fig, n_panels=n, x_range=x_range, y_title="Tokens")
+    return _finalize_step_chart(
+        fig,
+        title="Token Usage by Step",
+        height=_agent_panel_height(n, 380),
+        barmode="stack",
+        legend={**legend, "y": 1.02},
+        dark=dark,
+    )
+
+
+def _draw_duration_panel(
+    fig: go.Figure,
+    steps: list[dict],
+    *,
+    row: int | None = None,
+    col: int | None = None,
+    legend_shown: dict[str, bool] | None = None,
+    compression_steps: list[int] | None = None,
+) -> None:
+    """Draw one step-duration panel (bars, spikes, avg, compression marks)."""
+    rc = _subplot_rc(row, col)
+    chart_durs = [step_duration_excluding_spawn(s) for s in steps]
+    durations = [d if d is not None else 0 for d in chart_durs]
+    spawn_adjusted = [
+        d is not None and spawn_wait_seconds(s) > 0
+        for s, d in zip(steps, chart_durs, strict=True)
+    ]
+    real_durations = [d for d in chart_durs if d is not None]
+    avg_d = sum(real_durations) / len(real_durations) if real_durations else 0
+
+    kinds = [step_error_kind(s) for s in steps]
+    step_ids = _step_x_values(steps)
+    outlier_steps = {step_ids[idx] for idx, _, _ in _detect_outliers(durations)}
+    legend_shown = legend_shown if legend_shown is not None else {}
+
+    series = [
+        ("Normal", None, "#3b82f6", ""),
+        ("System Error", "system", DURATION_ERROR_COLORS["system"], " (system error)"),
+        ("Tool Error", "tool", DURATION_ERROR_COLORS["tool"], " (tool error)"),
+    ]
+    for name, kind, color, suffix in series:
+        positions = [i for i, k in enumerate(kinds) if k == kind]
+        if name != "Normal" and not positions:
+            continue
+        xs = [step_ids[i] for i in positions]
+        ys = [durations[i] for i in positions]
+        custom = [
+            [step_ids[i], " (excl. task wait)" if spawn_adjusted[i] else ""]
+            for i in positions
+        ]
         fig.add_trace(
             go.Bar(
-                x=indices,
-                y=totals,
-                name="Total",
-                marker_color=CHART_ACCENT,
-                hovertemplate="Step %{x}<br>Total: %{y:,.0f}<extra></extra>",
-            )
+                x=xs,
+                y=ys,
+                customdata=custom,
+                name=name,
+                legendgroup=name,
+                showlegend=_claim_legend(legend_shown, name),
+                marker_color=color,
+                width=0.8,
+                hovertemplate=(
+                    "Step %{customdata[0]}<br>%{y:.1f}s%{customdata[1]}"
+                    f"{suffix}<extra></extra>"
+                ),
+            ),
+            **rc,
         )
+        spike_x = [x for x, y in zip(xs, ys, strict=True) if x in outlier_steps]
+        spike_y = [y for x, y in zip(xs, ys, strict=True) if x in outlier_steps]
+        if spike_x:
+            fig.add_trace(
+                go.Scatter(
+                    x=spike_x,
+                    y=spike_y,
+                    mode="text",
+                    text=[f"{v:.1f}s" for v in spike_y],
+                    textposition="top center",
+                    textfont=dict(size=9, color="#dc2626"),
+                    legendgroup=name,
+                    showlegend=False,
+                    hoverinfo="skip",
+                    cliponaxis=False,
+                ),
+                **rc,
+            )
 
-    _apply_chart_layout(
-        fig,
-        "Token Usage by Step",
-        xaxis="Step",
-        yaxis="Tokens",
-        height=380,
-        barmode="stack",
-        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5),
+    fig.add_hline(
+        y=avg_d,
+        line_dash="dash",
+        line_color="#94a3b8",
+        line_width=1,
+        annotation_text=f"Avg: {avg_d:.1f}s",
+        annotation_position="top left",
+        annotation_font=dict(color="#64748b", size=11),
+        **rc,
     )
-    _add_legend_hint(fig)
-    _apply_dark(fig, dark)
-    return fig
+    panel_steps = set(step_ids)
+    for step_idx in compression_steps or []:
+        if step_idx not in panel_steps:
+            continue
+        fig.add_vline(
+            x=step_idx,
+            line_dash="dot",
+            line_color="#dc2626",
+            line_width=1.5,
+            annotation_text="compressed",
+            annotation_position="top",
+            annotation_font=dict(size=8, color="#dc2626"),
+            **rc,
+        )
 
 
 def build_duration_chart(
     steps: list[dict],
-    phases: list[dict] | None = None,
     dark: bool = False,
     compression_steps: list[int] | None = None,
 ) -> go.Figure:
@@ -186,151 +454,68 @@ def build_duration_chart(
 
     Spawn/delegation wait (``task``, ``Agent``, …) is subtracted from each
     bar so parent steps blocked on a child agent do not create false spikes.
+
+    Multi-agent trajectories get one panel per timeline agent (same split as
+    Token Usage by Step), sharing the Workflow step index on the x-axis.
     """
     if not steps:
         fig = _empty_figure(380)
         _apply_dark(fig, dark)
         return fig
 
-    chart_durs = [step_duration_excluding_spawn(s) for s in steps]
-    durations = [d if d is not None else 0 for d in chart_durs]
-    spawn_adjusted = [
-        d is not None and spawn_wait_seconds(s) > 0
-        for s, d in zip(steps, chart_durs, strict=True)
-    ]
-
-    real_durations = [d for d in chart_durs if d is not None]
-    avg_d = sum(real_durations) / len(real_durations) if real_durations else 0
-
-    kinds = [step_error_kind(s) for s in steps]
-    step_ids = [int(s.get("index", i)) for i, s in enumerate(steps)]
-    normal_x = [i for i, k in enumerate(kinds) if k is None]
-    normal_y = [durations[i] for i in normal_x]
-    system_x = [i for i, k in enumerate(kinds) if k == "system"]
-    system_y = [durations[i] for i in system_x]
-    tool_x = [i for i, k in enumerate(kinds) if k == "tool"]
-    tool_y = [durations[i] for i in tool_x]
-
-    # Detect outliers — will be added as scatter labels per legend group
-    outlier_set = {idx for idx, _, _ in _detect_outliers(durations)}
-
-    bar_width = 0.8
-
-    def _hover(idxs: list[int], *, suffix: str = "") -> tuple[list, str]:
-        custom = [[step_ids[i], " (excl. task wait)" if spawn_adjusted[i] else ""] for i in idxs]
-        template = (
-            "Step %{customdata[0]}<br>%{y:.1f}s%{customdata[1]}"
-            f"{suffix}<extra></extra>"
-        )
-        return custom, template
-
-    fig = go.Figure()
-    normal_cd, normal_hover = _hover(normal_x)
-    fig.add_trace(
-        go.Bar(
-            x=normal_x,
-            y=normal_y,
-            customdata=normal_cd,
-            name="Normal",
-            legendgroup="Normal",
-            marker_color="#3b82f6",
-            width=bar_width,
-            hovertemplate=normal_hover,
-        )
+    agent_ids, labels, groups = _group_steps_by_timeline_agent(steps)
+    x_range = _workflow_x_range(steps)
+    legend = dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.06,
+        xanchor="center",
+        x=0.5,
+        itemclick="toggle",
+        itemdoubleclick="toggleothers",
     )
-    if system_x:
-        system_cd, system_hover = _hover(system_x, suffix=" (system error)")
-        fig.add_trace(
-            go.Bar(
-                x=system_x,
-                y=system_y,
-                customdata=system_cd,
-                name="System Error",
-                legendgroup="System Error",
-                marker_color=DURATION_ERROR_COLORS["system"],
-                width=bar_width,
-                hovertemplate=system_hover,
-            )
-        )
-    if tool_x:
-        tool_cd, tool_hover = _hover(tool_x, suffix=" (tool error)")
-        fig.add_trace(
-            go.Bar(
-                x=tool_x,
-                y=tool_y,
-                customdata=tool_cd,
-                name="Tool Error",
-                legendgroup="Tool Error",
-                marker_color=DURATION_ERROR_COLORS["tool"],
-                width=bar_width,
-                hovertemplate=tool_hover,
-            )
+    duration_layout = dict(margin=dict(t=70), clickmode="event")
+
+    if len(agent_ids) <= 1:
+        panel_steps = groups[agent_ids[0]] if agent_ids else steps
+        fig = go.Figure()
+        _draw_duration_panel(fig, panel_steps, compression_steps=compression_steps)
+        fig.update_xaxes(title_text="Step", range=x_range, showticklabels=True)
+        fig.update_yaxes(title_text="Duration (s)")
+        return _finalize_step_chart(
+            fig,
+            title="Step Duration",
+            height=400,
+            barmode="overlay",
+            legend=legend,
+            dark=dark,
+            xaxis="Step",
+            yaxis="Duration (s)",
+            extra_layout=duration_layout,
         )
 
-    # Spike labels as scatter traces — grouped with their bar trace so they
-    # show/hide together when the legend is toggled.
-    series = [
-        ("Normal", normal_x, normal_y),
-        ("System Error", system_x, system_y),
-        ("Tool Error", tool_x, tool_y),
-    ]
-    for group, gx, gy in series:
-        spike_x = [gx[j] for j in range(len(gx)) if gx[j] in outlier_set]
-        spike_y = [gy[j] for j in range(len(gx)) if gx[j] in outlier_set]
-        spike_text = [f"{v:.1f}s" for v in spike_y]
-        if spike_x:
-            fig.add_trace(
-                go.Scatter(
-                    x=spike_x,
-                    y=spike_y,
-                    mode="text",
-                    text=spike_text,
-                    textposition="top center",
-                    textfont=dict(size=9, color="#dc2626"),
-                    legendgroup=group,
-                    showlegend=False,
-                    hoverinfo="skip",
-                    cliponaxis=False,  # allow text to extend past the right edge
-                )
-            )
-    # Avg line — dashed, lighter
-    fig.add_hline(
-        y=avg_d,
-        line_dash="dash",
-        line_color="#94a3b8",
-        line_width=1,
-        annotation_text=f"Avg: {avg_d:.1f}s",
-        annotation_position="top left",
-        annotation_font=dict(color="#64748b", size=11),
-    )
-    _apply_chart_layout(
+    n = len(agent_ids)
+    fig = _make_agent_subplots(agent_ids, labels)
+    legend_shown: dict[str, bool] = {}
+    for row, agent_id in enumerate(agent_ids, start=1):
+        _draw_duration_panel(
+            fig,
+            groups[agent_id],
+            row=row,
+            col=1,
+            legend_shown=legend_shown,
+            compression_steps=compression_steps,
+        )
+    _apply_shared_step_axes(fig, n_panels=n, x_range=x_range, y_title="Duration (s)")
+    return _finalize_step_chart(
         fig,
-        "Step Duration",
-        xaxis="Step",
-        yaxis="Duration (s)",
-        height=400,
+        title="Step Duration",
+        height=_agent_panel_height(n, 400),
         barmode="overlay",
-        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5, itemclick="toggle", itemdoubleclick="toggleothers"),
+        legend={**legend, "y": 1.02},
+        dark=dark,
+        extra_layout=duration_layout,
     )
-    fig.update_layout(margin=dict(t=70), clickmode="event")
-    fig.update_xaxes(range=[-0.5, len(steps) - 0.5])
-    _add_legend_hint(fig)
-
-    # Context compression markers (red vertical lines)
-    if compression_steps:
-        for step_idx in compression_steps:
-            fig.add_vline(
-                x=step_idx,
-                line_dash="dot",
-                line_color="#dc2626",
-                line_width=1.5,
-                annotation_text="compressed",
-                annotation_position="top",
-                annotation_font=dict(size=8, color="#dc2626"),
-            )
-
-    _apply_dark(fig, dark)
-    return fig
 
 
 def build_tool_chart(steps: list[dict], dark: bool = False) -> go.Figure:
@@ -673,7 +858,7 @@ def build_agent_token_chart(agent_summaries: list[dict], dark: bool = False) -> 
 
     Uses the same vertical grouped-bar layout for single- and multi-agent
     sessions so the single-agent case still surfaces the four token
-    categories (Fresh / Cache Read / Output / Reasoning) — just with one
+    categories (Cache Read / Fresh / Output / Reasoning) — just with one
     cluster instead of many.
     """
     if not agent_summaries:
