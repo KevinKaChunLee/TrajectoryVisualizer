@@ -1,5 +1,11 @@
 # TrajViz
 
+
+**IMPORTANT!!**
+
+This fork is no longer being maintained, please refer to new fork. [TrajViz](https://github.com/KevinKaChunLee/TrajViz)
+
+---
 **Offline analytics & visualization for LLM agent trajectories.**
 
 TrajViz loads a single agent trajectory (or compares two), parses it into a normalized step model, and renders an interactive Gradio + Plotly dashboard covering tokens, timing, tool-use patterns, phase composition, anti-pattern detections, step-label analysis, and cross-trajectory divergence.
